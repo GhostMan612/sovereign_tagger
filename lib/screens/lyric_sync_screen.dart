@@ -3,9 +3,9 @@
 // The Future Dictates the Past and the Past is Always Present.
 // ============================================================
 
-import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:just_audio/just_audio.dart';
+import '../core/lrc.dart';
 import 'main_shell.dart';
 
 class LyricSyncScreen extends StatefulWidget {
@@ -59,19 +59,11 @@ class _LyricSyncScreenState extends State<LyricSyncScreen> {
     super.dispose();
   }
 
-  String _formatTimestamp(Duration duration) {
-    String twoDigits(int n) => n.toString().padLeft(2, "0");
-    String twoDigitMinutes = twoDigits(duration.inMinutes.remainder(60));
-    String twoDigitSeconds = twoDigits(duration.inSeconds.remainder(60));
-    String twoDigitMilliseconds = (duration.inMilliseconds.remainder(1000) ~/ 10).toString().padLeft(2, "0");
-    return "[$twoDigitMinutes:$twoDigitSeconds.$twoDigitMilliseconds]";
-  }
-
   void _syncCurrentLine() {
     if (_currentIndex < _lines.length) {
       final position = _player.position;
       setState(() {
-        _syncedLines[_currentIndex] = "${_formatTimestamp(position)}${_lines[_currentIndex]}";
+        _syncedLines[_currentIndex] = "${Lrc.formatStamp(position)}${_lines[_currentIndex]}";
         _currentIndex++;
         if (_currentIndex >= _lines.length) _isFinished = true;
       });
@@ -88,38 +80,14 @@ class _LyricSyncScreenState extends State<LyricSyncScreen> {
     }
   }
 
-  Future<void> _exportLrc() async {
-    try {
-      final originalFile = File(widget.filePath);
-      final dir = originalFile.parent.path;
-      final fileName = originalFile.path.split('/').last;
-      final dot = fileName.lastIndexOf('.');
-      final baseName = dot > 0 ? fileName.substring(0, dot) : fileName;
-      final lrcPath = "$dir/$baseName.lrc";
-
-      String lrcContent = "[ti:${widget.title}]\n[ar:${widget.artist}]\n";
-      for (String line in _syncedLines) {
-        if (line.isNotEmpty) lrcContent += "$line\n";
-      }
-
-      final lrcFile = File(lrcPath);
-      await lrcFile.writeAsString(lrcContent);
-
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text('> SUCCESS. .LRC INJECTED NEXT TO AUDIO FILE.', style: TextStyle(fontFamily: 'ShareTechMono', color: SovereignState.accentColor.value)),
-        backgroundColor: Colors.black,
-        shape: RoundedRectangleBorder(side: BorderSide(color: SovereignState.accentColor.value))
-      ));
-      Navigator.pop(context);
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text('> ERR: EXPORT FAULT: $e', style: const TextStyle(fontFamily: 'ShareTechMono')),
-        backgroundColor: Colors.black,
-        shape: const RoundedRectangleBorder(side: BorderSide(color: Colors.redAccent))
-      ));
+  void _exportLrc() {
+    final buffer = StringBuffer();
+    if (widget.title.isNotEmpty) buffer.writeln("[ti:${widget.title}]");
+    if (widget.artist.isNotEmpty) buffer.writeln("[ar:${widget.artist}]");
+    for (final line in _syncedLines) {
+      if (line.isNotEmpty) buffer.writeln(line);
     }
+    Navigator.pop(context, buffer.toString().trim());
   }
 
   @override
@@ -270,7 +238,7 @@ class _LyricSyncScreenState extends State<LyricSyncScreen> {
                         ? ElevatedButton.icon(
                             onPressed: _exportLrc,
                             icon: const Icon(Icons.save, color: Colors.black),
-                            label: const Text("EXPORT .LRC TARGET", style: TextStyle(fontFamily: 'ShareTechMono', color: Colors.black, fontWeight: FontWeight.bold)),
+                            label: const Text("APPLY TO FORGE LYRICS", style: TextStyle(fontFamily: 'ShareTechMono', color: Colors.black, fontWeight: FontWeight.bold)),
                             style: ElevatedButton.styleFrom(backgroundColor: Colors.cyanAccent, padding: const EdgeInsets.symmetric(vertical: 20)),
                           )
                         : ElevatedButton.icon(

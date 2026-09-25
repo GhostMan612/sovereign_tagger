@@ -4,7 +4,7 @@
 // ============================================================
 
 import 'package:flutter/material.dart';
-import 'package:shared_preferences/shared_preferences.dart';
+import '../core/playback_fx.dart';
 
 class EqPresetsScreen extends StatefulWidget {
   const EqPresetsScreen({super.key});
@@ -20,6 +20,23 @@ class _EqPresetsScreenState extends State<EqPresetsScreen> {
   static const double _railHeight = 260.0;
 
   bool _dirty = false;
+  List<double> _saved = List.filled(15, 0.0);
+
+  static const Map<String, List<double>> _presets = {
+    'FLAT': [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+    'BASS BOOST': [7, 6, 5, 4, 2.5, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+    'BASS CUT': [-6, -5, -4, -3, -2, -1, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+    'TREBLE BOOST': [0, 0, 0, 0, 0, 0, 0, 0, 0.5, 1.5, 3, 4, 5, 6, 6],
+    'VOCAL': [-2, -2, -1.5, -1, 0, 1.5, 3, 3.5, 3, 2, 1, 0, 0, -1, -1],
+    'ROCK': [5, 4, 3, 1.5, -0.5, -1.5, -1, 0.5, 1.5, 2.5, 3.5, 4, 4, 4, 4],
+    'POP': [-1, -0.5, 0.5, 1.5, 3, 3.5, 3, 1.5, 0, -0.5, -0.5, 0, 0.5, 1, 1],
+    'HIP-HOP': [6, 5.5, 4.5, 3, 1.5, 0, -0.5, -0.5, 0, 0.5, 1, 1.5, 2, 2.5, 2.5],
+    'ELECTRONIC': [5, 4.5, 3.5, 2, 0.5, -1, -1.5, -0.5, 1, 2, 3, 3.5, 4, 4.5, 4.5],
+    'JAZZ': [3, 2.5, 2, 1.5, 1, 0, -0.5, -0.5, 0, 1, 1.5, 2, 2.5, 3, 3],
+    'CLASSICAL': [3, 3, 2.5, 2, 1, 0, 0, 0, 0, 0, 0.5, 1.5, 2.5, 3, 3.5],
+    'LOUDNESS': [6, 5, 3.5, 1.5, 0, -1, -1.5, -1, 0, 0.5, 1.5, 3, 4.5, 5.5, 6],
+    'SMALL SPEAKER': [-6, -4, -2, 1, 3, 3.5, 3, 2, 1, 1, 1.5, 2, 2, 1.5, 1],
+  };
 
   @override
   void initState() {
@@ -28,21 +45,35 @@ class _EqPresetsScreenState extends State<EqPresetsScreen> {
   }
 
   Future<void> _loadPresets() async {
-    final prefs = await SharedPreferences.getInstance();
     if (!mounted) return;
     setState(() {
+      final gains = PlaybackFx.eqGains.value;
       for (int i = 0; i < 15; i++) {
-        _eqBands15[i] = prefs.getDouble('eq15_band_$i') ?? 0.0;
+        _eqBands15[i] = i < gains.length ? gains[i] : 0.0;
       }
+      _saved = List<double>.from(_eqBands15);
       _dirty = false;
     });
   }
 
+  void _live() {
+    PlaybackFx.setEqGains(_eqBands15);
+  }
+
+  void _applyPreset(List<double> values) {
+    setState(() {
+      for (int i = 0; i < 15; i++) {
+        _eqBands15[i] = values[i];
+      }
+      _dirty = true;
+    });
+    if (!PlaybackFx.eqEnabled.value) PlaybackFx.setEqEnabled(true);
+    _live();
+  }
+
   Future<void> _savePreset() async {
-    final prefs = await SharedPreferences.getInstance();
-    for (int i = 0; i < 15; i++) {
-      await prefs.setDouble('eq15_band_$i', _eqBands15[i]);
-    }
+    await PlaybackFx.setEqGains(_eqBands15, persist: true);
+    _saved = List<double>.from(_eqBands15);
     if (!mounted) return;
     setState(() => _dirty = false);
     ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
@@ -66,7 +97,10 @@ class _EqPresetsScreenState extends State<EqPresetsScreen> {
         ],
       ),
     );
-    if (discard == true && mounted) Navigator.pop(context);
+    if (discard == true && mounted) {
+      await PlaybackFx.setEqGains(_saved);
+      if (mounted) Navigator.pop(context);
+    }
   }
 
   @override
@@ -112,6 +146,44 @@ class _EqPresetsScreenState extends State<EqPresetsScreen> {
                         ],
                       ),
                     ),
+                    ValueListenableBuilder<bool>(
+                      valueListenable: PlaybackFx.eqEnabled,
+                      builder: (context, enabled, _) => SwitchListTile(
+                        dense: true,
+                        title: Text(enabled ? "EQ ACTIVE ON PLAYBACK" : "EQ BYPASSED", style: TextStyle(fontFamily: 'ShareTechMono', fontWeight: FontWeight.bold, color: enabled ? Colors.purpleAccent : Colors.white54)),
+                        subtitle: ValueListenableBuilder<List<double>>(
+                          valueListenable: PlaybackFx.deviceBands,
+                          builder: (context, bands, _) => Text(
+                            bands.isEmpty
+                                ? "Device EQ attaches when playback starts."
+                                : "Curve mapped onto this phone's ${bands.length}-band EQ (${bands.map((f) => f >= 1000 ? '${(f / 1000).toStringAsFixed(1)}k' : f.round().toString()).join(' / ')} Hz).",
+                            style: const TextStyle(fontFamily: 'ShareTechMono', fontSize: 10, color: Colors.white38),
+                          ),
+                        ),
+                        activeThumbColor: Colors.purpleAccent,
+                        value: enabled,
+                        onChanged: (v) => PlaybackFx.setEqEnabled(v),
+                      ),
+                    ),
+                    SizedBox(
+                      height: 40,
+                      child: ListView(
+                        scrollDirection: Axis.horizontal,
+                        padding: const EdgeInsets.symmetric(horizontal: 8),
+                        children: [
+                          for (final e in _presets.entries)
+                            Padding(
+                              padding: const EdgeInsets.only(right: 6),
+                              child: ActionChip(
+                                label: Text(e.key, style: const TextStyle(fontFamily: 'ShareTechMono', fontSize: 11, color: Colors.white)),
+                                backgroundColor: Colors.black,
+                                side: const BorderSide(color: Colors.purpleAccent),
+                                onPressed: () => _applyPreset(e.value),
+                              ),
+                            ),
+                        ],
+                      ),
+                    ),
                     const SizedBox(height: 8),
                     SingleChildScrollView(
                       scrollDirection: Axis.horizontal,
@@ -135,12 +207,7 @@ class _EqPresetsScreenState extends State<EqPresetsScreen> {
                   ),
                   const SizedBox(width: 12),
                   OutlinedButton.icon(
-                    onPressed: () => setState(() {
-                      for (int i = 0; i < 15; i++) {
-                        _eqBands15[i] = 0.0;
-                      }
-                      _dirty = true;
-                    }),
+                    onPressed: () => _applyPreset(_presets['FLAT']!),
                     icon: const Icon(Icons.restart_alt, color: Colors.redAccent, size: 18),
                     label: const Text("FLAT", style: TextStyle(fontFamily: 'ShareTechMono', fontSize: 13, color: Colors.redAccent, fontWeight: FontWeight.bold)),
                     style: OutlinedButton.styleFrom(side: const BorderSide(color: Colors.redAccent), padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12)),
@@ -149,7 +216,7 @@ class _EqPresetsScreenState extends State<EqPresetsScreen> {
               ),
               const SizedBox(height: 20),
               const Text(
-                "PRESETS PERSIST TO KERNEL PREFS AND FEED THE WORKBENCH 15-BAND EQUALIZER OPERATION.",
+                "CHANGES ARE HEARD LIVE. SAVE PRESET KEEPS THEM ACROSS RESTARTS AND FEEDS THE WORKBENCH 15-BAND EQUALIZER OPERATION.",
                 textAlign: TextAlign.center,
                 style: TextStyle(fontFamily: 'ShareTechMono', fontSize: 10, color: Colors.white38, height: 1.4),
               ),
@@ -186,6 +253,7 @@ class _EqPresetsScreenState extends State<EqPresetsScreen> {
                 child: Slider(
                   value: _eqBands15[i], min: -12, max: 12, divisions: 24,
                   onChanged: (val) => setState(() { _eqBands15[i] = val; _dirty = true; }),
+                  onChangeEnd: (_) => _live(),
                 ),
               ),
             ),

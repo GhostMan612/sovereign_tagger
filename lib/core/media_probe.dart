@@ -27,3 +27,17 @@ Future<int?> probeDurationMs(String path) async {
     return null;
   }
 }
+
+Future<String?> probeAudioCodec(String path) async {
+  try {
+    final session = await FFprobeKit.getMediaInformationAsync(path);
+    final info = session.getMediaInformation();
+    if (info == null) return null;
+    for (final s in info.streams) {
+      if (s.type == 'audio') return s.codec?.toLowerCase();
+    }
+    return null;
+  } catch (_) {
+    return null;
+  }
+}

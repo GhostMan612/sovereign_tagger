@@ -8,10 +8,34 @@ import 'package:audio_service/audio_service.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:audio_session/audio_session.dart';
 
+class TransportCallbacks {
+  final Future<void> Function() play;
+  final Future<void> Function() pause;
+  final Future<void> Function() stop;
+  final Future<void> Function() next;
+  final Future<void> Function() previous;
+  final Future<void> Function(Duration position) seek;
+  final Future<void> Function(int index) skipToIndex;
+  final bool Function() isPlaying;
+
+  const TransportCallbacks({
+    required this.play,
+    required this.pause,
+    required this.stop,
+    required this.next,
+    required this.previous,
+    required this.seek,
+    required this.skipToIndex,
+    required this.isPlaying,
+  });
+}
+
 class SovereignAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
   final AudioPlayer player;
+  final TransportCallbacks transport;
+  MediaItem? _current;
 
-  SovereignAudioHandler(this.player) {
+  SovereignAudioHandler(this.player, this.transport) {
     _init();
   }
 
@@ -19,33 +43,33 @@ class SovereignAudioHandler extends BaseAudioHandler with QueueHandler, SeekHand
     final session = await AudioSession.instance;
     await session.configure(const AudioSessionConfiguration.music());
 
-    player.playbackEventStream.map(_transformEvent).pipe(playbackState);
-    
-    player.currentIndexStream.listen((index) {
-      if (index == null || queue.value.isEmpty) return;
-      if (index < 0 || index >= queue.value.length) return;
-      mediaItem.add(queue.value[index]);
-    });
+    player.playbackEventStream.listen((event) => playbackState.add(_transformEvent(event)));
+    player.playingStream.listen((_) => playbackState.add(_transformEvent(player.playbackEvent)));
 
-    player.sequenceStateStream.listen((state) {
-      if (state == null) return;
-      final seq = state.sequence;
-      if (seq.isEmpty) return;
+    player.durationStream.listen((d) {
+      final item = _current;
+      if (item == null || d == null || item.duration == d) return;
+      _current = item.copyWith(duration: d);
+      mediaItem.add(_current);
     });
   }
 
+  void refreshState() => playbackState.add(_transformEvent(player.playbackEvent));
+
   PlaybackState _transformEvent(PlaybackEvent event) {
+    final playing = transport.isPlaying();
     return PlaybackState(
       controls: [
         MediaControl.skipToPrevious,
-        if (player.playing) MediaControl.pause else MediaControl.play,
-        MediaControl.stop,
+        if (playing) MediaControl.pause else MediaControl.play,
         MediaControl.skipToNext,
+        MediaControl.stop,
       ],
       systemActions: const {
         MediaAction.seek,
         MediaAction.seekForward,
         MediaAction.seekBackward,
+        MediaAction.skipToQueueItem,
       },
       androidCompactActionIndices: const [0, 1, 2],
       processingState: const {
@@ -55,7 +79,7 @@ class SovereignAudioHandler extends BaseAudioHandler with QueueHandler, SeekHand
         ProcessingState.ready: AudioProcessingState.ready,
         ProcessingState.completed: AudioProcessingState.completed,
       }[player.processingState]!,
-      playing: player.playing,
+      playing: playing,
       updatePosition: player.position,
       bufferedPosition: player.bufferedPosition,
       speed: player.speed,
@@ -63,56 +87,48 @@ class SovereignAudioHandler extends BaseAudioHandler with QueueHandler, SeekHand
     );
   }
 
-  MediaItem _fileToMediaItem(String path, {String? title, String? artist}) {
+  static MediaItem buildItem(String path, {String? title, String? artist, String? album, Uri? artUri, Duration? duration}) {
     final fileName = path.split('/').last;
     final name = fileName.contains('.') ? fileName.substring(0, fileName.lastIndexOf('.')) : fileName;
-    String displayTitle = title?.isNotEmpty == true ? title! : name;
-    String displayArtist = artist?.isNotEmpty == true ? artist! : "Sovereign Tagger";
     return MediaItem(
       id: path,
-      album: "Sovereign Tagger",
-      title: displayTitle,
-      artist: displayArtist,
-      artUri: null,
-      duration: player.duration,
+      title: (title?.isNotEmpty ?? false) ? title! : name,
+      artist: (artist?.isNotEmpty ?? false) ? artist! : null,
+      album: (album?.isNotEmpty ?? false) ? album! : null,
+      artUri: artUri,
+      duration: duration,
     );
   }
 
-  Future<void> syncQueue(List<String> paths, {Map<String, Map<String, String>>? tagMap}) async {
-    final items = paths.map((p) {
-      final tags = tagMap?[p];
-      return _fileToMediaItem(p, title: tags?['TITLE'], artist: tags?['ARTIST']);
-    }).toList();
+  Future<void> syncQueue(List<MediaItem> items) async {
     queue.add(items);
-    if (items.isNotEmpty) {
-      final idx = player.currentIndex ?? 0;
-      if (idx >= 0 && idx < items.length) {
-        mediaItem.add(items[idx]);
-      }
-    }
   }
 
-  Future<void> updateNowPlaying(String path, {String? title, String? artist}) async {
-    mediaItem.add(_fileToMediaItem(path, title: title, artist: artist));
+  Future<void> updateNowPlaying(MediaItem item) async {
+    _current = item.duration == null && player.duration != null ? item.copyWith(duration: player.duration) : item;
+    mediaItem.add(_current);
   }
 
   @override
-  Future<void> play() => player.play();
+  Future<void> play() => transport.play();
 
   @override
-  Future<void> pause() => player.pause();
+  Future<void> pause() => transport.pause();
 
   @override
-  Future<void> stop() => player.stop();
+  Future<void> stop() => transport.stop();
 
   @override
-  Future<void> seek(Duration position) => player.seek(position);
+  Future<void> seek(Duration position) => transport.seek(position);
 
   @override
-  Future<void> skipToNext() => player.seekToNext();
+  Future<void> skipToNext() => transport.next();
 
   @override
-  Future<void> skipToPrevious() => player.seekToPrevious();
+  Future<void> skipToPrevious() => transport.previous();
+
+  @override
+  Future<void> skipToQueueItem(int index) => transport.skipToIndex(index);
 
   @override
   Future<void> setSpeed(double speed) => player.setSpeed(speed);

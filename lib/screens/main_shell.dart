@@ -15,6 +15,11 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:video_player/video_player.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 import '../core/audio_handler.dart';
+import '../core/forge_request.dart';
+import '../core/playback_fx.dart';
+import '../core/playlists.dart';
+import '../core/storage_client.dart';
+import '../core/tag_io.dart';
 import '../tabs/tab_grabber.dart';
 import '../tabs/tab_forge.dart';
 import '../tabs/tab_pipeline.dart';
@@ -27,51 +32,97 @@ import '../widgets/ghost_chat_overlay.dart';
 import '../core/tap_feedback.dart';
 import '../core/ghost_settings.dart';
 import 'settings_screen.dart';
-import 'package:permission_handler/permission_handler.dart';
 
 class SovereignState {
-  static final ValueNotifier<String> pendingForgePath = ValueNotifier<String>("");
+  static final ValueNotifier<ForgeRequest?> pendingForge = ValueNotifier<ForgeRequest?>(null);
+  static final ValueNotifier<String?> pendingGrabberUrl = ValueNotifier<String?>(null);
   static final ValueNotifier<int> currentTab = ValueNotifier<int>(0);
   static final ValueNotifier<Color> accentColor = ValueNotifier<Color>(const Color(0xFFFF003C));
+
+  static void sendToForge(ForgeRequest request) {
+    pendingForge.value = request;
+    currentTab.value = 1;
+  }
 }
 
 enum PlaybackRepeat { off, all, one }
 
+class TrackInfo {
+  final String title;
+  final String artist;
+  final String album;
+  final String? uri;
+  final int durationMs;
+  const TrackInfo({required this.title, this.artist = '', this.album = '', this.uri, this.durationMs = 0});
+}
+
 class AudioService {
-  static final AudioPlayer player = AudioPlayer();
+  static final AudioPlayer player = AudioPlayer(audioPipeline: PlaybackFx.createPipeline());
   static final ConcatenatingAudioSource _audioSource = ConcatenatingAudioSource(children: []);
   static final ValueNotifier<VideoPlayerController?> videoController = ValueNotifier<VideoPlayerController?>(null);
 
   static final ValueNotifier<String> currentTitle = ValueNotifier<String>("NO AUDIO LOADED");
   static final ValueNotifier<String> currentArtist = ValueNotifier<String>("[ System Idle. Tap To Mount Media. ]");
+  static final ValueNotifier<String> currentLyrics = ValueNotifier<String>("");
   static final ValueNotifier<bool> hasMedia = ValueNotifier<bool>(false);
   static final ValueNotifier<bool> isVideo = ValueNotifier<bool>(false);
   static final ValueNotifier<Image?> coverArtImage = ValueNotifier<Image?>(null);
 
   static final ValueNotifier<List<File>> playlist = ValueNotifier<List<File>>([]);
   static final ValueNotifier<int> currentIndex = ValueNotifier<int>(-1);
-  
+
   static final ValueNotifier<PlaybackRepeat> repeatMode = ValueNotifier<PlaybackRepeat>(PlaybackRepeat.off);
   static final ValueNotifier<bool> isShuffle = ValueNotifier<bool>(false);
-  
+
   static final ValueNotifier<int> sleepTimerMinutes = ValueNotifier<int>(0);
+  static final ValueNotifier<bool> sleepAtEndOfTrack = ValueNotifier<bool>(false);
   static final ValueNotifier<double> speedFactor = ValueNotifier<double>(1.0);
+  static final ValueNotifier<int> infoRevision = ValueNotifier<int>(0);
+  static final Map<String, TrackInfo> _info = {};
+
   static Timer? sleepTimer;
-  static Timer? _persistDebounce;
+  static DateTime? _sleepDeadline;
+  static bool _wantPlaying = false;
+  static int _loadToken = 0;
+  static String _loadedKey = "";
+  static DateTime _lastPersist = DateTime.fromMillisecondsSinceEpoch(0);
+  static String _countedPath = "";
+  static String _artCacheKey = "";
   static SovereignAudioHandler? _audioHandler;
   static SovereignAudioHandler? get audioHandler => _audioHandler;
+  static const MethodChannel _widgetChannel = MethodChannel('com.sovereign.tagger/widget');
+  static const Set<String> videoExtensions = {'mp4', 'mkv', 'webm', 'mov'};
+  static const Set<String> mediaExtensions = {'mp3', 'flac', 'm4a', 'aac', 'wav', 'ogg', 'opus', 'mp4', 'mkv', 'webm', 'mov'};
 
-  static const MethodChannel _id3Channel = MethodChannel('com.sovereign.tagger/id3');
+  static bool _isVideoPath(String path) => videoExtensions.contains(path.split('.').last.toLowerCase());
 
-  static void setSleepTimer(int minutes) {
-    sleepTimer?.cancel();
-    sleepTimerMinutes.value = minutes;
-    if (minutes > 0) {
-      sleepTimer = Timer(Duration(minutes: minutes), () {
-        stopPlayer();
-        sleepTimerMinutes.value = 0;
-      });
+  static bool get isPlaying => isVideo.value ? (videoController.value?.value.isPlaying ?? false) : player.playing;
+
+  static TrackInfo? infoFor(String path) => _info[path];
+
+  static void registerInfo(String path, TrackInfo info) {
+    _info[path] = info;
+  }
+
+  static Future<TrackInfo> ensureInfo(String path) async {
+    final existing = _info[path];
+    if (existing != null) return existing;
+    final name = path.split('/').last;
+    if (_isVideoPath(path)) {
+      final info = TrackInfo(title: name.contains('.') ? name.substring(0, name.lastIndexOf('.')) : name);
+      _info[path] = info;
+      return info;
     }
+    final tags = await TagIO.read(path);
+    final info = TrackInfo(
+      title: (tags['TITLE'] ?? '').isNotEmpty ? tags['TITLE']! : (name.contains('.') ? name.substring(0, name.lastIndexOf('.')) : name),
+      artist: tags['ARTIST'] ?? '',
+      album: tags['ALBUM'] ?? '',
+      durationMs: int.tryParse(tags['DURATION_MS'] ?? '') ?? 0,
+    );
+    _info[path] = info;
+    infoRevision.value++;
+    return info;
   }
 
   static Future<void> _queueLock = Future.value();
@@ -87,8 +138,38 @@ class AudioService {
     }
   }
 
+  static void setSleepTimer(int minutes) {
+    sleepTimer?.cancel();
+    sleepTimer = null;
+    _sleepDeadline = null;
+    sleepAtEndOfTrack.value = false;
+    PlaybackFx.setSleepFactor(1.0);
+    sleepTimerMinutes.value = minutes;
+    if (minutes <= 0) return;
+    _sleepDeadline = DateTime.now().add(Duration(minutes: minutes));
+    sleepTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+      final deadline = _sleepDeadline;
+      if (deadline == null) return;
+      final remaining = deadline.difference(DateTime.now());
+      sleepTimerMinutes.value = remaining.inSeconds <= 0 ? 0 : (remaining.inSeconds / 60).ceil();
+      if (remaining.inSeconds <= 20) PlaybackFx.setSleepFactor(remaining.inMilliseconds / 20000);
+      if (remaining <= Duration.zero) {
+        sleepTimer?.cancel();
+        sleepTimer = null;
+        _sleepDeadline = null;
+        pause().then((_) => PlaybackFx.setSleepFactor(1.0));
+      }
+    });
+  }
+
+  static void setSleepAtEndOfTrack(bool enabled) {
+    setSleepTimer(0);
+    sleepAtEndOfTrack.value = enabled;
+  }
+
   static Future<void> initializeGlobalListener() async {
     await player.setAudioSource(_audioSource);
+    await PlaybackFx.init(player);
 
     player.sequenceStateStream.listen((sequenceState) {
       final seqEmpty = sequenceState == null || sequenceState.sequence.isEmpty;
@@ -99,95 +180,69 @@ class AudioService {
       }
     });
 
-    player.currentIndexStream.listen((index) async {
+    player.currentIndexStream.listen((index) {
       if (index != null && index >= 0 && index < playlist.value.length) {
-        final isCurrentlyPlaying = player.playing;
-        
-        currentIndex.value = index;
-        final path = playlist.value[index].path;
-        final ext = path.split('.').last.toLowerCase();
+        _ensureLoaded(index);
+      }
+    });
 
-        currentTitle.value = path.split('/').last.toUpperCase();
-        currentArtist.value = "MOUNTING PAYLOAD...";
-        coverArtImage.value = null;
-        hasMedia.value = true;
-
-        if (['mp4', 'mkv', 'webm'].contains(ext)) {
-          isVideo.value = true;
-          currentArtist.value = "[ VIDEO STREAM ]";
-          
-          if (isCurrentlyPlaying) {
-             player.pause(); 
-          }
-
-          WakelockPlus.enable();
-          
-          videoController.value?.dispose();
-          final vc = VideoPlayerController.file(File(path));
-          await vc.initialize();
-          await vc.setLooping(repeatMode.value == PlaybackRepeat.one);
-          
-          if (isCurrentlyPlaying) {
-             vc.play();
-          }
-          
-          bool isFinished = false;
-          vc.addListener(() {
-            if (vc.value.isInitialized && !isFinished) {
-              if (repeatMode.value == PlaybackRepeat.one) return; 
-              
-              if (vc.value.position >= vc.value.duration && vc.value.duration > Duration.zero) {
-                isFinished = true;
-                nextTrack();
-              }
-            }
-          });
-          videoController.value = vc;
-        } else {
-          isVideo.value = false;
-          WakelockPlus.disable();
-          videoController.value?.dispose();
-          videoController.value = null;
-          
-          _readTags(path);
-          if (isCurrentlyPlaying) {
-             player.play();
-          }
-        }
+    player.positionDiscontinuityStream.listen((d) {
+      if (d.reason == PositionDiscontinuityReason.autoAdvance && sleepAtEndOfTrack.value) {
+        sleepAtEndOfTrack.value = false;
+        pause();
       }
     });
 
     player.playerStateStream.listen((state) {
       if (state.processingState == ProcessingState.completed && !isVideo.value) {
-        // End of queue: rewind current track + pause, but KEEP the loaded
-        // state (title/art/mini-player) like commercial players do. Never
-        // reset to idle here — that desyncs hasMedia/coverArt from playback.
         if (player.hasNext) return;
+        _wantPlaying = false;
         player.pause();
         final idx = currentIndex.value;
         if (idx >= 0 && idx < playlist.value.length) {
           player.seek(Duration.zero, index: idx);
         }
+        if (sleepAtEndOfTrack.value) sleepAtEndOfTrack.value = false;
       }
+      if (!state.playing) _persistQueue();
+      _audioHandler?.refreshState();
+      _pushWidget();
     });
 
     repeatMode.addListener(() {
       if (isVideo.value && videoController.value != null) {
         videoController.value!.setLooping(repeatMode.value == PlaybackRepeat.one);
       }
-      switch(repeatMode.value) {
-        case PlaybackRepeat.off: player.setLoopMode(LoopMode.off); break;
-        case PlaybackRepeat.all: player.setLoopMode(LoopMode.all); break;
-        case PlaybackRepeat.one: player.setLoopMode(LoopMode.one); break;
+      switch (repeatMode.value) {
+        case PlaybackRepeat.off:
+          player.setLoopMode(LoopMode.off);
+          break;
+        case PlaybackRepeat.all:
+          player.setLoopMode(LoopMode.all);
+          break;
+        case PlaybackRepeat.one:
+          player.setLoopMode(LoopMode.one);
+          break;
       }
     });
 
-    isShuffle.addListener(() {
-      player.setShuffleModeEnabled(isShuffle.value);
+    isShuffle.addListener(() async {
+      if (isShuffle.value) await player.shuffle();
+      await player.setShuffleModeEnabled(isShuffle.value);
     });
 
-    player.positionStream.listen((_) {
-      if (player.playing) _schedulePersist();
+    player.positionStream.listen((pos) {
+      if (!player.playing) return;
+      final now = DateTime.now();
+      if (now.difference(_lastPersist) > const Duration(seconds: 5)) _persistQueue();
+      final idx = currentIndex.value;
+      if (pos > const Duration(seconds: 30) && idx >= 0 && idx < playlist.value.length) {
+        final path = playlist.value[idx].path;
+        if (_countedPath != path) {
+          _countedPath = path;
+          PlaylistStore.recordPlay(path);
+        }
+      }
     });
 
     speedFactor.addListener(() {
@@ -199,16 +254,95 @@ class AudioService {
       if (saved != null && saved > 0) speedFactor.value = saved;
     });
 
-    restorePersistedQueue().then((restored) {
-      if (!restored) autoMountMusicFolder();
-    });
+    await restorePersistedQueue();
+  }
+
+  static Future<void> _ensureLoaded(int index) async {
+    if (index < 0 || index >= playlist.value.length) return;
+    final key = playlist.value[index].path;
+    if (key == _loadedKey) {
+      currentIndex.value = index;
+      return;
+    }
+    await _onIndexChanged(index);
+  }
+
+  static Future<void> _onIndexChanged(int index) async {
+    final token = ++_loadToken;
+    _loadedKey = playlist.value[index].path;
+    currentIndex.value = index;
+    final path = playlist.value[index].path;
+    final info = _info[path];
+    currentTitle.value = info?.title ?? path.split('/').last;
+    currentArtist.value = info?.artist.isNotEmpty == true ? info!.artist : "MOUNTING PAYLOAD...";
+    currentLyrics.value = "";
+    coverArtImage.value = null;
+    hasMedia.value = true;
+    _countedPath = _countedPath == path ? path : "";
+
+    if (_isVideoPath(path)) {
+      isVideo.value = true;
+      currentArtist.value = "[ VIDEO STREAM ]";
+      if (player.playing) await player.pause();
+      WakelockPlus.enable();
+      final old = videoController.value;
+      videoController.value = null;
+      await old?.dispose();
+      final vc = VideoPlayerController.file(File(path));
+      try {
+        await vc.initialize();
+      } catch (_) {
+        await vc.dispose();
+        return;
+      }
+      if (token != _loadToken) {
+        await vc.dispose();
+        return;
+      }
+      await vc.setLooping(repeatMode.value == PlaybackRepeat.one);
+      await vc.setPlaybackSpeed(speedFactor.value);
+      var finished = false;
+      vc.addListener(() {
+        if (!vc.value.isInitialized || finished) return;
+        if (repeatMode.value == PlaybackRepeat.one) return;
+        if (vc.value.duration > Duration.zero && vc.value.position >= vc.value.duration) {
+          finished = true;
+          nextTrack();
+        }
+      });
+      videoController.value = vc;
+      if (_wantPlaying) await vc.play();
+      _updateHandlerItem(path, currentTitle.value, "", null);
+    } else {
+      isVideo.value = false;
+      WakelockPlus.disable();
+      final old = videoController.value;
+      videoController.value = null;
+      await old?.dispose();
+      if (_wantPlaying && !player.playing) player.play();
+      await _readTags(path, token);
+    }
+    _persistQueue();
+    _pushWidget();
   }
 
   static Future<void> initAudioHandler() async {
     if (_audioHandler != null) return;
     try {
       _audioHandler = await audioservice.AudioService.init(
-        builder: () => SovereignAudioHandler(player),
+        builder: () => SovereignAudioHandler(
+          player,
+          TransportCallbacks(
+            play: resume,
+            pause: pause,
+            stop: stopPlayer,
+            next: () async => nextTrack(),
+            previous: () async => prevTrack(),
+            seek: seek,
+            skipToIndex: playIndex,
+            isPlaying: () => isPlaying,
+          ),
+        ),
         config: const audioservice.AudioServiceConfig(
           androidNotificationChannelId: 'com.sovereign.tagger.audio',
           androidNotificationChannelName: 'Sovereign Tagger',
@@ -225,44 +359,68 @@ class AudioService {
     final h = _audioHandler;
     if (h == null) return;
     try {
-      final paths = playlist.value.map((f) => f.path).toList();
-      await h.syncQueue(paths);
-      if (currentIndex.value >= 0 && currentIndex.value < paths.length) {
-        await h.updateNowPlaying(paths[currentIndex.value]);
-      }
+      final items = playlist.value.map((f) {
+        final info = _info[f.path];
+        return SovereignAudioHandler.buildItem(f.path, title: info?.title, artist: info?.artist, album: info?.album);
+      }).toList();
+      await h.syncQueue(items);
     } catch (_) {}
   }
 
-  static AudioSource _taggedSource(File f) => AudioSource.uri(Uri.file(f.path));
+  static void _updateHandlerItem(String path, String title, String artist, Uri? artUri, {String? album}) {
+    final h = _audioHandler;
+    if (h == null) return;
+    try {
+      h.updateNowPlaying(SovereignAudioHandler.buildItem(path, title: title, artist: artist, album: album, artUri: artUri, duration: player.duration));
+    } catch (_) {}
+  }
 
-  static Future<void> replacePlaylist(List<File> files, {int startIndex = 0, Duration startPosition = Duration.zero}) async {
+  static void _pushWidget() {
+    try {
+      _widgetChannel.invokeMethod('update', {
+        'title': hasMedia.value ? currentTitle.value : '',
+        'artist': hasMedia.value ? currentArtist.value : '',
+        'playing': isPlaying,
+      });
+    } catch (_) {}
+  }
+
+  static AudioSource _taggedSource(File f) => AudioSource.uri(Uri.file(f.path), tag: f.path);
+
+  static Future<void> replacePlaylist(List<File> files, {int startIndex = 0, Duration startPosition = Duration.zero, bool autoplay = false}) async {
     return _withQueueLock(() async {
+      _wantPlaying = autoplay;
       playlist.value = files;
       final sources = files.map(_taggedSource).toList();
       await _audioSource.clear();
       await _audioSource.addAll(sources);
       if (files.isNotEmpty) {
         final idx = startIndex.clamp(0, files.length - 1);
-        currentIndex.value = idx;
+        _loadedKey = "";
         await player.seek(startPosition, index: idx);
+        await _ensureLoaded(idx);
+        if (autoplay && !_isVideoPath(files[idx].path)) player.play();
+      } else {
+        currentIndex.value = -1;
       }
-      _schedulePersist();
+      _persistQueue();
       await _syncHandlerQueue();
     });
   }
+
+  static Future<void> playFiles(List<File> files, {int startIndex = 0}) => replacePlaylist(files, startIndex: startIndex, autoplay: true);
 
   static Future<void> playNext(File file) async {
     return _withQueueLock(() async {
       final currentList = List<File>.from(playlist.value);
       if (currentList.isEmpty) {
-        // avoid nested lock deadlock: handle empty without re-entering lock
         playlist.value = [file];
-        final sources = [file].map(_taggedSource).toList();
         await _audioSource.clear();
-        await _audioSource.addAll(sources);
-        currentIndex.value = 0;
+        await _audioSource.add(_taggedSource(file));
+        _loadedKey = "";
         await player.seek(Duration.zero, index: 0);
-        _schedulePersist();
+        await _ensureLoaded(0);
+        _persistQueue();
         await _syncHandlerQueue();
         return;
       }
@@ -270,44 +428,85 @@ class AudioService {
       currentList.insert(insertIdx, file);
       playlist.value = currentList;
       await _audioSource.insert(insertIdx, _taggedSource(file));
-      _schedulePersist();
+      _persistQueue();
       await _syncHandlerQueue();
     });
   }
 
-  static Future<void> addToQueue(File file) async {
+  static Future<void> addToQueue(File file) => addAllToQueue([file]);
+
+  static Future<void> addAllToQueue(List<File> files) async {
+    if (files.isEmpty) return;
     return _withQueueLock(() async {
-      final currentList = List<File>.from(playlist.value);
-      if (currentList.isEmpty) {
-        playlist.value = [file];
-        final sources = [file].map(_taggedSource).toList();
-        await _audioSource.clear();
-        await _audioSource.addAll(sources);
-        currentIndex.value = 0;
+      final wasEmpty = playlist.value.isEmpty;
+      playlist.value = [...playlist.value, ...files];
+      await _audioSource.addAll(files.map(_taggedSource).toList());
+      if (wasEmpty) {
+        _loadedKey = "";
         await player.seek(Duration.zero, index: 0);
-        _schedulePersist();
-        await _syncHandlerQueue();
-        return;
+        await _ensureLoaded(0);
       }
-      currentList.add(file);
-      playlist.value = currentList;
-      await _audioSource.add(_taggedSource(file));
-      _schedulePersist();
+      _persistQueue();
       await _syncHandlerQueue();
     });
+  }
+
+  static Future<void> playNow(File file) async {
+    final idx = playlist.value.indexWhere((f) => f.path == file.path);
+    if (idx >= 0) {
+      await playIndex(idx);
+      return;
+    }
+    await playNext(file);
+    final newIdx = playlist.value.indexWhere((f) => f.path == file.path);
+    if (newIdx >= 0) await playIndex(newIdx);
+  }
+
+  static Future<void> replacePathInQueue(String oldPath, String newPath) async {
+    if (oldPath.isEmpty || oldPath == newPath) return;
+    PlaylistStore.replacePath(oldPath, newPath);
+    final moved = _info.remove(oldPath);
+    if (moved != null) _info[newPath] = moved;
+    if (!playlist.value.any((f) => f.path == oldPath)) return;
+    return _withQueueLock(() async {
+      final list = List<File>.from(playlist.value);
+      final cur = currentIndex.value;
+      final wasPlaying = player.playing;
+      final pos = player.position;
+      for (var i = 0; i < list.length; i++) {
+        if (list[i].path != oldPath) continue;
+        list[i] = File(newPath);
+        await _audioSource.removeAt(i);
+        await _audioSource.insert(i, _taggedSource(list[i]));
+        if (i == cur) {
+          playlist.value = List<File>.from(list);
+          await player.seek(pos, index: i);
+          _loadedKey = newPath;
+          if (wasPlaying) player.play();
+        }
+      }
+      playlist.value = list;
+      _persistQueue();
+      await _syncHandlerQueue();
+    });
+  }
+
+  static Future<void> refreshNowPlaying() async {
+    final idx = currentIndex.value;
+    if (idx < 0 || idx >= playlist.value.length) return;
+    final path = playlist.value[idx].path;
+    _info.remove(path);
+    _artCacheKey = "";
+    if (!_isVideoPath(path)) await _readTags(path, _loadToken);
+    infoRevision.value++;
   }
 
   static Future<void> pickAndEnqueue() async {
     try {
-      FilePickerResult? result = await FilePicker.platform.pickFiles(type: FileType.any, allowMultiple: true);
+      final result = await FilePicker.platform.pickFiles(type: FileType.any, allowMultiple: true);
       if (result == null) return;
-      final files = result.files.where((f) => f.path != null).map((f) => File(f.path!)).where((file) {
-        final ext = file.path.split('.').last.toLowerCase();
-        return ['mp3', 'flac', 'm4a', 'wav', 'ogg', 'mp4', 'mkv', 'webm'].contains(ext);
-      }).toList();
-      for (final f in files) {
-        await addToQueue(f);
-      }
+      final files = result.files.where((f) => f.path != null).map((f) => File(f.path!)).where((file) => mediaExtensions.contains(file.path.split('.').last.toLowerCase())).toList();
+      await addAllToQueue(files);
     } catch (_) {}
   }
 
@@ -327,17 +526,15 @@ class AudioService {
       currentIndex.value = newCur;
 
       await _audioSource.move(index, insertAt);
-      _schedulePersist();
+      _persistQueue();
       await _syncHandlerQueue();
     });
   }
 
-  static void _schedulePersist() {
-    _persistDebounce?.cancel();
-    _persistDebounce = Timer(const Duration(seconds: 2), () { _persistQueue(); });
-  }
+  static Future<void> persistNow() => _persistQueue(force: true);
 
-  static Future<void> _persistQueue() async {
+  static Future<void> _persistQueue({bool force = false}) async {
+    _lastPersist = DateTime.now();
     try {
       final prefs = await SharedPreferences.getInstance();
       if (playlist.value.isEmpty) {
@@ -347,7 +544,7 @@ class AudioService {
       final payload = jsonEncode({
         'paths': playlist.value.map((f) => f.path).toList(),
         'index': currentIndex.value,
-        'positionMs': player.position.inMilliseconds,
+        'positionMs': isVideo.value ? (videoController.value?.value.position.inMilliseconds ?? 0) : player.position.inMilliseconds,
       });
       await prefs.setString('persist_queue', payload);
     } catch (_) {}
@@ -361,9 +558,17 @@ class AudioService {
       final data = jsonDecode(raw);
       final paths = (data['paths'] as List<dynamic>? ?? []).cast<String>();
       if (paths.isEmpty) return false;
-      final files = paths.map((p) => File(p)).where((f) => f.existsSync()).toList();
+      final files = <File>[];
+      var idx = (data['index'] as int?) ?? 0;
+      for (var i = 0; i < paths.length; i++) {
+        final f = File(paths[i]);
+        if (f.existsSync()) {
+          files.add(f);
+        } else if (i < idx) {
+          idx--;
+        }
+      }
       if (files.isEmpty) return false;
-      int idx = (data['index'] as int?) ?? 0;
       if (idx < 0 || idx >= files.length) idx = 0;
       final posMs = (data['positionMs'] as int?) ?? 0;
       await replacePlaylist(files, startIndex: idx, startPosition: Duration(milliseconds: posMs));
@@ -379,219 +584,279 @@ class AudioService {
       if (oldIndex < adjustedNewIndex) {
         adjustedNewIndex -= 1;
       }
+      if (oldIndex == adjustedNewIndex) return;
       final currentList = List<File>.from(playlist.value);
       final item = currentList.removeAt(oldIndex);
       currentList.insert(adjustedNewIndex, item);
+      final cur = currentIndex.value;
+      int newCur = cur;
+      if (oldIndex == cur) {
+        newCur = adjustedNewIndex;
+      } else if (oldIndex < cur && adjustedNewIndex >= cur) {
+        newCur = cur - 1;
+      } else if (oldIndex > cur && adjustedNewIndex <= cur) {
+        newCur = cur + 1;
+      }
       playlist.value = currentList;
+      currentIndex.value = newCur;
 
       await _audioSource.move(oldIndex, adjustedNewIndex);
-      _schedulePersist();
+      _persistQueue();
       await _syncHandlerQueue();
     });
   }
 
   static Future<void> removeFromPlaylist(int index) async {
     return _withQueueLock(() async {
+      if (index < 0 || index >= playlist.value.length) return;
       final currentList = List<File>.from(playlist.value);
       currentList.removeAt(index);
+      final wasCurrent = currentIndex.value == index;
       playlist.value = currentList;
       await _audioSource.removeAt(index);
-      
+
       if (currentList.isEmpty) {
-        await stopPlayer();
-      } else if (currentIndex.value == index) {
-        if (index < currentList.length) {
-          await playIndex(index);
-        } else {
-          await playIndex(index - 1);
-        }
+        await _resetToIdle();
+      } else if (wasCurrent) {
+        final next = index < currentList.length ? index : index - 1;
+        await player.seek(Duration.zero, index: next);
+        if (_wantPlaying && !_isVideoPath(currentList[next].path)) player.play();
       } else if (currentIndex.value > index) {
         currentIndex.value -= 1;
       }
-      _schedulePersist();
+      _persistQueue();
       await _syncHandlerQueue();
     });
   }
 
-  static Future<void> autoMountMusicFolder() async {
-    try {
-      if (await Permission.audio.isDenied) await Permission.audio.request();
-      if (await Permission.videos.isDenied) await Permission.videos.request();
-      if (await Permission.storage.isDenied) await Permission.storage.request();
-    } catch (_) {}
-    final List<String> targetPaths = [
-      '/storage/emulated/0/Music',
-      '/storage/emulated/0/Download',
-    ];
-
-    List<File> foundFiles = [];
-
-    for (String path in targetPaths) {
-      try {
-        final dir = Directory(path);
-        if (await dir.exists()) {
-          await for (var entity in dir.list(recursive: true, followLinks: false).handleError((_) {})) {
-            if (entity is File) {
-              final ext = entity.path.split('.').last.toLowerCase();
-              if (['mp3', 'flac', 'm4a', 'wav', 'ogg', 'mp4', 'mkv', 'webm'].contains(ext)) {
-                foundFiles.add(entity);
-              }
-            }
-          }
-        }
-      } catch (_) {}
-    }
-
-    if (foundFiles.isNotEmpty && playlist.value.isEmpty) {
-      replacePlaylist(foundFiles);
+  static Future<void> removePathsFromQueue(Set<String> paths) async {
+    for (var i = playlist.value.length - 1; i >= 0; i--) {
+      if (paths.contains(playlist.value[i].path)) await removeFromPlaylist(i);
     }
   }
 
   static Future<void> pickSingleFile() async {
     try {
-      FilePickerResult? result = await FilePicker.platform.pickFiles(type: FileType.any, allowMultiple: false);
+      final result = await FilePicker.platform.pickFiles(type: FileType.any, allowMultiple: false);
       if (result != null && result.files.single.path != null) {
-        await replacePlaylist([File(result.files.single.path!)]);
+        await playFiles([File(result.files.single.path!)]);
       }
     } catch (_) {}
   }
 
   static Future<void> pickMultipleFiles() async {
     try {
-      FilePickerResult? result = await FilePicker.platform.pickFiles(type: FileType.any, allowMultiple: true);
+      final result = await FilePicker.platform.pickFiles(type: FileType.any, allowMultiple: true);
       if (result != null && result.files.isNotEmpty) {
-        final files = result.files.where((f) => f.path != null).map((f) => File(f.path!)).where((file) {
-          final ext = file.path.split('.').last.toLowerCase();
-          return ['mp3', 'flac', 'm4a', 'wav', 'ogg', 'mp4', 'mkv', 'webm'].contains(ext);
-        }).toList();
-
-        if (files.isNotEmpty) {
-          await replacePlaylist(files);
-        }
+        final files = result.files.where((f) => f.path != null).map((f) => File(f.path!)).where((file) => mediaExtensions.contains(file.path.split('.').last.toLowerCase())).toList();
+        if (files.isNotEmpty) await playFiles(files);
       }
     } catch (_) {}
   }
 
   static Future<void> playIndex(int index) async {
     if (index < 0 || index >= playlist.value.length) return;
-
-    if (isVideo.value && videoController.value != null) {
-      videoController.value?.pause();
-    }
-
-    currentIndex.value = index;
+    _wantPlaying = true;
+    final targetIsVideo = _isVideoPath(playlist.value[index].path);
+    if (isVideo.value) await videoController.value?.pause();
     hasMedia.value = true;
-    if (player.processingState == ProcessingState.completed) {
-      try { await player.seek(Duration.zero, index: index); } catch (_) {}
-    }
-
     try {
-      await player.seek(Duration.zero, index: index);
-      player.play();
-      if (isVideo.value && videoController.value != null) {
-        videoController.value?.play();
+      if (index == currentIndex.value && player.currentIndex == index) {
+        if (isVideo.value) {
+          await videoController.value?.seekTo(Duration.zero);
+          await videoController.value?.play();
+        } else {
+          await player.seek(Duration.zero, index: index);
+          player.play();
+        }
+        return;
       }
+      await player.seek(Duration.zero, index: index);
+      if (!targetIsVideo) player.play();
     } catch (_) {}
+  }
+
+  static Future<void> resume() async {
+    _wantPlaying = true;
+    if (isVideo.value && videoController.value != null) {
+      await videoController.value!.play();
+      _audioHandler?.refreshState();
+      _pushWidget();
+      return;
+    }
+    if (player.processingState == ProcessingState.completed) {
+      final idx = currentIndex.value;
+      if (idx >= 0 && idx < playlist.value.length) {
+        await playIndex(idx);
+        return;
+      }
+    }
+    player.play();
+  }
+
+  static Future<void> pause() async {
+    _wantPlaying = false;
+    if (isVideo.value && videoController.value != null) {
+      await videoController.value!.pause();
+      _audioHandler?.refreshState();
+      _pushWidget();
+    }
+    await player.pause();
+    _persistQueue();
+  }
+
+  static Future<void> seek(Duration position) async {
+    if (isVideo.value && videoController.value != null) {
+      await videoController.value!.seekTo(position);
+    } else {
+      await player.seek(position);
+    }
+  }
+
+  static void togglePlayPause() {
+    isPlaying ? pause() : resume();
   }
 
   static void nextTrack() {
     if (playlist.value.isEmpty) return;
-
+    _wantPlaying = true;
     if (player.hasNext) {
-        player.seekToNext();
-        player.play();
-        if (isVideo.value && videoController.value != null) videoController.value?.play();
+      player.seekToNext().then((_) {
+        final idx = player.currentIndex ?? 0;
+        if (idx < playlist.value.length && !_isVideoPath(playlist.value[idx].path)) player.play();
+      });
     } else {
-        stopPlayer();
+      final first = player.effectiveIndices?.firstOrNull ?? 0;
+      _wantPlaying = false;
+      player.pause();
+      videoController.value?.pause();
+      player.seek(Duration.zero, index: first);
     }
   }
 
   static void prevTrack() {
     if (playlist.value.isEmpty) return;
-
     if (isVideo.value && videoController.value != null) {
       if (videoController.value!.value.position > const Duration(seconds: 3)) {
         videoController.value!.seekTo(Duration.zero);
         return;
       }
-    } else if (!isVideo.value) {
-      if (player.position > const Duration(seconds: 3)) {
-        player.seek(Duration.zero);
-        return;
-      }
+    } else if (player.position > const Duration(seconds: 3)) {
+      player.seek(Duration.zero);
+      return;
     }
-
     if (player.hasPrevious) {
-        player.seekToPrevious();
-        player.play();
-        if (isVideo.value && videoController.value != null) videoController.value?.play();
+      _wantPlaying = true;
+      player.seekToPrevious().then((_) {
+        final idx = player.currentIndex ?? 0;
+        if (idx < playlist.value.length && !_isVideoPath(playlist.value[idx].path)) player.play();
+      });
+    } else {
+      seek(Duration.zero);
     }
   }
 
   static Future<void> stopPlayer() async {
-    try { await player.stop(); } catch (_) {}
-    videoController.value?.pause();
+    _wantPlaying = false;
+    try {
+      await player.pause();
+      await player.seek(Duration.zero);
+    } catch (_) {}
+    await videoController.value?.pause();
+    await videoController.value?.seekTo(Duration.zero);
     WakelockPlus.disable();
-    
+    _persistQueue();
+    _pushWidget();
+  }
+
+  static Future<void> _resetToIdle() async {
+    _wantPlaying = false;
+    try {
+      await player.stop();
+    } catch (_) {}
+    final old = videoController.value;
+    videoController.value = null;
+    await old?.dispose();
+    WakelockPlus.disable();
     isVideo.value = false;
     currentTitle.value = "NO AUDIO LOADED";
     currentArtist.value = "[ System Idle. Tap To Mount Media. ]";
+    currentLyrics.value = "";
     coverArtImage.value = null;
     hasMedia.value = false;
+    currentIndex.value = -1;
+    _loadedKey = "";
+    _pushWidget();
   }
 
   static Future<void> clearPlaylist() async {
-    await stopPlayer();
-    playlist.value = [];
-    await _audioSource.clear();
-    currentIndex.value = -1;
-    _schedulePersist();
+    await _withQueueLock(() async {
+      playlist.value = [];
+      await _audioSource.clear();
+      await _resetToIdle();
+    });
+    _persistQueue();
     await _syncHandlerQueue();
   }
 
   static Future<void> setPlaybackSpeed(double s) async {
     speedFactor.value = s;
+    await videoController.value?.setPlaybackSpeed(s);
     try {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setDouble('playback_speed', s);
     } catch (_) {}
   }
 
-  static Future<void> _readTags(String path) async {
+  static Future<Uri?> _artUriFor(String path, List<int> bytes) async {
     try {
-      final Map<Object?, Object?> rawTags = await _id3Channel.invokeMethod('readTags', {'filePath': path});
-      final tags = rawTags.map((key, value) => MapEntry(key.toString(), value.toString()));
-
-      if (tags["TITLE"]?.isNotEmpty ?? false) currentTitle.value = tags["TITLE"]!;
-      if (tags["ARTIST"]?.isNotEmpty ?? false) currentArtist.value = tags["ARTIST"]!;
-      if (tags["ARTWORK_BASE64"] != null && tags["ARTWORK_BASE64"]!.isNotEmpty) {
-        coverArtImage.value = Image.memory(base64Decode(tags["ARTWORK_BASE64"]!), fit: BoxFit.contain);
-      } else if ((tags["TITLE"]?.isEmpty ?? true) && (tags["ARTIST"]?.isEmpty ?? true)) {
-        currentArtist.value = "[ UNKNOWN AUDIO ]";
+      final key = "${path.hashCode}_${bytes.length}";
+      final temp = await StorageClient.tempDir();
+      final dir = Directory('$temp/art_cache');
+      if (!dir.existsSync()) dir.createSync(recursive: true);
+      final file = File('${dir.path}/$key.jpg');
+      if (_artCacheKey != key) {
+        for (final f in dir.listSync()) {
+          if (f is File && f.path != file.path) {
+            try {
+              f.deleteSync();
+            } catch (_) {}
+          }
+        }
+        if (!file.existsSync()) await file.writeAsBytes(bytes, flush: true);
+        _artCacheKey = key;
       }
-      if (_audioHandler != null) {
-        try {
-          await _audioHandler!.updateNowPlaying(path, title: tags["TITLE"], artist: tags["ARTIST"]);
-        } catch (_) {}
-      }
-    } catch (e) {
-      currentArtist.value = "[ UNKNOWN AUDIO ]";
+      return Uri.file(file.path);
+    } catch (_) {
+      return null;
     }
   }
 
-  static void togglePlayPause() {
-    if (isVideo.value && videoController.value != null) {
-      final vc = videoController.value!;
-      vc.value.isPlaying ? vc.pause() : vc.play();
-    } else {
-      if (player.processingState == ProcessingState.completed) {
-        final idx = currentIndex.value;
-        if (idx >= 0 && idx < playlist.value.length) {
-          playIndex(idx);
-          return;
-        }
+  static Future<void> _readTags(String path, int token) async {
+    try {
+      final tags = await TagIO.read(path);
+      if (token != _loadToken) return;
+      final name = path.split('/').last;
+      final title = (tags["TITLE"]?.isNotEmpty ?? false) ? tags["TITLE"]! : (name.contains('.') ? name.substring(0, name.lastIndexOf('.')) : name);
+      final artist = tags["ARTIST"] ?? "";
+      currentTitle.value = title;
+      currentArtist.value = artist.isNotEmpty ? artist : "[ UNKNOWN ARTIST ]";
+      currentLyrics.value = tags["LYRICS"] ?? "";
+      _info[path] = TrackInfo(title: title, artist: artist, album: tags['ALBUM'] ?? '', uri: _info[path]?.uri, durationMs: int.tryParse(tags['DURATION_MS'] ?? '') ?? 0);
+      infoRevision.value++;
+      PlaybackFx.applyTrackGain(tags);
+      Uri? artUri;
+      final art = tags["ARTWORK_BASE64"] ?? "";
+      if (art.isNotEmpty) {
+        final bytes = base64Decode(art);
+        coverArtImage.value = Image.memory(bytes, fit: BoxFit.contain, gaplessPlayback: true);
+        artUri = await _artUriFor(path, bytes);
       }
-      player.playing ? player.pause() : player.play();
+      if (token != _loadToken) return;
+      _updateHandlerItem(path, title, artist, artUri, album: tags['ALBUM']);
+      _pushWidget();
+    } catch (e) {
+      if (token == _loadToken) currentArtist.value = "[ UNKNOWN AUDIO ]";
     }
   }
 
@@ -605,8 +870,9 @@ class MainShell extends StatefulWidget {
   State<MainShell> createState() => _MainShellState();
 }
 
-class _MainShellState extends State<MainShell> {
+class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
   double? _miniDragPercent;
+  StreamSubscription<String>? _shareSub;
   late final GlobalKey<GhostAvatarState> _ghostKey = GlobalKey<GhostAvatarState>();
   late final GhostAvatarController _ghostController = GhostAvatarController(_ghostKey);
 
@@ -621,9 +887,15 @@ class _MainShellState extends State<MainShell> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    PlaylistStore.load();
     AudioService.initializeGlobalListener();
     AudioService.initAudioHandler();
     SovereignState.currentTab.addListener(_onTabChanged);
+    _shareSub = StorageClient.sharedUrls.listen((url) {
+      SovereignState.pendingGrabberUrl.value = url;
+      SovereignState.currentTab.value = 0;
+    }, onError: (_) {});
     SharedPreferences.getInstance().then((prefs) {
       GhostSettings.load(prefs);
       if (!GhostSettings.firstLaunchComplete.value && GhostSettings.visible.value) {
@@ -636,8 +908,17 @@ class _MainShellState extends State<MainShell> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _shareSub?.cancel();
     SovereignState.currentTab.removeListener(_onTabChanged);
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.paused || state == AppLifecycleState.inactive || state == AppLifecycleState.detached) {
+      AudioService.persistNow();
+    }
   }
 
   void _onTabChanged() {
@@ -652,6 +933,21 @@ class _MainShellState extends State<MainShell> {
     ));
   }
 
+  Widget _miniArt(Color themeColor) {
+    return ValueListenableBuilder<Image?>(
+      valueListenable: AudioService.coverArtImage,
+      builder: (context, image, _) {
+        return Container(
+          width: 40,
+          height: 40,
+          decoration: BoxDecoration(color: Colors.black, border: Border.all(color: themeColor.withValues(alpha: 0.4)), borderRadius: BorderRadius.circular(4)),
+          clipBehavior: Clip.antiAlias,
+          child: image != null ? Image(image: image.image, fit: BoxFit.cover, gaplessPlayback: true) : Icon(Icons.keyboard_arrow_up, color: themeColor),
+        );
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return ValueListenableBuilder<Color>(
@@ -661,7 +957,7 @@ class _MainShellState extends State<MainShell> {
           backgroundColor: Colors.black,
           appBar: AppBar(
             title: Text(
-              'SOVEREIGN TAGGER', 
+              'SOVEREIGN TAGGER',
               style: TextStyle(fontFamily: 'ShareTechMono', color: themeColor, fontWeight: FontWeight.bold, letterSpacing: 1.5)
             ),
             backgroundColor: Colors.black,
@@ -714,161 +1010,131 @@ class _MainShellState extends State<MainShell> {
                       children: _tabs,
                     ),
                   ),
-              ValueListenableBuilder<bool>(
-                valueListenable: AudioService.hasMedia,
-                builder: (context, hasMedia, child) {
-                  return GestureDetector(
-                    onTap: _openTheater,
-                    behavior: HitTestBehavior.opaque,
-                    onHorizontalDragEnd: (details) {
-                      if (details.primaryVelocity == null) return;
-                      if (details.primaryVelocity! > 300) {
-                        AudioService.prevTrack();
-                      } else if (details.primaryVelocity! < -300) {
-                        AudioService.nextTrack();
-                      }
-                    },
-                    child: Container(
-                      decoration: BoxDecoration(
-                        color: Colors.black,
-                        border: Border(top: BorderSide(color: themeColor.withValues(alpha: 0.5))),
-                      ),
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          if (hasMedia)
-                            ValueListenableBuilder<bool>(
-                              valueListenable: AudioService.isVideo,
-                              builder: (context, isVideo, child) {
-                                if (isVideo) {
-                                  return ValueListenableBuilder<VideoPlayerController?>(
-                                    valueListenable: AudioService.videoController,
-                                    builder: (context, controller, child) {
-                                      if (controller == null) return const SizedBox.shrink();
-                                      return ValueListenableBuilder<VideoPlayerValue>(
-                                        valueListenable: controller,
-                                        builder: (context, value, child) {
-                                          final position = value.position;
-                                          final duration = value.duration;
-                                          double progress = 0.0;
-                                          if (duration.inMilliseconds > 0) {
-                                            progress = (position.inMilliseconds / duration.inMilliseconds).clamp(0.0, 1.0);
-                                          }
-                                          return _buildMiniProgressBar(progress, duration, themeColor, (ms) => controller.seekTo(Duration(milliseconds: ms)));
-                                        },
+                  ValueListenableBuilder<bool>(
+                    valueListenable: AudioService.hasMedia,
+                    builder: (context, hasMedia, child) {
+                      return GestureDetector(
+                        onTap: _openTheater,
+                        behavior: HitTestBehavior.opaque,
+                        onHorizontalDragEnd: (details) {
+                          if (details.primaryVelocity == null) return;
+                          if (details.primaryVelocity! > 300) {
+                            AudioService.prevTrack();
+                          } else if (details.primaryVelocity! < -300) {
+                            AudioService.nextTrack();
+                          }
+                        },
+                        child: Container(
+                          decoration: BoxDecoration(
+                            color: Colors.black,
+                            border: Border(top: BorderSide(color: themeColor.withValues(alpha: 0.5))),
+                          ),
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              if (hasMedia)
+                                ValueListenableBuilder<bool>(
+                                  valueListenable: AudioService.isVideo,
+                                  builder: (context, isVideo, child) {
+                                    if (isVideo) {
+                                      return ValueListenableBuilder<VideoPlayerController?>(
+                                        valueListenable: AudioService.videoController,
+                                        builder: (context, controller, child) {
+                                          if (controller == null) return const SizedBox(height: 16);
+                                          return ValueListenableBuilder<VideoPlayerValue>(
+                                            valueListenable: controller,
+                                            builder: (context, value, child) {
+                                              final position = value.position;
+                                              final duration = value.duration;
+                                              double progress = 0.0;
+                                              if (duration.inMilliseconds > 0) {
+                                                progress = (position.inMilliseconds / duration.inMilliseconds).clamp(0.0, 1.0);
+                                              }
+                                              return _buildMiniProgressBar(progress, duration, themeColor, (ms) => controller.seekTo(Duration(milliseconds: ms)));
+                                            },
+                                          );
+                                        }
                                       );
                                     }
-                                  );
-                                } else {
-                                  return StreamBuilder<Duration>(
-                                    stream: AudioService.player.positionStream,
-                                    builder: (context, snapshot) {
-                                      final position = snapshot.data ?? Duration.zero;
-                                      final duration = AudioService.player.duration ?? Duration.zero;
-                                      double progress = 0.0;
-                                      if (duration.inMilliseconds > 0) {
-                                        progress = (position.inMilliseconds / duration.inMilliseconds).clamp(0.0, 1.0);
-                                      }
-                                      return _buildMiniProgressBar(progress, duration, themeColor, (ms) => AudioService.player.seek(Duration(milliseconds: ms)));
-                                    },
-                                  );
-                                }
-                              },
-                            ),
-                          Padding(
-                            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                            child: Row(
-                              children: [
-                                Icon(Icons.keyboard_arrow_up, color: themeColor),
-                                const SizedBox(width: 12),
-                                Expanded(
-                                  child: Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      ValueListenableBuilder<String>(
-                                        valueListenable: AudioService.currentTitle,
-                                        builder: (context, title, child) {
-                                          return AutoScrollText(
-                                            text: title, 
-                                            style: const TextStyle(fontFamily: 'ShareTechMono', fontWeight: FontWeight.bold, color: Colors.white),
-                                            textAlign: TextAlign.left,
-                                          );
+                                    return StreamBuilder<Duration>(
+                                      stream: AudioService.player.positionStream,
+                                      builder: (context, snapshot) {
+                                        final position = snapshot.data ?? Duration.zero;
+                                        final duration = AudioService.player.duration ?? Duration.zero;
+                                        double progress = 0.0;
+                                        if (duration.inMilliseconds > 0) {
+                                          progress = (position.inMilliseconds / duration.inMilliseconds).clamp(0.0, 1.0);
                                         }
-                                      ),
-                                      ValueListenableBuilder<String>(
-                                        valueListenable: AudioService.currentArtist,
-                                        builder: (context, artist, child) {
-                                          if (artist.isEmpty) return const SizedBox.shrink();
-                                          return AutoScrollText(
-                                            text: artist, 
-                                            style: TextStyle(fontFamily: 'ShareTechMono', fontSize: 12, color: themeColor),
-                                            textAlign: TextAlign.left,
-                                          );
-                                        }
-                                      ),
-                                    ],
-                                  ),
+                                        return _buildMiniProgressBar(progress, duration, themeColor, (ms) => AudioService.player.seek(Duration(milliseconds: ms)));
+                                      },
+                                    );
+                                  },
                                 ),
-                                if (hasMedia) ...[
-                                  ValueListenableBuilder<bool>(
-                                    valueListenable: AudioService.isVideo,
-                                    builder: (context, isVideo, child) {
-                                      if (isVideo) {
-                                        return ValueListenableBuilder<VideoPlayerController?>(
-                                          valueListenable: AudioService.videoController,
-                                          builder: (context, controller, child) {
-                                            if (controller == null) return const SizedBox.shrink();
-                                            return ValueListenableBuilder<VideoPlayerValue>(
-                                              valueListenable: controller,
-                                              builder: (context, value, child) {
-                                                return IconButton(
-                                                  icon: Icon(value.isPlaying ? Icons.pause : Icons.play_arrow, color: themeColor, size: 32),
-                                                  onPressed: () => value.isPlaying ? controller.pause() : controller.play(),
-                                                );
-                                              }
-                                            );
-                                          }
-                                        );
-                                      } else {
-                                        return StreamBuilder<PlayerState>(
-                                          stream: AudioService.player.playerStateStream,
-                                          builder: (context, snapshot) {
-                                            final playing = snapshot.data?.playing ?? false;
-                                            return IconButton(
-                                              icon: Icon(playing ? Icons.pause : Icons.play_arrow, color: themeColor, size: 32),
-                                              onPressed: () => playing ? AudioService.player.pause() : AudioService.player.play(),
-                                            );
-                                          }
-                                        );
-                                      }
-                                    }
-                                  ),
-                                ] else ...[
-                                  Row(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      IconButton(
-                                        icon: Icon(Icons.file_open, color: themeColor, size: 28),
-                                        tooltip: "Load Single File",
-                                        onPressed: AudioService.pickSingleFile,
+                              Padding(
+                                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                                child: Row(
+                                  children: [
+                                    _miniArt(themeColor),
+                                    const SizedBox(width: 12),
+                                    Expanded(
+                                      child: Column(
+                                        crossAxisAlignment: CrossAxisAlignment.start,
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          ValueListenableBuilder<String>(
+                                            valueListenable: AudioService.currentTitle,
+                                            builder: (context, title, child) {
+                                              return AutoScrollText(
+                                                text: title,
+                                                style: const TextStyle(fontFamily: 'ShareTechMono', fontWeight: FontWeight.bold, color: Colors.white),
+                                                textAlign: TextAlign.left,
+                                              );
+                                            }
+                                          ),
+                                          ValueListenableBuilder<String>(
+                                            valueListenable: AudioService.currentArtist,
+                                            builder: (context, artist, child) {
+                                              if (artist.isEmpty) return const SizedBox.shrink();
+                                              return AutoScrollText(
+                                                text: artist,
+                                                style: TextStyle(fontFamily: 'ShareTechMono', fontSize: 12, color: themeColor),
+                                                textAlign: TextAlign.left,
+                                              );
+                                            }
+                                          ),
+                                        ],
                                       ),
+                                    ),
+                                    if (hasMedia) ...[
+                                      const IconButton(
+                                        icon: Icon(Icons.skip_previous, color: Colors.white70, size: 26),
+                                        onPressed: AudioService.prevTrack,
+                                      ),
+                                      _MiniPlayButton(themeColor: themeColor),
+                                      const IconButton(
+                                        icon: Icon(Icons.skip_next, color: Colors.white70, size: 26),
+                                        onPressed: AudioService.nextTrack,
+                                      ),
+                                    ] else ...[
                                       IconButton(
                                         icon: Icon(Icons.library_music, color: themeColor, size: 28),
-                                        tooltip: "Load Batch Into The Machine",
+                                        tooltip: "OPEN LIBRARY",
+                                        onPressed: () => SovereignState.currentTab.value = 4,
+                                      ),
+                                      IconButton(
+                                        icon: Icon(Icons.file_open, color: themeColor, size: 26),
+                                        tooltip: "Load Files",
                                         onPressed: AudioService.pickMultipleFiles,
                                       ),
                                     ],
-                                  )
-                                ],
-                              ],
-                            ),
+                                  ],
+                                ),
+                              ),
+                            ],
                           ),
-                        ],
-                      ),
-                    ),
-                  );
-                }
+                        ),
+                      );
+                    }
                   ),
                 ],
               ),
@@ -901,7 +1167,7 @@ class _MainShellState extends State<MainShell> {
             items: const [
               BottomNavigationBarItem(icon: Icon(Icons.download), label: 'GRABBER'),
               BottomNavigationBarItem(icon: Icon(Icons.edit_note), label: 'FORGE'),
-              BottomNavigationBarItem(icon: Icon(Icons.auto_awesome_motion), label: 'PIPELINE'),
+              BottomNavigationBarItem(icon: Icon(Icons.auto_awesome_motion), label: 'BATCH'),
               BottomNavigationBarItem(icon: Icon(Icons.build), label: 'WORKBENCH'),
               BottomNavigationBarItem(icon: Icon(Icons.library_music), label: 'LIBRARY'),
             ],
@@ -959,14 +1225,53 @@ class _MainShellState extends State<MainShell> {
   }
 }
 
+class _MiniPlayButton extends StatelessWidget {
+  final Color themeColor;
+  const _MiniPlayButton({required this.themeColor});
+
+  @override
+  Widget build(BuildContext context) {
+    return ValueListenableBuilder<bool>(
+      valueListenable: AudioService.isVideo,
+      builder: (context, isVideo, _) {
+        if (isVideo) {
+          return ValueListenableBuilder<VideoPlayerController?>(
+            valueListenable: AudioService.videoController,
+            builder: (context, controller, _) {
+              if (controller == null) return SizedBox(width: 48, height: 48, child: Center(child: SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: themeColor))));
+              return ValueListenableBuilder<VideoPlayerValue>(
+                valueListenable: controller,
+                builder: (context, value, _) => IconButton(
+                  icon: Icon(value.isPlaying ? Icons.pause : Icons.play_arrow, color: themeColor, size: 32),
+                  onPressed: AudioService.togglePlayPause,
+                ),
+              );
+            },
+          );
+        }
+        return StreamBuilder<PlayerState>(
+          stream: AudioService.player.playerStateStream,
+          builder: (context, snapshot) {
+            final playing = snapshot.data?.playing ?? false;
+            return IconButton(
+              icon: Icon(playing ? Icons.pause : Icons.play_arrow, color: themeColor, size: 32),
+              onPressed: AudioService.togglePlayPause,
+            );
+          },
+        );
+      },
+    );
+  }
+}
+
 class AutoScrollText extends StatefulWidget {
   final String text;
   final TextStyle style;
   final TextAlign textAlign;
-  
+
   const AutoScrollText({
-    super.key, 
-    required this.text, 
+    super.key,
+    required this.text,
     required this.style,
     this.textAlign = TextAlign.center,
   });
@@ -1009,7 +1314,7 @@ class _AutoScrollTextState extends State<AutoScrollText> {
           _scrollController.jumpTo(0);
         }
       } catch (_) {}
-      
+
       _isScrolling = true;
       await Future.delayed(const Duration(seconds: 2));
       if (!mounted || currentId != _scrollId) return;
@@ -1019,7 +1324,7 @@ class _AutoScrollTextState extends State<AutoScrollText> {
           await Future.delayed(const Duration(milliseconds: 100));
           continue;
         }
-        
+
         try {
           final maxScroll = _scrollController.position.maxScrollExtent;
           if (maxScroll > 0) {
@@ -1029,16 +1334,16 @@ class _AutoScrollTextState extends State<AutoScrollText> {
               duration: Duration(milliseconds: durationMs),
               curve: Curves.linear,
             );
-            
+
             if (!mounted || !_scrollController.hasClients || !_isScrolling || _scrollId != currentId) break;
-            
+
             _scrollController.jumpTo(0);
             await Future.delayed(const Duration(seconds: 2));
           } else {
             break;
           }
         } catch (_) {
-          break; 
+          break;
         }
       }
     });
@@ -1065,13 +1370,13 @@ class _AutoScrollTextState extends State<AutoScrollText> {
         )..layout(minWidth: 0, maxWidth: double.infinity);
 
         final bool overflows = textPainter.size.width > constraints.maxWidth;
-        // TextPainter is short-lived here; GC reclaims. No dispose needed for non-cached painters.
+        textPainter.dispose();
 
         if (!overflows) {
           return SizedBox(
             width: constraints.maxWidth,
             child: Text(
-              cleanText, 
+              cleanText,
               style: widget.style,
               textAlign: widget.textAlign,
               maxLines: 1,

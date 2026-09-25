@@ -9,9 +9,14 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:video_player/video_player.dart';
+import '../core/forge_request.dart';
+import '../core/lrc.dart';
+import '../core/metadata_sources.dart';
+import '../core/playlists.dart';
 import '../screens/main_shell.dart';
 import '../screens/playback_engine_screen.dart';
 import '../screens/eq_presets_screen.dart';
+import '../widgets/playlist_picker.dart';
 
 class TheaterScreen extends StatelessWidget {
   const TheaterScreen({super.key});
@@ -23,9 +28,20 @@ class TheaterScreen extends StatelessWidget {
     return '$hours$minutes:$seconds';
   }
 
-  void _seekVideo(VideoPlayerController controller, int seconds) {
-    final newPos = controller.value.position + Duration(seconds: seconds);
-    controller.seekTo(newPos);
+  void _seekBy(int seconds) {
+    if (AudioService.isVideo.value && AudioService.videoController.value != null) {
+      final c = AudioService.videoController.value!;
+      c.seekTo(c.value.position + Duration(seconds: seconds));
+    } else {
+      var target = AudioService.player.position + Duration(seconds: seconds);
+      if (target.isNegative) target = Duration.zero;
+      AudioService.player.seek(target);
+    }
+  }
+
+  void _sendToForge(BuildContext context, String path) {
+    Navigator.of(context).popUntil((route) => route.isFirst);
+    SovereignState.sendToForge(ForgeRequest(path: path, origin: ForgeOrigin.player, originUri: AudioService.infoFor(path)?.uri));
   }
 
   void _showTrackMenu(BuildContext context, File file, int index, Color themeColor) {
@@ -36,50 +52,44 @@ class TheaterScreen extends StatelessWidget {
         borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
         side: BorderSide(color: themeColor.withValues(alpha: 0.5)),
       ),
-      builder: (context) {
+      builder: (sheetContext) {
+        final isFav = PlaylistStore.isFavorite(file.path);
+        Widget tile(IconData icon, String title, String subtitle, VoidCallback onTap, {Color? color}) => ListTile(
+              leading: Icon(icon, color: color ?? themeColor),
+              title: Text(title, style: TextStyle(fontFamily: 'ShareTechMono', color: color ?? Colors.white, fontWeight: FontWeight.bold)),
+              subtitle: Text(subtitle, style: TextStyle(fontFamily: 'ShareTechMono', color: (color ?? themeColor).withValues(alpha: 0.7), fontSize: 12)),
+              onTap: onTap,
+            );
         return SafeArea(
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Container(
-                margin: const EdgeInsets.symmetric(vertical: 12),
-                height: 4, width: 40,
-                decoration: BoxDecoration(color: Colors.white24, borderRadius: BorderRadius.circular(2)),
-              ),
-              ListTile(
-                leading: Icon(Icons.edit_note, color: themeColor),
-                title: const Text("SEND TO FORGE", style: TextStyle(fontFamily: 'ShareTechMono', color: Colors.white, fontWeight: FontWeight.bold)),
-                subtitle: Text("Export to ID3 Workspace", style: TextStyle(fontFamily: 'ShareTechMono', color: themeColor.withValues(alpha: 0.7), fontSize: 12)),
-                onTap: () {
-                  Navigator.pop(context);
-                  Navigator.pop(context);
-                  SovereignState.pendingForgePath.value = file.path;
-                  SovereignState.currentTab.value = 1;
-                },
-              ),
-              ListTile(
-                leading: Icon(Icons.low_priority, color: themeColor),
-                title: const Text("PLAY NEXT", style: TextStyle(fontFamily: 'ShareTechMono', color: Colors.white, fontWeight: FontWeight.bold)),
-                subtitle: Text("Queue Immediately After Current Track", style: TextStyle(fontFamily: 'ShareTechMono', color: themeColor.withValues(alpha: 0.7), fontSize: 12)),
-                onTap: () {
-                  AudioService.moveAfterCurrent(index);
-                  Navigator.pop(context);
-                },
-              ),
-              ListTile(
-                leading: const Icon(Icons.delete_sweep, color: Colors.redAccent),
-                title: const Text("REMOVE FROM THE MACHINE", style: TextStyle(fontFamily: 'ShareTechMono', color: Colors.redAccent, fontWeight: FontWeight.bold)),
-                subtitle: const Text("Delete from active queue", style: TextStyle(fontFamily: 'ShareTechMono', color: Colors.white54, fontSize: 12)),
-                onTap: () {
-                  AudioService.removeFromPlaylist(index);
-                  Navigator.pop(context);
-                },
-              ),
+              Container(margin: const EdgeInsets.symmetric(vertical: 12), height: 4, width: 40, decoration: BoxDecoration(color: Colors.white24, borderRadius: BorderRadius.circular(2))),
+              tile(Icons.low_priority, "PLAY NEXT", "Queue immediately after the current track", () {
+                AudioService.moveAfterCurrent(index);
+                Navigator.pop(sheetContext);
+              }),
+              tile(isFav ? Icons.favorite : Icons.favorite_border, isFav ? "REMOVE FROM FAVORITES" : "ADD TO FAVORITES", "Heart this track", () {
+                PlaylistStore.toggleFavorite(file.path);
+                Navigator.pop(sheetContext);
+              }, color: Colors.pinkAccent),
+              tile(Icons.playlist_add, "ADD TO PLAYLIST", "Pick or create a playlist", () async {
+                Navigator.pop(sheetContext);
+                await showPlaylistPicker(context, [file.path], themeColor);
+              }),
+              tile(Icons.edit_note, "EDIT IN FORGE", "Fix tags, art, lyrics and file name", () {
+                Navigator.pop(sheetContext);
+                _sendToForge(context, file.path);
+              }),
+              tile(Icons.delete_sweep, "REMOVE FROM QUEUE", "The file itself is not deleted", () {
+                AudioService.removeFromPlaylist(index);
+                Navigator.pop(sheetContext);
+              }, color: Colors.redAccent),
               const SizedBox(height: 8),
             ],
           ),
         );
-      }
+      },
     );
   }
 
@@ -88,128 +98,128 @@ class TheaterScreen extends StatelessWidget {
       context: context,
       backgroundColor: Colors.transparent,
       isScrollControlled: true,
-      builder: (context) {
+      builder: (sheetContext) {
         return Container(
-          height: MediaQuery.of(context).size.height * 0.75,
+          height: MediaQuery.of(sheetContext).size.height * 0.8,
           decoration: BoxDecoration(
-            color: Colors.black.withValues(alpha: 0.95),
+            color: Colors.black.withValues(alpha: 0.97),
             border: Border(top: BorderSide(color: themeColor.withValues(alpha: 0.5))),
             borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
           ),
           child: Material(
             type: MaterialType.transparency,
             child: Column(
-            children: [
-              Container(
-                margin: const EdgeInsets.symmetric(vertical: 12),
-                height: 4,
-                width: 40,
-                decoration: BoxDecoration(
-                  color: Colors.white24,
-                  borderRadius: BorderRadius.circular(2),
-                ),
-              ),
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: OutlinedButton.icon(
-                        onPressed: AudioService.pickSingleFile,
-                        icon: Icon(Icons.file_open, color: themeColor),
-                        label: Text("MOUNT SINGLE", style: TextStyle(fontFamily: 'ShareTechMono', color: themeColor)),
-                        style: OutlinedButton.styleFrom(side: BorderSide(color: themeColor)),
+              children: [
+                Container(margin: const EdgeInsets.symmetric(vertical: 12), height: 4, width: 40, decoration: BoxDecoration(color: Colors.white24, borderRadius: BorderRadius.circular(2))),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16.0),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          onPressed: AudioService.pickAndEnqueue,
+                          icon: Icon(Icons.playlist_add, color: themeColor, size: 18),
+                          label: Text("ADD FILES", style: TextStyle(fontFamily: 'ShareTechMono', color: themeColor, fontSize: 12)),
+                          style: OutlinedButton.styleFrom(side: BorderSide(color: themeColor.withValues(alpha: 0.5))),
+                        ),
                       ),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: OutlinedButton.icon(
-                        onPressed: AudioService.pickMultipleFiles,
-                        icon: const Icon(Icons.library_music, color: Colors.cyanAccent),
-                        label: const Text("MOUNT BATCH", style: TextStyle(fontFamily: 'ShareTechMono', color: Colors.cyanAccent)),
-                        style: OutlinedButton.styleFrom(side: BorderSide(color: Colors.cyanAccent.withValues(alpha: 0.7))),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          onPressed: () async {
+                            final paths = AudioService.playlist.value.map((f) => f.path).toList();
+                            if (paths.isEmpty) return;
+                            await showPlaylistPicker(sheetContext, paths, themeColor, createOnly: true);
+                          },
+                          icon: const Icon(Icons.save_alt, color: Colors.cyanAccent, size: 18),
+                          label: const Text("SAVE AS PLAYLIST", style: TextStyle(fontFamily: 'ShareTechMono', color: Colors.cyanAccent, fontSize: 12)),
+                          style: OutlinedButton.styleFrom(side: BorderSide(color: Colors.cyanAccent.withValues(alpha: 0.6))),
+                        ),
                       ),
-                    ),
-                  ],
-                ),
-              ),
-              Padding(
-                padding: const EdgeInsets.only(left: 16.0, right: 16.0, bottom: 4.0),
-                child: SizedBox(
-                  width: double.infinity,
-                  child: OutlinedButton.icon(
-                    onPressed: () => AudioService.pickAndEnqueue(),
-                    icon: Icon(Icons.playlist_add, color: themeColor),
-                    label: Text("ENQUEUE FILES (APPEND)", style: TextStyle(fontFamily: 'ShareTechMono', color: themeColor)),
-                    style: OutlinedButton.styleFrom(side: BorderSide(color: themeColor.withValues(alpha: 0.5))),
+                    ],
                   ),
                 ),
-              ),
-              Padding(
-                padding: const EdgeInsets.only(left: 20.0, right: 16.0, bottom: 4.0, top: 12.0),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Text("> ACTIVE PLAYLIST", style: TextStyle(fontFamily: 'ShareTechMono', fontSize: 14, fontWeight: FontWeight.bold, color: themeColor)),
-                    IconButton(
-                      icon: const Icon(Icons.delete_sweep, color: Colors.redAccent),
-                      onPressed: () {
-                        AudioService.clearPlaylist();
-                        Navigator.pop(context);
-                      },
-                      tooltip: "PURGE THE MACHINE",
-                    ),
-                  ],
+                Padding(
+                  padding: const EdgeInsets.only(left: 20.0, right: 8.0, top: 8.0),
+                  child: Row(
+                    children: [
+                      ValueListenableBuilder<List<File>>(
+                        valueListenable: AudioService.playlist,
+                        builder: (context, list, _) => Text("> UP NEXT • ${list.length} TRACKS", style: TextStyle(fontFamily: 'ShareTechMono', fontSize: 14, fontWeight: FontWeight.bold, color: themeColor)),
+                      ),
+                      const Spacer(),
+                      IconButton(
+                        icon: const Icon(Icons.delete_sweep, color: Colors.redAccent),
+                        onPressed: () {
+                          AudioService.clearPlaylist();
+                          Navigator.pop(sheetContext);
+                        },
+                        tooltip: "CLEAR QUEUE",
+                      ),
+                    ],
+                  ),
                 ),
-              ),
-              Expanded(
-                child: ValueListenableBuilder<List<File>>(
-                  valueListenable: AudioService.playlist,
-                  builder: (context, playlist, child) {
-                    if (playlist.isEmpty) {
-                      return const Center(child: Text("> System Idle. Playlist Empty.", style: TextStyle(fontFamily: 'VT323', fontSize: 16, color: Colors.white54)));
-                    }
-                    return ValueListenableBuilder<int>(
-                      valueListenable: AudioService.currentIndex,
-                      builder: (context, currentIndex, child) {
-                        return ListView.builder(
-                          itemCount: playlist.length,
-                          itemBuilder: (context, index) {
-                            final file = playlist[index];
-                            final isPlaying = index == currentIndex;
-                            final isVidExt = file.path.endsWith('.mp4') || file.path.endsWith('.mkv') || file.path.endsWith('.webm');
-                            final itemColor = isVidExt ? Colors.cyanAccent : themeColor;
-                            
-                            return Material(
-                              color: Colors.transparent,
-                              child: ListTile(
-                                tileColor: isPlaying ? itemColor.withValues(alpha: 0.1) : Colors.transparent,
-                                leading: Icon(
-                                  isVidExt ? Icons.movie : Icons.audiotrack,
-                                  color: isPlaying ? itemColor : Colors.white54,
-                                ),
-                                title: Text(
-                                  file.path.split('/').last.toUpperCase(), 
-                                  maxLines: 1, 
-                                  overflow: TextOverflow.ellipsis,
-                                  style: TextStyle(fontFamily: 'ShareTechMono', color: isPlaying ? itemColor : Colors.white, fontWeight: isPlaying ? FontWeight.bold : FontWeight.normal),
-                                ),
-                                 onTap: () => AudioService.playIndex(index),
-                                 onLongPress: () => _showTrackMenu(context, file, index, themeColor),
-                               ),
-                             );
-                           },
-                         );
-                       }
-                     );
-                   }
-                 ),
-               ),
-             ],
-           ),
+                const Padding(
+                  padding: EdgeInsets.only(left: 20, bottom: 4),
+                  child: Align(alignment: Alignment.centerLeft, child: Text("DRAG ≡ TO REORDER • SWIPE TO REMOVE • HOLD FOR OPTIONS", style: TextStyle(fontFamily: 'ShareTechMono', fontSize: 9, color: Colors.white38))),
+                ),
+                Expanded(
+                  child: ValueListenableBuilder<List<File>>(
+                    valueListenable: AudioService.playlist,
+                    builder: (context, playlist, child) {
+                      if (playlist.isEmpty) {
+                        return const Center(child: Text("> Queue Empty. Open The LIBRARY To Pick Music.", style: TextStyle(fontFamily: 'VT323', fontSize: 16, color: Colors.white54)));
+                      }
+                      return ValueListenableBuilder<int>(
+                        valueListenable: AudioService.infoRevision,
+                        builder: (context, _, __) => ValueListenableBuilder<int>(
+                          valueListenable: AudioService.currentIndex,
+                          builder: (context, currentIndex, child) {
+                            return ReorderableListView.builder(
+                              buildDefaultDragHandles: false,
+                              itemCount: playlist.length,
+                              onReorderItem: (oldIndex, newIndex) => AudioService.reorderPlaylist(oldIndex, newIndex > oldIndex ? newIndex + 1 : newIndex),
+                              itemBuilder: (context, index) {
+                                final file = playlist[index];
+                                final isCurrent = index == currentIndex;
+                                final isVidExt = AudioService.videoExtensions.contains(file.path.split('.').last.toLowerCase());
+                                final itemColor = isVidExt ? Colors.cyanAccent : themeColor;
+                                final info = AudioService.infoFor(file.path);
+                                if (info == null) AudioService.ensureInfo(file.path);
+                                final title = info?.title ?? file.path.split('/').last;
+                                final artist = info?.artist ?? '';
+                                return Dismissible(
+                                  key: ValueKey('q_${index}_${file.path}'),
+                                  direction: DismissDirection.endToStart,
+                                  background: Container(color: Colors.redAccent.withValues(alpha: 0.25), alignment: Alignment.centerRight, padding: const EdgeInsets.only(right: 20), child: const Icon(Icons.remove_circle_outline, color: Colors.redAccent)),
+                                  onDismissed: (_) => AudioService.removeFromPlaylist(index),
+                                  child: Material(
+                                    color: Colors.transparent,
+                                    child: ListTile(
+                                      dense: true,
+                                      tileColor: isCurrent ? itemColor.withValues(alpha: 0.1) : Colors.transparent,
+                                      leading: Icon(isCurrent ? Icons.graphic_eq : (isVidExt ? Icons.movie : Icons.audiotrack), color: isCurrent ? itemColor : Colors.white54),
+                                      title: Text(title, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(fontFamily: 'ShareTechMono', color: isCurrent ? itemColor : Colors.white, fontWeight: isCurrent ? FontWeight.bold : FontWeight.normal)),
+                                      subtitle: artist.isEmpty ? null : Text(artist, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontFamily: 'ShareTechMono', color: Colors.white54, fontSize: 11)),
+                                      trailing: ReorderableDragStartListener(index: index, child: const Padding(padding: EdgeInsets.all(8), child: Icon(Icons.drag_handle, color: Colors.white38))),
+                                      onTap: () => AudioService.playIndex(index),
+                                      onLongPress: () => _showTrackMenu(context, file, index, themeColor),
+                                    ),
+                                  ),
+                                );
+                              },
+                            );
+                          },
+                        ),
+                      );
+                    },
+                  ),
+                ),
+              ],
+            ),
           ),
         );
-      }
+      },
     );
   }
 
@@ -227,12 +237,12 @@ class TheaterScreen extends StatelessWidget {
               icon: Icon(Icons.keyboard_arrow_down, size: 32, color: accentColor),
               onPressed: () => Navigator.pop(context),
             ),
-            title: Text("SOVEREIGN MULTIPLEX", style: TextStyle(fontFamily: 'ShareTechMono', color: accentColor, fontSize: 18, fontWeight: FontWeight.bold, letterSpacing: 2.0)),
+            title: Text("NOW PLAYING", style: TextStyle(fontFamily: 'ShareTechMono', color: accentColor, fontSize: 18, fontWeight: FontWeight.bold, letterSpacing: 2.0)),
             centerTitle: true,
             actions: [
               IconButton(
                 icon: const Icon(Icons.tune, color: Colors.purpleAccent),
-                tooltip: "15-BAND EQUALIZER",
+                tooltip: "EQUALIZER",
                 onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const EqPresetsScreen())),
               ),
               IconButton(
@@ -265,7 +275,7 @@ class TheaterScreen extends StatelessWidget {
                           AudioService.nextTrack();
                         }
                       },
-                      child: isVideo 
+                      child: isVideo
                         ? Padding(
                             padding: const EdgeInsets.all(24.0),
                             child: ValueListenableBuilder<VideoPlayerController?>(
@@ -287,8 +297,8 @@ class TheaterScreen extends StatelessWidget {
                               ),
                           )
                         : _DoubleTapSeek(
-                            onLeft: () => AudioService.player.seek(AudioService.player.position - const Duration(seconds: 10)),
-                            onRight: () => AudioService.player.seek(AudioService.player.position + const Duration(seconds: 10)),
+                            onLeft: () => _seekBy(-10),
+                            onRight: () => _seekBy(10),
                             child: Container(
                               color: Colors.black,
                               child: Stack(
@@ -308,6 +318,7 @@ class TheaterScreen extends StatelessWidget {
                                               image: image.image,
                                               fit: BoxFit.contain,
                                               filterQuality: FilterQuality.high,
+                                              gaplessPlayback: true,
                                             ),
                                           ),
                                         );
@@ -316,13 +327,15 @@ class TheaterScreen extends StatelessWidget {
                                     },
                                   ),
                                   Positioned.fill(
-                                    child: DecoratedBox(
-                                      decoration: BoxDecoration(
-                                        gradient: LinearGradient(
-                                          begin: Alignment.topCenter,
-                                          end: Alignment.bottomCenter,
-                                          colors: [Colors.transparent, Colors.black.withValues(alpha: 0.55)],
-                                          stops: const [0.55, 1.0],
+                                    child: IgnorePointer(
+                                      child: DecoratedBox(
+                                        decoration: BoxDecoration(
+                                          gradient: LinearGradient(
+                                            begin: Alignment.topCenter,
+                                            end: Alignment.bottomCenter,
+                                            colors: [Colors.transparent, Colors.black.withValues(alpha: 0.55)],
+                                            stops: const [0.55, 1.0],
+                                          ),
                                         ),
                                       ),
                                     ),
@@ -346,32 +359,42 @@ class TheaterScreen extends StatelessWidget {
                           ),
                     ),
                   ),
-                  
+
                   if (!isVideo) ...[
-                    ValueListenableBuilder<String>(
-                      valueListenable: AudioService.currentTitle,
-                      builder: (context, title, child) => Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 32.0),
-                        child: AutoScrollText(
-                          text: title.toUpperCase(),
-                          style: const TextStyle(fontFamily: 'ShareTechMono', fontSize: 26, fontWeight: FontWeight.bold, color: Colors.white),
-                          textAlign: TextAlign.center,
-                        ),
-                      )
+                    const SizedBox(height: 12),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 16.0),
+                      child: Row(
+                        children: [
+                          const SizedBox(width: 48),
+                          Expanded(
+                            child: Column(
+                              children: [
+                                ValueListenableBuilder<String>(
+                                  valueListenable: AudioService.currentTitle,
+                                  builder: (context, title, child) => AutoScrollText(
+                                    text: title.toUpperCase(),
+                                    style: const TextStyle(fontFamily: 'ShareTechMono', fontSize: 24, fontWeight: FontWeight.bold, color: Colors.white),
+                                    textAlign: TextAlign.center,
+                                  ),
+                                ),
+                                const SizedBox(height: 6),
+                                ValueListenableBuilder<String>(
+                                  valueListenable: AudioService.currentArtist,
+                                  builder: (context, artist, child) => AutoScrollText(
+                                    text: artist.toUpperCase(),
+                                    style: TextStyle(fontFamily: 'ShareTechMono', fontSize: 15, color: themeColor),
+                                    textAlign: TextAlign.center,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          _FavoriteButton(themeColor: themeColor),
+                        ],
+                      ),
                     ),
-                    const SizedBox(height: 8),
-                    ValueListenableBuilder<String>(
-                      valueListenable: AudioService.currentArtist,
-                      builder: (context, artist, child) => Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 32.0),
-                        child: AutoScrollText(
-                          text: artist.toUpperCase(),
-                          style: TextStyle(fontFamily: 'ShareTechMono', fontSize: 16, color: themeColor),
-                          textAlign: TextAlign.center,
-                        ),
-                      )
-                    ),
-                    const SizedBox(height: 24),
+                    const SizedBox(height: 16),
                   ] else ...[
                     const SizedBox(height: 16),
                   ],
@@ -391,12 +414,8 @@ class TheaterScreen extends StatelessWidget {
                               isPlaying: value.isPlaying,
                               themeColor: themeColor,
                               onSeek: (ms) => controller.seekTo(Duration(milliseconds: ms)),
-                              onRewind: () => _seekVideo(controller, -10),
-                              onFastForward: () => _seekVideo(controller, 10),
-                              onPlayPause: () => value.isPlaying ? controller.pause() : controller.play(),
                               isVideoMode: true,
                               controller: controller,
-                              onShowQueue: () => _showQueueSheet(context, themeColor),
                             );
                           }
                         );
@@ -419,21 +438,8 @@ class TheaterScreen extends StatelessWidget {
                               isPlaying: playing,
                               themeColor: themeColor,
                               onSeek: (ms) => AudioService.player.seek(Duration(milliseconds: ms)),
-                              onRewind: () => AudioService.player.seek(position - const Duration(seconds: 10)),
-                              onFastForward: () => AudioService.player.seek(position + const Duration(seconds: 10)),
-                              onPlayPause: () {
-                                if (AudioService.player.processingState == ProcessingState.completed) {
-                                  final idx = AudioService.currentIndex.value;
-                                  if (idx >= 0 && idx < AudioService.playlist.value.length) {
-                                    AudioService.playIndex(idx);
-                                    return;
-                                  }
-                                }
-                                playing ? AudioService.player.pause() : AudioService.player.play();
-                              },
                               isVideoMode: false,
                               controller: null,
-                              onShowQueue: () => _showQueueSheet(context, themeColor),
                             );
                           }
                         );
@@ -456,12 +462,8 @@ class TheaterScreen extends StatelessWidget {
     required bool isPlaying,
     required Color themeColor,
     required Function(int) onSeek,
-    required VoidCallback onRewind,
-    required VoidCallback onFastForward,
-    required VoidCallback onPlayPause,
     required bool isVideoMode,
     required VideoPlayerController? controller,
-    required VoidCallback onShowQueue,
   }) {
     return Column(
       mainAxisSize: MainAxisSize.min,
@@ -477,11 +479,7 @@ class TheaterScreen extends StatelessWidget {
               inactiveTrackColor: Colors.white12,
               thumbColor: themeColor,
             ),
-            child: _SeekSlider(
-              position: position,
-              duration: duration,
-              onSeek: onSeek,
-            ),
+            child: _SeekSlider(position: position, duration: duration, onSeek: onSeek),
           ),
         ),
         Padding(
@@ -490,7 +488,7 @@ class TheaterScreen extends StatelessWidget {
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               Text(_formatDuration(position), style: const TextStyle(fontFamily: 'ShareTechMono', fontSize: 12, color: Colors.white54)),
-              Text(_formatDuration(duration), style: const TextStyle(fontFamily: 'ShareTechMono', fontSize: 12, color: Colors.white54)),
+              Text("-${_formatDuration(duration > position ? duration - position : Duration.zero)}", style: const TextStyle(fontFamily: 'ShareTechMono', fontSize: 12, color: Colors.white54)),
             ],
           ),
         ),
@@ -507,23 +505,23 @@ class TheaterScreen extends StatelessWidget {
                 )
               ),
               const IconButton(
-                icon: Icon(Icons.skip_previous, size: 40, color: Colors.white), 
+                icon: Icon(Icons.skip_previous, size: 40, color: Colors.white),
                 onPressed: AudioService.prevTrack,
               ),
               IconButton(
                 icon: Icon(isPlaying ? Icons.pause_circle_filled : Icons.play_circle_filled, size: 84, color: themeColor),
-                onPressed: onPlayPause,
+                onPressed: AudioService.togglePlayPause,
               ),
               const IconButton(
-                icon: Icon(Icons.skip_next, size: 40, color: Colors.white), 
+                icon: Icon(Icons.skip_next, size: 40, color: Colors.white),
                 onPressed: AudioService.nextTrack,
               ),
               ValueListenableBuilder<PlaybackRepeat>(
                 valueListenable: AudioService.repeatMode,
                 builder: (context, repeat, child) => IconButton(
                   icon: Icon(
-                    repeat == PlaybackRepeat.one ? Icons.repeat_one : Icons.repeat, 
-                    size: 28, 
+                    repeat == PlaybackRepeat.one ? Icons.repeat_one : Icons.repeat,
+                    size: 28,
                     color: repeat != PlaybackRepeat.off ? themeColor : Colors.white54
                   ),
                   onPressed: () {
@@ -541,32 +539,33 @@ class TheaterScreen extends StatelessWidget {
           ),
         ),
         Padding(
-          padding: const EdgeInsets.only(left: 20.0, right: 20.0, bottom: 28.0, top: 8.0),
+          padding: const EdgeInsets.only(left: 12.0, right: 12.0, bottom: 24.0, top: 4.0),
           child: Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               const IconButton(
-                icon: Icon(Icons.stop, size: 28, color: Colors.redAccent),
+                icon: Icon(Icons.stop, size: 26, color: Colors.redAccent),
                 onPressed: AudioService.stopPlayer,
-                tooltip: "HALT PLAYBACK",
+                tooltip: "STOP",
               ),
               ValueListenableBuilder<int>(
                 valueListenable: AudioService.sleepTimerMinutes,
-                builder: (context, mins, child) => IconButton(
-                  icon: Icon(Icons.bedtime, size: 26, color: mins > 0 ? themeColor : Colors.white70),
-                  onPressed: () => _showSleepSheet(context, themeColor),
-                  tooltip: mins > 0 ? "SLEEP TIMER: $mins MIN" : "SLEEP TIMER",
+                builder: (context, mins, child) => ValueListenableBuilder<bool>(
+                  valueListenable: AudioService.sleepAtEndOfTrack,
+                  builder: (context, endOfTrack, _) => IconButton(
+                    icon: Icon(Icons.bedtime, size: 26, color: (mins > 0 || endOfTrack) ? themeColor : Colors.white70),
+                    onPressed: () => _showSleepSheet(context, themeColor),
+                    tooltip: endOfTrack ? "SLEEP: END OF TRACK" : (mins > 0 ? "SLEEP TIMER: $mins MIN" : "SLEEP TIMER"),
+                  ),
                 ),
               ),
               if (!isVideoMode)
                 IconButton(
                   icon: const Icon(Icons.lyrics, size: 26, color: Colors.white70),
                   onPressed: () => _showLyricsSheet(context, themeColor),
-                  tooltip: "SYNCED LYRICS",
+                  tooltip: "LYRICS",
                 )
-              else
-                const SizedBox(width: 48),
-              if (isVideoMode && controller != null)
+              else if (controller != null)
                 IconButton(
                   icon: const Icon(Icons.fullscreen, size: 28, color: Colors.white70),
                   onPressed: () {
@@ -581,9 +580,18 @@ class TheaterScreen extends StatelessWidget {
                 tooltip: "PLAYBACK SPEED",
               ),
               IconButton(
+                icon: const Icon(Icons.more_horiz, size: 26, color: Colors.white70),
+                tooltip: "TRACK OPTIONS",
+                onPressed: () {
+                  final idx = AudioService.currentIndex.value;
+                  if (idx < 0 || idx >= AudioService.playlist.value.length) return;
+                  _showTrackMenu(context, AudioService.playlist.value[idx], idx, themeColor);
+                },
+              ),
+              IconButton(
                 icon: const Icon(Icons.queue_music, size: 28, color: Colors.white70),
-                onPressed: onShowQueue,
-                tooltip: "OPEN MACHINE QUEUE",
+                onPressed: () => _showQueueSheet(context, themeColor),
+                tooltip: "QUEUE",
               ),
             ],
           ),
@@ -603,36 +611,48 @@ class TheaterScreen extends StatelessWidget {
       builder: (sheetContext) => SafeArea(
         child: ValueListenableBuilder<int>(
           valueListenable: AudioService.sleepTimerMinutes,
-          builder: (context, current, child) => Padding(
-            padding: const EdgeInsets.all(20),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Text("SLEEP TIMER", textAlign: TextAlign.center, style: TextStyle(fontFamily: 'ShareTechMono', fontWeight: FontWeight.bold, fontSize: 16, color: themeColor)),
-                const SizedBox(height: 4),
-                Text(current > 0 ? "ACTIVE: HALT IN $current MIN" : "INACTIVE", textAlign: TextAlign.center, style: TextStyle(fontFamily: 'VT323', fontSize: 15, color: current > 0 ? themeColor : Colors.white54)),
-                const SizedBox(height: 16),
-                Wrap(
-                  alignment: WrapAlignment.center,
-                  spacing: 10,
-                  runSpacing: 10,
-                  children: [
-                    for (final m in [15, 30, 45, 60, 90])
+          builder: (context, current, child) => ValueListenableBuilder<bool>(
+            valueListenable: AudioService.sleepAtEndOfTrack,
+            builder: (context, endOfTrack, _) => Padding(
+              padding: const EdgeInsets.all(20),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Text("SLEEP TIMER", textAlign: TextAlign.center, style: TextStyle(fontFamily: 'ShareTechMono', fontWeight: FontWeight.bold, fontSize: 16, color: themeColor)),
+                  const SizedBox(height: 4),
+                  Text(
+                    endOfTrack ? "ACTIVE: STOP AFTER THIS TRACK" : (current > 0 ? "ACTIVE: FADE OUT IN ~$current MIN" : "INACTIVE"),
+                    textAlign: TextAlign.center,
+                    style: TextStyle(fontFamily: 'VT323', fontSize: 15, color: (current > 0 || endOfTrack) ? themeColor : Colors.white54),
+                  ),
+                  const SizedBox(height: 16),
+                  Wrap(
+                    alignment: WrapAlignment.center,
+                    spacing: 10,
+                    runSpacing: 10,
+                    children: [
+                      for (final m in [5, 15, 30, 45, 60, 90])
+                        OutlinedButton(
+                          onPressed: () { AudioService.setSleepTimer(m); Navigator.pop(sheetContext); },
+                          style: OutlinedButton.styleFrom(side: BorderSide(color: themeColor.withValues(alpha: 0.6))),
+                          child: Text("$m MIN", style: const TextStyle(fontFamily: 'ShareTechMono', color: Colors.white70)),
+                        ),
                       OutlinedButton(
-                        onPressed: () { AudioService.setSleepTimer(m); Navigator.pop(sheetContext); },
-                        style: OutlinedButton.styleFrom(side: BorderSide(color: themeColor.withValues(alpha: 0.6))),
-                        child: Text("$m MIN", style: const TextStyle(fontFamily: 'ShareTechMono', color: Colors.white70)),
+                        onPressed: () { AudioService.setSleepAtEndOfTrack(true); Navigator.pop(sheetContext); },
+                        style: OutlinedButton.styleFrom(side: BorderSide(color: themeColor)),
+                        child: Text("END OF TRACK", style: TextStyle(fontFamily: 'ShareTechMono', color: themeColor)),
                       ),
-                    OutlinedButton(
-                      onPressed: () { AudioService.setSleepTimer(0); Navigator.pop(sheetContext); },
-                      style: OutlinedButton.styleFrom(side: const BorderSide(color: Colors.redAccent)),
-                      child: const Text("OFF", style: TextStyle(fontFamily: 'ShareTechMono', color: Colors.redAccent)),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 8),
-              ],
+                      OutlinedButton(
+                        onPressed: () { AudioService.setSleepTimer(0); Navigator.pop(sheetContext); },
+                        style: OutlinedButton.styleFrom(side: const BorderSide(color: Colors.redAccent)),
+                        child: const Text("OFF", style: TextStyle(fontFamily: 'ShareTechMono', color: Colors.redAccent)),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                ],
+              ),
             ),
           ),
         ),
@@ -698,7 +718,35 @@ class TheaterScreen extends StatelessWidget {
           border: Border(top: BorderSide(color: themeColor.withValues(alpha: 0.5))),
           borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
         ),
-        child: _LyricsSheet(themeColor: themeColor),
+        child: _LyricsSheet(themeColor: themeColor, onSendToForge: (path, lyrics) {
+          Navigator.of(context).popUntil((route) => route.isFirst);
+          SovereignState.sendToForge(ForgeRequest(path: path, origin: ForgeOrigin.player, originUri: AudioService.infoFor(path)?.uri, prefill: {'LYRICS': lyrics}));
+        }),
+      ),
+    );
+  }
+}
+
+class _FavoriteButton extends StatelessWidget {
+  final Color themeColor;
+  const _FavoriteButton({required this.themeColor});
+
+  @override
+  Widget build(BuildContext context) {
+    return ValueListenableBuilder<int>(
+      valueListenable: AudioService.currentIndex,
+      builder: (context, idx, _) => ValueListenableBuilder<Set<String>>(
+        valueListenable: PlaylistStore.favorites,
+        builder: (context, favs, _) {
+          if (idx < 0 || idx >= AudioService.playlist.value.length) return const SizedBox(width: 48);
+          final path = AudioService.playlist.value[idx].path;
+          final fav = favs.contains(path);
+          return IconButton(
+            icon: Icon(fav ? Icons.favorite : Icons.favorite_border, color: fav ? Colors.pinkAccent : Colors.white54),
+            tooltip: fav ? "UNFAVORITE" : "FAVORITE",
+            onPressed: () => PlaylistStore.toggleFavorite(path),
+          );
+        },
       ),
     );
   }
@@ -892,15 +940,10 @@ class _DoubleTapSeek extends StatelessWidget {
   }
 }
 
-class _LyricLine {
-  final Duration stamp;
-  final String text;
-  _LyricLine(this.stamp, this.text);
-}
-
 class _LyricsSheet extends StatefulWidget {
   final Color themeColor;
-  const _LyricsSheet({required this.themeColor});
+  final void Function(String path, String lyrics) onSendToForge;
+  const _LyricsSheet({required this.themeColor, required this.onSendToForge});
 
   @override
   State<_LyricsSheet> createState() => _LyricsSheetState();
@@ -910,79 +953,104 @@ class _LyricsSheetState extends State<_LyricsSheet> {
   static const double _rowHeight = 42.0;
   final ScrollController _scroll = ScrollController();
   StreamSubscription<Duration>? _posSub;
-  List<_LyricLine> _lines = [];
+  List<LrcLine> _lines = [];
+  String _plain = "";
+  String _source = "";
+  String _raw = "";
   bool _parsed = false;
+  bool _searching = false;
   int _activeIdx = -1;
+  String _path = "";
 
   @override
   void initState() {
     super.initState();
-    _parse();
-    _posSub = AudioService.player.positionStream.listen((pos) => _updateActive(pos));
+    AudioService.currentIndex.addListener(_reload);
+    AudioService.currentLyrics.addListener(_reload);
+    _reload();
+    _posSub = AudioService.player.positionStream.listen(_updateActive);
   }
 
   @override
   void dispose() {
+    AudioService.currentIndex.removeListener(_reload);
+    AudioService.currentLyrics.removeListener(_reload);
     _posSub?.cancel();
     _scroll.dispose();
     super.dispose();
   }
 
-  Future<void> _parse() async {
-    try {
-      final idx = AudioService.currentIndex.value;
-      if (idx < 0 || idx >= AudioService.playlist.value.length) {
-        if (mounted) setState(() => _parsed = true);
-        return;
-      }
-      final path = AudioService.playlist.value[idx].path;
+  void _apply(String raw, String source) {
+    _raw = raw;
+    if (Lrc.isSynced(raw)) {
+      _lines = Lrc.parse(raw).where((l) => l.text.isNotEmpty).toList();
+      _plain = "";
+    } else {
+      _lines = [];
+      _plain = raw.trim();
+    }
+    _source = raw.trim().isEmpty ? "" : source;
+    _activeIdx = -1;
+  }
+
+  Future<void> _reload() async {
+    final idx = AudioService.currentIndex.value;
+    if (idx < 0 || idx >= AudioService.playlist.value.length) {
+      if (mounted) setState(() { _apply("", ""); _parsed = true; _path = ""; });
+      return;
+    }
+    final path = AudioService.playlist.value[idx].path;
+    var raw = AudioService.currentLyrics.value;
+    var source = "EMBEDDED TAG";
+    if (!Lrc.isSynced(raw)) {
       final dot = path.lastIndexOf('.');
-      final lrcPath = dot > 0 ? "${path.substring(0, dot)}.lrc" : "$path.lrc";
-      final f = File(lrcPath);
-      if (!f.existsSync()) {
-        if (mounted) setState(() => _parsed = true);
-        return;
-      }
-      final raw = await f.readAsString();
-      final reg = RegExp(r'\[(\d{1,2}):(\d{2})(?:\.(\d{1,3}))?\]');
-      final List<_LyricLine> out = [];
-      for (final line in raw.split('\n')) {
-        final matches = reg.allMatches(line).toList();
-        if (matches.isEmpty) continue;
-        final text = line.replaceAll(reg, '').trim();
-        if (text.isEmpty) continue;
-        for (final m in matches) {
-          final minutes = int.parse(m.group(1)!);
-          final seconds = int.parse(m.group(2)!);
-          final fracStr = m.group(3) ?? "0";
-          final ms = int.parse(fracStr.padRight(3, '0').substring(0, 3));
-          out.add(_LyricLine(Duration(minutes: minutes, seconds: seconds, milliseconds: ms), text));
+      final lrc = File(dot > 0 ? "${path.substring(0, dot)}.lrc" : "$path.lrc");
+      try {
+        if (lrc.existsSync()) {
+          final side = await lrc.readAsString();
+          if (Lrc.isSynced(side)) {
+            raw = side;
+            source = "SIDECAR .LRC";
+          }
         }
-      }
-      out.sort((a, b) => a.stamp.compareTo(b.stamp));
+      } catch (_) {}
+    }
+    if (!mounted) return;
+    setState(() {
+      _path = path;
+      _apply(raw, source);
+      _parsed = true;
+    });
+    _updateActive(AudioService.player.position);
+  }
+
+  Future<void> _searchOnline() async {
+    final idx = AudioService.currentIndex.value;
+    if (idx < 0 || idx >= AudioService.playlist.value.length) return;
+    final info = AudioService.infoFor(AudioService.playlist.value[idx].path);
+    final title = info?.title ?? AudioService.currentTitle.value;
+    final artist = info?.artist ?? "";
+    setState(() => _searching = true);
+    try {
+      final r = await MetadataSources.fetchLyrics(artist: artist, title: title, album: info?.album ?? "", durationMs: AudioService.player.duration?.inMilliseconds ?? info?.durationMs ?? 0);
       if (!mounted) return;
       setState(() {
-        _lines = out;
-        _parsed = true;
+        _searching = false;
+        final found = r.synced.isNotEmpty ? r.synced : r.plain;
+        if (found.isNotEmpty) _apply(found, "LRCLIB (NOT SAVED)");
       });
+      if (r.synced.isEmpty && r.plain.isEmpty && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('> NO LYRICS FOUND ONLINE FOR THIS TRACK.', style: TextStyle(fontFamily: 'ShareTechMono'))));
+      }
       _updateActive(AudioService.player.position);
     } catch (_) {
-      if (mounted) setState(() => _parsed = true);
+      if (mounted) setState(() => _searching = false);
     }
   }
 
   void _updateActive(Duration pos) {
     if (_lines.isEmpty || !mounted) return;
-    int lo = 0, hi = _lines.length - 1, res = -1;
-    while (lo <= hi) {
-      final mid = (lo + hi) >> 1;
-      if (_lines[mid].stamp <= pos) {
-        res = mid;
-        lo = mid + 1;
-      } else {
-        hi = mid - 1;
-      }
-    }
+    final res = Lrc.activeIndex(_lines, pos);
     if (res != _activeIdx) {
       setState(() => _activeIdx = res);
       if (_scroll.hasClients && res >= 0) {
@@ -995,38 +1063,30 @@ class _LyricsSheetState extends State<_LyricsSheet> {
   @override
   Widget build(BuildContext context) {
     final themeColor = widget.themeColor;
+    final unsavedOnline = _source.startsWith("LRCLIB");
     return Column(
       children: [
-        Container(
-          margin: const EdgeInsets.symmetric(vertical: 12),
-          height: 4,
-          width: 40,
-          decoration: BoxDecoration(color: Colors.white24, borderRadius: BorderRadius.circular(2)),
-        ),
+        Container(margin: const EdgeInsets.symmetric(vertical: 12), height: 4, width: 40, decoration: BoxDecoration(color: Colors.white24, borderRadius: BorderRadius.circular(2))),
         Padding(
-          padding: const EdgeInsets.only(bottom: 8.0),
-          child: Text("KARAOKE MACHINE", style: TextStyle(fontFamily: 'ShareTechMono', fontWeight: FontWeight.bold, fontSize: 15, letterSpacing: 2, color: themeColor)),
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          child: Row(
+            children: [
+              Expanded(child: Text(_lines.isNotEmpty ? "KARAOKE MACHINE" : "LYRICS", style: TextStyle(fontFamily: 'ShareTechMono', fontWeight: FontWeight.bold, fontSize: 15, letterSpacing: 2, color: themeColor))),
+              if (_source.isNotEmpty) Text(_source, style: const TextStyle(fontFamily: 'ShareTechMono', fontSize: 9, color: Colors.white38)),
+            ],
+          ),
         ),
+        if (unsavedOnline && _path.isNotEmpty)
+          TextButton.icon(
+            onPressed: () => widget.onSendToForge(_path, _raw),
+            icon: const Icon(Icons.save_alt, size: 16, color: Colors.amberAccent),
+            label: const Text("EMBED INTO FILE VIA FORGE", style: TextStyle(fontFamily: 'ShareTechMono', fontSize: 11, color: Colors.amberAccent)),
+          ),
         Expanded(
           child: !_parsed
               ? Center(child: CircularProgressIndicator(color: themeColor))
-              : _lines.isEmpty
-                  ? Padding(
-                      padding: const EdgeInsets.all(32.0),
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Icon(Icons.lyrics, size: 64, color: themeColor.withValues(alpha: 0.3)),
-                          const SizedBox(height: 16),
-                          const Text(
-                            "NO LRC SIDECHAIN FOUND FOR THIS PAYLOAD.\n\nUSE THE FORGE KARAOKE SYNC TO STAMP TIMINGS AND EXPORT AN .LRC FILE.",
-                            textAlign: TextAlign.center,
-                            style: TextStyle(fontFamily: 'VT323', fontSize: 16, color: Colors.white54, height: 1.4),
-                          ),
-                        ],
-                      ),
-                    )
-                  : ListView.builder(
+              : _lines.isNotEmpty
+                  ? ListView.builder(
                       controller: _scroll,
                       padding: const EdgeInsets.symmetric(vertical: 200),
                       itemCount: _lines.length,
@@ -1057,13 +1117,39 @@ class _LyricsSheetState extends State<_LyricsSheet> {
                           ),
                         );
                       },
-                    ),
+                    )
+                  : _plain.isNotEmpty
+                      ? SingleChildScrollView(
+                          padding: const EdgeInsets.fromLTRB(28, 12, 28, 40),
+                          child: Text(_plain, textAlign: TextAlign.center, style: const TextStyle(fontFamily: 'VT323', fontSize: 19, color: Colors.white70, height: 1.4)),
+                        )
+                      : Padding(
+                          padding: const EdgeInsets.all(32.0),
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Icon(Icons.lyrics, size: 64, color: themeColor.withValues(alpha: 0.3)),
+                              const SizedBox(height: 16),
+                              const Text(
+                                "NO LYRICS IN THIS FILE.",
+                                textAlign: TextAlign.center,
+                                style: TextStyle(fontFamily: 'VT323', fontSize: 16, color: Colors.white54, height: 1.4),
+                              ),
+                              const SizedBox(height: 16),
+                              OutlinedButton.icon(
+                                onPressed: _searching ? null : _searchOnline,
+                                icon: _searching ? SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2, color: themeColor)) : Icon(Icons.travel_explore, color: themeColor),
+                                label: Text("FIND LYRICS ONLINE", style: TextStyle(fontFamily: 'ShareTechMono', color: themeColor)),
+                                style: OutlinedButton.styleFrom(side: BorderSide(color: themeColor)),
+                              ),
+                            ],
+                          ),
+                        ),
         ),
       ],
     );
   }
 }
-
 
 class _SeekSlider extends StatefulWidget {
   final Duration position;
