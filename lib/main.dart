@@ -1,4 +1,4 @@
-﻿// ============================================================
+// ============================================================
 // As Above, So Below. As Within, So Without.
 // The Future Dictates the Past and the Past is Always Present.
 // ============================================================
@@ -86,7 +86,7 @@ class _SplashScreenState extends State<SplashScreen> {
     if (mounted) {
       setState(() {
         _progress = 0.60;
-        _statusText = "DECRSPTING STORAGE VAULT...";
+        _statusText = "DECRYPTING STORAGE VAULT...";
       });
     }
     
@@ -102,7 +102,7 @@ class _SplashScreenState extends State<SplashScreen> {
         if (mounted) {
           setState(() {
             _progress = 0.85;
-            _statusText = "SSNCING KERNEL PREFERENCES...";
+            _statusText = "SYNCING KERNEL PREFERENCES...";
           });
         }
 
@@ -119,7 +119,7 @@ class _SplashScreenState extends State<SplashScreen> {
     if (mounted) {
       setState(() {
         _progress = 1.0;
-        _statusText = "SSSTEM STABLE. ENTERING THE MACHINE.";
+        _statusText = "SYSTEM STABLE. ENTERING THE MACHINE.";
       });
     }
 

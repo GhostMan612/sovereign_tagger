@@ -57,17 +57,6 @@ class FFmpegExecutor {
       return null;
     }
   }
-
-  static Future<Map<String, String>?> parseLoudnorm(String output) async {
-    try {
-      final start = output.lastIndexOf('{');
-      final end = output.lastIndexOf('}');
-      if (start < 0 || end <= start) return null;
-      return null; // placeholder, parsed in workbench helper
-    } catch (_) {
-      return null;
-    }
-  }
 }
 
 class _Job {
