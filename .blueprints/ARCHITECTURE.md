@@ -14,7 +14,7 @@ main() ──▶ SharedPreferences(accent_color) ──▶ MaterialApp(dark, see
 ```
 SovereignState (statics)            AudioService (statics + handler)
 ├─ currentTab ValueNotifier         ├─ player (just_audio, 48000/256k or PCM wav)
-├─ pendingForgePath ValueNotifier   ├─ _audioSource ConcatenatingAudioSource (serialized via _queueLock Future chain)
+├─ pendingForgePath ValueNotifier   ├─ player playlist API (setAudioSources/insert/move/remove, serialized via _queueLock)
 └─ accentColor ValueNotifier        ├─ playlist ValueNotifier<List<File>>
                                     ├─ currentIndex ValueNotifier<int>
                                     ├─ videoController ValueNotifier<VideoPlayerController?>

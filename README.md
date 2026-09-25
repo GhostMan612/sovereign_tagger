@@ -153,16 +153,17 @@ Click **"WRITE TO KERNEL"**. Use **Export** button to generate a `.bin` backup (
 
 | Dependency                    | Version                      | Constraint                                                            |
 |-------------------------------|------------------------------|-----------------------------------------------------------------------|
-| `ffmpeg_kit_extended_flutter` | `^0.5.13`                    | `full`+`gpl`, locked at 0.5.13 (win32 5.9.0 cap)                      |
-| `video_player`                | `^2.14.0`                    | Capped (2.15+ needs win32 6.x)                                        |
-| `wakelock_plus`               | `^1.5.2`                     | Capped (1.7.0+ needs win32 6.x)                                       |
-| `just_audio`                  | `^0.9.36`                    | 0.10.x incompatible with audio_service 0.18.x                         |
-| `audio_service`               | `^0.18.19`                   | Locked (0.19+ needs just_audio 0.10+)                                 |
+| `ffmpeg_kit_extended_flutter` | `^0.6.2`                     | `full`+`gpl`, latest (FFmpeg 9.0.1)                                   |
+| `just_audio` / `audio_session`| `^0.10.6` / `^0.2.4`         | Latest; EQ gains are real dB since 0.10 (see G18)                     |
+| `audio_waveforms`             | `^2.0.2`                     | Latest (`RecorderSettings` API)                                       |
+| `file_picker`                 | `^9.0.0` (9.2.3)             | **Capped** — 10+ needs win32 6.x; 13.x is a full API rewrite          |
+| `wakelock_plus`               | `^1.5.2`                     | **Capped** — 1.6.1+ needs win32 6.x (blocked by file_picker 9)        |
+| `permission_handler`          | `^12.0.3`                    | **Capped** — 13.x needs compileSdk 37 (root gradle forces 36)         |
 | `chaquopy`                    | `17.0.0`                     | Python 3.14 top (few wheels), fallback `"3.11"` in `app/build.gradle` |
 | `AGP` / `KGP` / `Gradle`      | `9.0.1` / `2.3.20` / `9.1.0` | At ceiling                                                            |
 | `compileSdk` / `NDK` / `JDK`  | `36` / `28.2` / `25`         | `compileOptions 1.8` shim (bump to 17 in dedicated session)           |
 
-> **Note**: Major version upgrades (`^0.6.0`/`^12.0.0`/`^0.10.6`/`^13.0.1`) need `--major-versions` and break `win32 5.9.0↔6.0.1`. Stay pinned until dedicated session.
+> **Note**: The only dependency ceiling is the `file_picker` ↔ `wakelock_plus` win32 pair plus the compileSdk-37 wall on `permission_handler` 13. Do not run `flutter pub upgrade --major-versions`; plain `flutter pub upgrade` is safe.
 
 ---
 

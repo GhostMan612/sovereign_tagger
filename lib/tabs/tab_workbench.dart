@@ -275,17 +275,18 @@ class _TabWorkbenchState extends State<TabWorkbench> {
     }
   }
 
+  static const RecorderSettings _recorderSettings = RecorderSettings(
+    androidEncoderSettings: AndroidEncoderSettings(androidEncoder: AndroidEncoder.aacLc),
+    iosEncoderSettings: IosEncoderSetting(iosEncoder: IosEncoder.kAudioFormatMPEG4AAC),
+    sampleRate: 48000,
+    bitRate: 256000,
+  );
+
   @override
   void initState() {
     super.initState();
     _waveController = PlayerController();
-    _recorderController = RecorderController()
-      ..androidEncoder = AndroidEncoder.aac
-      ..androidOutputFormat = AndroidOutputFormat.mpeg4
-      ..iosEncoder = IosEncoder.kAudioFormatMPEG4AAC
-      ..sampleRate = 48000
-      ..bitRate = 256000
-      ..updateFrequency = const Duration(milliseconds: 50);
+    _recorderController = RecorderController();
   }
 
   @override
@@ -493,7 +494,7 @@ class _TabWorkbenchState extends State<TabWorkbench> {
           final tempDir = await _storageChannel.invokeMethod('getTempDirectory');
           final recordPath = "$tempDir/studio_record_${DateTime.now().millisecondsSinceEpoch}.m4a";
           
-          await _recorderController.record(path: recordPath);
+          await _recorderController.record(path: recordPath, recorderSettings: _recorderSettings);
 
           if (!mounted) return;
           setState(() {

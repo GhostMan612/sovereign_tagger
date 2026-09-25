@@ -58,7 +58,6 @@ class TrackInfo {
 
 class AudioService {
   static final AudioPlayer player = AudioPlayer(audioPipeline: PlaybackFx.createPipeline());
-  static final ConcatenatingAudioSource _audioSource = ConcatenatingAudioSource(children: []);
   static final ValueNotifier<VideoPlayerController?> videoController = ValueNotifier<VideoPlayerController?>(null);
 
   static final ValueNotifier<String> currentTitle = ValueNotifier<String>("NO AUDIO LOADED");
@@ -173,11 +172,10 @@ class AudioService {
   }
 
   static Future<void> initializeGlobalListener() async {
-    await player.setAudioSource(_audioSource);
     await PlaybackFx.init(player);
 
     player.sequenceStateStream.listen((sequenceState) {
-      final seqEmpty = sequenceState == null || sequenceState.sequence.isEmpty;
+      final seqEmpty = sequenceState.sequence.isEmpty;
       if (seqEmpty && playlist.value.isEmpty) {
         hasMedia.value = false;
       } else if (!seqEmpty && currentIndex.value >= 0) {
@@ -392,20 +390,25 @@ class AudioService {
 
   static AudioSource _taggedSource(File f) => AudioSource.uri(Uri.file(f.path), tag: f.path);
 
+  static Future<void> _loadSources(List<AudioSource> sources, int index, Duration position) async {
+    try {
+      await player.setAudioSources(sources, initialIndex: index, initialPosition: position);
+    } catch (_) {}
+  }
+
   static Future<void> replacePlaylist(List<File> files, {int startIndex = 0, Duration startPosition = Duration.zero, bool autoplay = false}) async {
     return _withQueueLock(() async {
       _wantPlaying = autoplay;
       playlist.value = files;
       final sources = files.map(_taggedSource).toList();
-      await _audioSource.clear();
-      await _audioSource.addAll(sources);
       if (files.isNotEmpty) {
         final idx = startIndex.clamp(0, files.length - 1);
         _loadedKey = "";
-        await player.seek(startPosition, index: idx);
+        await _loadSources(sources, idx, startPosition);
         await _ensureLoaded(idx);
         if (autoplay && !_isVideoPath(files[idx].path)) player.play();
       } else {
+        await player.clearAudioSources();
         currentIndex.value = -1;
       }
       _persistQueue();
@@ -420,10 +423,8 @@ class AudioService {
       final currentList = List<File>.from(playlist.value);
       if (currentList.isEmpty) {
         playlist.value = [file];
-        await _audioSource.clear();
-        await _audioSource.add(_taggedSource(file));
         _loadedKey = "";
-        await player.seek(Duration.zero, index: 0);
+        await _loadSources([_taggedSource(file)], 0, Duration.zero);
         await _ensureLoaded(0);
         _persistQueue();
         await _syncHandlerQueue();
@@ -432,7 +433,7 @@ class AudioService {
       final insertIdx = (currentIndex.value + 1).clamp(0, currentList.length);
       currentList.insert(insertIdx, file);
       playlist.value = currentList;
-      await _audioSource.insert(insertIdx, _taggedSource(file));
+      await player.insertAudioSource(insertIdx, _taggedSource(file));
       _persistQueue();
       await _syncHandlerQueue();
     });
@@ -445,11 +446,13 @@ class AudioService {
     return _withQueueLock(() async {
       final wasEmpty = playlist.value.isEmpty;
       playlist.value = [...playlist.value, ...files];
-      await _audioSource.addAll(files.map(_taggedSource).toList());
+      final sources = files.map(_taggedSource).toList();
       if (wasEmpty) {
         _loadedKey = "";
-        await player.seek(Duration.zero, index: 0);
+        await _loadSources(sources, 0, Duration.zero);
         await _ensureLoaded(0);
+      } else {
+        await player.addAudioSources(sources);
       }
       _persistQueue();
       await _syncHandlerQueue();
@@ -481,8 +484,8 @@ class AudioService {
       for (var i = 0; i < list.length; i++) {
         if (list[i].path != oldPath) continue;
         list[i] = File(newPath);
-        await _audioSource.removeAt(i);
-        await _audioSource.insert(i, _taggedSource(list[i]));
+        await player.removeAudioSourceAt(i);
+        await player.insertAudioSource(i, _taggedSource(list[i]));
         if (i == cur) {
           playlist.value = List<File>.from(list);
           await player.seek(pos, index: i);
@@ -530,7 +533,7 @@ class AudioService {
       playlist.value = list;
       currentIndex.value = newCur;
 
-      await _audioSource.move(index, insertAt);
+      await player.moveAudioSource(index, insertAt);
       _persistQueue();
       await _syncHandlerQueue();
     });
@@ -615,7 +618,7 @@ class AudioService {
       playlist.value = currentList;
       currentIndex.value = newCur;
 
-      await _audioSource.move(oldIndex, adjustedNewIndex);
+      await player.moveAudioSource(oldIndex, adjustedNewIndex);
       _persistQueue();
       await _syncHandlerQueue();
     });
@@ -628,7 +631,7 @@ class AudioService {
       currentList.removeAt(index);
       final wasCurrent = currentIndex.value == index;
       playlist.value = currentList;
-      await _audioSource.removeAt(index);
+      await player.removeAudioSourceAt(index);
 
       if (currentList.isEmpty) {
         await _resetToIdle();
@@ -742,7 +745,7 @@ class AudioService {
         if (idx < playlist.value.length && !_isVideoPath(playlist.value[idx].path)) player.play();
       });
     } else {
-      final first = player.effectiveIndices?.firstOrNull ?? 0;
+      final first = player.effectiveIndices.firstOrNull ?? 0;
       _wantPlaying = false;
       player.pause();
       videoController.value?.pause();
@@ -808,7 +811,7 @@ class AudioService {
   static Future<void> clearPlaylist() async {
     await _withQueueLock(() async {
       playlist.value = [];
-      await _audioSource.clear();
+      await player.clearAudioSources();
       await _resetToIdle();
     });
     _persistQueue();

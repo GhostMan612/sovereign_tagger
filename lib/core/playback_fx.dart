@@ -10,8 +10,6 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'eq_mapper.dart';
 
 class PlaybackFx {
-  static const double _justAudioUnitsPerDb = 0.1;
-
   static final AndroidEqualizer equalizer = AndroidEqualizer();
   static final AndroidLoudnessEnhancer loudness = AndroidLoudnessEnhancer();
 
@@ -70,11 +68,11 @@ class PlaybackFx {
       await equalizer.setEnabled(eqEnabled.value);
       final params = _params;
       if (params == null || !eqEnabled.value) return;
-      final minDb = params.minDecibels / _justAudioUnitsPerDb;
-      final maxDb = params.maxDecibels / _justAudioUnitsPerDb;
+      final minDb = params.minDecibels;
+      final maxDb = params.maxDecibels;
       final mapped = EqMapper.mapToDevice(eqGains.value, params.bands.map((b) => b.centerFrequency).toList(), minDb, maxDb);
       for (var i = 0; i < params.bands.length; i++) {
-        await params.bands[i].setGain(mapped[i] * _justAudioUnitsPerDb);
+        await params.bands[i].setGain(mapped[i]);
       }
     } catch (_) {}
   }
@@ -143,7 +141,7 @@ class PlaybackFx {
   static Future<void> _applyBoost() async {
     try {
       if (_rgBoostDb > 0.05) {
-        await loudness.setTargetGain(_rgBoostDb * _justAudioUnitsPerDb);
+        await loudness.setTargetGain(_rgBoostDb);
         await loudness.setEnabled(true);
       } else {
         await loudness.setEnabled(false);

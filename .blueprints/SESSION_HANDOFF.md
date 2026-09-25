@@ -33,11 +33,13 @@ Session-end law: update rows 2–4 every session (+ row 5 when a new gotcha is l
 - **Library tab** was a stub (file picker + nonexistent `storage.readTags`); now MediaStore-backed Songs/Albums/Artists/Folders/Playlists/New with Edit in Forge + system delete.
 - **Batch** (nav label, was PIPELINE): load from Library, one permission prompt, fix in place, ≥80% confidence auto-apply else REVIEW → Forge. Keys optional.
 - **Widget** buttons now send media-button broadcasts and show now-playing (they launched unhandled intents; `android:configure` removed).
+- **Dependency max (27.8)**: resolver-verified that the only ceiling is `file_picker 9` ↔ `wakelock_plus 1.5.2` (win32 ^5 vs ^6) plus `permission_handler 13` needing compileSdk 37. Everything else bumped to latest: `ffmpeg_kit 0.6.2` (FFmpeg 9.0.1, quote/space-safe argv), `just_audio 0.10.6` + `audio_session 0.2.4` (queue on the new playlist API; EQ/loudness gains are now real dB, G18), `audio_waveforms 2.0.2` (`RecorderSettings`), `permission_handler 12.0.3`, `flutter_lints 6`, `flutter_launcher_icons 0.14.4`, plus a lockfile refresh.
 - **Hygiene**: mojibake repaired (`main.dart` splash, `ghost_avatar` glyphs), BOMs stripped, UTF-16 `.gitignore` line fixed, `local.properties` + build report untracked, Whisper model downloads on first use.
 
 ## Next actions
 
 1. Device smoke (Moto G): Grabber card → SAVE TO MUSIC; share a YouTube link into the app; Forge on a Library song → SAVE & FIX ORIGINAL (permission prompt, no duplicate); SEARCH METADATA review sheet on a messy title; EQ preset audibly changes playback; lock-screen art/buttons; headset button during a video; widget buttons; Batch with one permission prompt.
+1b. Dependency-upgrade smoke (27.8): EQ preset and ReplayGain boost sound right (not 10× hot/weak — just_audio 0.10 gains are real dB); Workbench ops + Grabber MP3/remux on FFmpeg 9.0.1; Workbench REC (AAC via `RecorderSettings`); queue restores on relaunch and resumes at the saved position.
 2. Build check: first `flutter build apk` after Phase 27 compiles new Kotlin (StorageBridge/MainActivity/Widget) — not compiled in the cloud session.
 3. Optional: true overlapping crossfade (dual player) and a custom 15-band DSP (device EQ is typically 5 bands) — Phase 28 candidates.
 
@@ -115,7 +117,7 @@ Session-end law: update rows 2–4 every session (+ row 5 when a new gotcha is l
 - **Critical 5 HOLD** still gated: `ffmpeg queue Future<void> _drain` `22`, `jobId UUID` `48`, `Id3 deleteField` `Id3Tagger.kt:23`, `bridge split orphan` `114`, `Storage MIME` `StorageBridge.kt:39`.
 - **HIGH 6 HOLD** still gated: extractor `android,web` rotation `bridge.py:19` + `spider.py:79`, `_queueLock` serialized `main_shell:72`, `PcmRecorderBridge:60` reuse, runtime `READ_MEDIA_*` via `permission_handler`, scoped-storage cache copy.
 
-## Toolchain notes (frozen ceiling)
+## Toolchain notes (dependency ceiling: win32 pair + compileSdk 37)
 
 - `pubspec.yaml:6` `sdk >=3.0.0 <4.0.0` / `Flutter 3.47 / Dart 3.13` / `compileSdk 36 / NDK 28.2 / JDK 25 bundled jbr/bin/java 25.0.2` / `compileOptions 1.8` shim (bump to `17` only in dedicated Java session). `AGP 9.0.1 / KGP 2.3.20 / Gradle 9.1.0` at ceiling (Chaquo max `9.2`). `python 3.14` top but few wheels — `app/build.gradle:54` fallback to `"3.11"` comment. `3.12+` is 64-bit only (`arm64-v8a,x86_64` only). `minSdk 26 / abiFilters arm64-v8a,x86_64` 64-bit-only documented.
 - **Repo cleaned**: Removed dead scaffolding (`lib/core/jobs`, `lib/core/models`, `tools/`), stale blueprints (old versions, PDFs, large text dumps).
@@ -126,7 +128,7 @@ Session-end law: update rows 2–4 every session (+ row 5 when a new gotcha is l
 1. **Device smoke on Moto G** (Android Studio `Install`): **Ghost: orb materializes bottom-right, first-launch SkyNet sequence plays, chat expands, classifier replies, hide/laugh chips** (GH7 fix — verify no console ParentDataWidget error); **Player AppBar tune icon → vertical EQ rack renders + saves; merge icon → Playback Engine**; **Workbench REC → live red wave bars move with mic level** (PW1); Whisper transcribe → `.srt` sidecar; ReplayGain scan → verify tags written; 15-band EQ op → apply/verify; Crossfade 0–12s → verify; Gapless Audit → run test pattern; LRCLIB fallback → verify lyrics fill; Home widget → add to launcher; Library tab → scan MediaStore; Backup/Restore → round-trip; `grabber` quick-video `1080/720` + FB silent-heal; `pipeline` batch cancel/retry; `workbench` PCM record → HALT auto-export → DSP; `player` edge-to-edge pinch + `sleep/speed/LRC` + queue persist; `splash` rain + per-tab pulses 60fps.
 2. **Git decision**: `C:\sovereign_tagger` has NO `.git` — repo is unversioned. Operator to decide: `git init` + explicit-path staging discipline, or stay unversioned.
 3. **Phase 26+** (future, optional): Cloud sync, Last.fm scrobbling, Chromecast, Opus encoding, multi-user profiles.
-4. **Optional major session (explicit ask only):** `flutter pub upgrade --major-versions` → `ffmpeg 0.6.0 / file_picker 12 / just_audio 0.10 / permission_handler 13 / audio_waveforms 2.0` + `java 1.8→17` + `compileSdk` bump — needs Moto G regression.
+4. **Optional major session (explicit ask only):** `file_picker 13` migration (16 call sites + verify `PlatformFile.identifier` still feeds Forge write-back) which unlocks `wakelock_plus 1.8`; `permission_handler 13` needs root `compileSdk 37`. Plus `java 1.8→17`. Never `--major-versions` blindly — needs Moto G regression.
 5. **PCM wave amplitude (nice-to-have):** wire `AudioRecord` max amplitude to `onCurrentDuration` stream for live wave in lossless mode (currently static `PCM CAPTURING` indicator).
 6. **UI/UX polish session (operator-flagged):** buttons/taps still lack sound FX + visual feedback across tabs — `CyberTapFeedback`/`CyberButton`/`CyberIconButton` (`lib/core/cyber_tap_feedback.dart`) exist from Phase 23 but are NOT wired into most surfaces. Sweep grabber/forge/pipeline/workbench/library/player/settings: wrap primary actions with `CyberTapFeedback`, wire `TapFeedback.machineTap/Boop/Confirm` (post-matrix-rename names) to presses, verify haptics on device.
 7. **Phase 26 staged** (ROADMAP has full slices): 26.0 ghost scrim [x] + 26.0b key onboarding [x] (storage/openUrl intent channel, settings title hyperlinks, ghost rituals/chips) shipped; next up **26.1 Waveform Studio** — use `audio_waveforms` `PlayerController.extractWaveformData` (dep already owned) + custom painter peak/RMS dual-shade, pinch-x viewport zoom, drag selection → CLIP op; then 26.2 ops pack (`adeclick`/`deesser`/`alimiter`/`mcompand`/`amix`/`acrossfade`/`apad`/`dcshift`), 26.3 yt-dlp help sheet, 26.4 spectrogram stretch (`showspectrogrampic`). Research base: Lexis/WaveEditor/WavePad/Audacity feature digests in ROADMAP Phase 26 notes.
@@ -138,7 +140,7 @@ Session-end law: update rows 2–4 every session (+ row 5 when a new gotcha is l
 ## Open decisions (deferred-zero-bloat)
 
 - `test/` suite — keep absent unless operator opts in; `flutter_test` declared but unused.
-- Major bumps (`^0.6.0` etc.) — stay pinned until dedicated session.
+- `file_picker` / `wakelock_plus` / `permission_handler 13` — stay pinned until dedicated session (everything else already at latest).
 - Java `1.8→17` — stay shimmed until dedicated Java session.
 - **SDK EDITION track approved (spec only)**: ROADMAP "Phase S0–S4" — dual-flavor future (full = personal w/ yt-dlp; sdk = publishable, Python ripped). Prerequisite order matters: S1 Dart spider port BEFORE S2 flavor split BEFORE S3 ceiling raise. win32/file_picker cap documented as orthogonal to Python removal.
 
