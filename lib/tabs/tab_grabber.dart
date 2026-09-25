@@ -306,6 +306,7 @@ class _TabGrabberState extends State<TabGrabber> {
 
     switch (job.mode) {
       case _ExportMode.original:
+        if (rawExt == 'm4a') return run('-vn -c:a copy -movflags +faststart', 'm4a', 'REMUX');
         if (rawExt != 'webm' && rawExt != 'mkv') return rawPath;
         final codec = await probeAudioCodec(rawPath);
         if (codec == 'opus') return run('-vn -c:a copy', 'opus', 'REMUX');
@@ -319,10 +320,7 @@ class _TabGrabberState extends State<TabGrabber> {
       case _ExportMode.m4a:
         if (rawExt == 'mp3' || rawExt == 'flac') return rawPath;
         final codec = await probeAudioCodec(rawPath);
-        if (codec == 'aac' || codec == 'alac') {
-          if (rawExt == 'm4a') return rawPath;
-          return run('-vn -c:a copy -movflags +faststart', 'm4a', 'REMUX');
-        }
+        if (codec == 'aac' || codec == 'alac') return run('-vn -c:a copy -movflags +faststart', 'm4a', 'REMUX');
         return run('-vn -c:a aac -b:a 256k -movflags +faststart', 'm4a', 'AAC 256K');
     }
   }

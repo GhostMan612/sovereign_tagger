@@ -6,6 +6,7 @@
 import 'dart:convert';
 import 'dart:io';
 import 'dart:async';
+import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:file_picker/file_picker.dart';
@@ -827,6 +828,49 @@ class AudioService {
     } catch (_) {}
   }
 
+  static const List<String> _folderArtNames = ['cover', 'folder', 'front', 'album', 'albumart'];
+  static const List<String> _folderArtExts = ['jpg', 'jpeg', 'png'];
+
+  static Future<Uint8List?> _resolveArtwork(String path, String embeddedBase64) async {
+    if (embeddedBase64.isNotEmpty) {
+      try {
+        final bytes = base64Decode(embeddedBase64);
+        if (await _isDecodable(bytes)) return bytes;
+      } catch (_) {}
+    }
+    final extracted = await StorageClient.loadArtwork(Uri.file(path).toString(), size: 1024);
+    if (extracted != null && extracted.isNotEmpty) return extracted;
+    return _folderArt(path);
+  }
+
+  static Future<bool> _isDecodable(Uint8List bytes) async {
+    try {
+      final codec = await ui.instantiateImageCodec(bytes, targetWidth: 16);
+      codec.dispose();
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  static Future<Uint8List?> _folderArt(String path) async {
+    final slash = path.lastIndexOf('/');
+    if (slash <= 0) return null;
+    final dir = path.substring(0, slash);
+    for (final name in _folderArtNames) {
+      for (final ext in _folderArtExts) {
+        final file = File('$dir/$name.$ext');
+        try {
+          if (await file.exists()) {
+            final bytes = await file.readAsBytes();
+            if (bytes.isNotEmpty && await _isDecodable(bytes)) return bytes;
+          }
+        } catch (_) {}
+      }
+    }
+    return null;
+  }
+
   static Future<Uri?> _artUriFor(String path, List<int> bytes) async {
     try {
       final key = "${path.hashCode}_${bytes.length}";
@@ -864,10 +908,10 @@ class AudioService {
       _info[path] = TrackInfo(title: title, artist: artist, album: tags['ALBUM'] ?? '', uri: _info[path]?.uri, durationMs: int.tryParse(tags['DURATION_MS'] ?? '') ?? 0);
       infoRevision.value++;
       PlaybackFx.applyTrackGain(tags);
+      final bytes = await _resolveArtwork(path, tags["ARTWORK_BASE64"] ?? "");
+      if (token != _loadToken) return;
       Uri? artUri;
-      final art = tags["ARTWORK_BASE64"] ?? "";
-      if (art.isNotEmpty) {
-        final bytes = base64Decode(art);
+      if (bytes != null) {
         coverArtImage.value = Image.memory(bytes, fit: BoxFit.contain, gaplessPlayback: true);
         artUri = await _artUriFor(path, bytes);
       }

@@ -235,6 +235,7 @@
 - [x] **27.5 Library** — MediaStore library (songs/albums/artists/folders/playlists/new), edit in Forge, system delete
 - [x] **27.6 Batch** — library multi-select, single permission prompt, confidence gate + REVIEW
 - [x] **27.7 Hygiene** — mojibake/BOM/.gitignore/local.properties, widget media buttons, Whisper model download
+- [x] **27.9 Album art** — player art cascade (embedded tag → Android MediaMetadataRetriever → cover/folder/front/album image), jaudiotagger Android mode + raw FLAC/Vorbis picture blocks + APIC type 3, YouTube DASH m4a flattened before tagging (G24/G25)
 - [x] **27.8 Dependency max** — resolver audit: ffmpeg_kit 0.6.2, just_audio 0.10.6 (+audio_session 0.2.4, playlist API, EQ gains now true dB), audio_waveforms 2.0.2 (RecorderSettings), permission_handler 12.0.3, flutter_lints 6, launcher_icons 0.14.4. Still capped: file_picker 9 ↔ wakelock_plus 1.5.2 (win32 pair), permission_handler 13 (compileSdk 37)
 - Gate: `flutter analyze --no-pub` → "No issues found!" (Flutter 3.47.5); device smoke pending
 

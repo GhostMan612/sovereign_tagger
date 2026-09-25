@@ -93,6 +93,7 @@ Sovereign Tagger — autonomous Android media pipeline: yt-dlp (chaquopy Python 
 | GH11 | ghost_avatar/overlay lifecycle | Orb scale-0/opacity-0 forever: materialize one-shot raced collapsed-shrink → null currentState silent no-op; collapse destroyed state; flag key desync | 25 | **FIXED (final root cause)** avatar self-materializes post-frame on mount (silent); overlay never returns shrink — orb always mounted/tappable when visible; overlay reads v2 flag via GhostSettings; agent audit F1-F10 confirmed painter was never at fault |
 | CS4 | tab_player / eq_presets_screen | EQ belongs in PLAYER (jetAudio pattern), not Workbench | 25 | **FIXED** tune icon moved to Player AppBar; vertical 260px slider rack built; Workbench keeps DSP op + SAVE PRESET sync |
 | PW1 | workbench PCM | static "PCM CAPTURING" indicator | 25 | **FIXED** `_PcmWavePainter` live 48-bar level meter fed by `PcmRecorderBridge` peak tap → `pcm_events` EventChannel (50ms throttle, zero extra alloc in read loop) |
+| AR1 | player art / Id3Tagger / tab_grabber | Album art missing in player: no fallback when tags lack art; YouTube DASH m4a failed every tag write (Grabber save aborted); jaudiotagger in desktop mode (FLAC/OGG art write threw an Error, hung the channel); APIC picture type 255 | 27.9 | **FIXED** art cascade (tag → MediaMetadataRetriever → folder image), `isAndroid=true` + raw FLAC/Vorbis picture blocks + type 3, m4a remux + `TagIO` DASH flatten (G24/G25) — device smoke pending |
 
 ## Toolchain notes (dependency ceiling: win32 pair + compileSdk 37)
 

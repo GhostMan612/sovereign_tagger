@@ -7,8 +7,12 @@ package com.sovereigntagger
 
 import android.util.Base64
 import org.jaudiotagger.audio.AudioFileIO
+import org.jaudiotagger.audio.flac.metadatablock.MetadataBlockDataPicture
 import org.jaudiotagger.tag.FieldKey
+import org.jaudiotagger.tag.Tag
 import org.jaudiotagger.tag.TagField
+import org.jaudiotagger.tag.TagOptionSingleton
+import org.jaudiotagger.tag.flac.FlacTag
 import org.jaudiotagger.tag.id3.AbstractID3v2Frame
 import org.jaudiotagger.tag.id3.AbstractID3v2Tag
 import org.jaudiotagger.tag.id3.ID3v23Frame
@@ -16,9 +20,16 @@ import org.jaudiotagger.tag.id3.ID3v23Tag
 import org.jaudiotagger.tag.id3.ID3v24Frame
 import org.jaudiotagger.tag.id3.framebody.FrameBodyTXXX
 import org.jaudiotagger.tag.images.ArtworkFactory
+import org.jaudiotagger.tag.reference.PictureTypes
+import org.jaudiotagger.tag.vorbiscomment.VorbisCommentFieldKey
+import org.jaudiotagger.tag.vorbiscomment.VorbisCommentTag
 import java.io.File
 
 object Id3Tagger {
+    init {
+        TagOptionSingleton.getInstance().isAndroid = true
+    }
+
     fun writeTags(filePath: String, metadata: Map<String, String>): Boolean {
         return try {
             val audioFile = AudioFileIO.read(File(filePath))
@@ -48,26 +59,56 @@ object Id3Tagger {
                         "REPLAYGAIN_ALBUM_GAIN" -> setReplayGainTag(tag, "REPLAYGAIN_ALBUM_GAIN", value)
                         "REPLAYGAIN_ALBUM_PEAK" -> setReplayGainTag(tag, "REPLAYGAIN_ALBUM_PEAK", value)
                         "ARTWORK_BASE64" -> {
-                            if (value.isEmpty()) {
-                                tag.deleteArtworkField()
-                            } else {
-                                val imageBytes = Base64.decode(value, Base64.DEFAULT)
-                                val artwork = ArtworkFactory.getNew()
-                                artwork.binaryData = imageBytes
-                                artwork.mimeType = sniffImageMime(imageBytes)
-                                tag.deleteArtworkField()
-                                tag.setField(artwork)
-                            }
+                            tag.deleteArtworkField()
+                            if (value.isNotEmpty()) writeArtwork(tag, Base64.decode(value, Base64.DEFAULT))
                         }
                     }
-                } catch (e: Exception) {
+                } catch (e: Throwable) {
                 }
             }
             audioFile.commit()
             true
-        } catch (e: Exception) {
+        } catch (e: Throwable) {
             false
         }
+    }
+
+    private fun writeArtwork(tag: Tag, bytes: ByteArray) {
+        val mime = sniffImageMime(bytes)
+        val (width, height) = imageSize(bytes)
+        when (tag) {
+            is FlacTag -> tag.setField(tag.createArtworkField(bytes, PictureTypes.DEFAULT_ID, mime, "", width, height, 24, 0))
+            is VorbisCommentTag -> {
+                val picture = MetadataBlockDataPicture(bytes, PictureTypes.DEFAULT_ID, mime, "", width, height, 24, 0)
+                tag.setField(tag.createField(VorbisCommentFieldKey.METADATA_BLOCK_PICTURE, Base64.encodeToString(picture.rawContent, Base64.NO_WRAP)))
+            }
+            else -> {
+                val artwork = ArtworkFactory.getNew()
+                artwork.binaryData = bytes
+                artwork.mimeType = mime
+                artwork.pictureType = PictureTypes.DEFAULT_ID
+                tag.setField(artwork)
+            }
+        }
+    }
+
+    private fun imageSize(bytes: ByteArray): Pair<Int, Int> {
+        fun u8(i: Int) = bytes[i].toInt() and 0xFF
+        fun u16(i: Int) = (u8(i) shl 8) or u8(i + 1)
+        fun u32(i: Int) = (u16(i) shl 16) or u16(i + 2)
+        if (bytes.size > 24 && u8(0) == 0x89 && u8(1) == 0x50) return Pair(u32(16), u32(20))
+        if (bytes.size < 4 || u8(0) != 0xFF || u8(1) != 0xD8) return Pair(0, 0)
+        var i = 2
+        while (i + 9 < bytes.size) {
+            if (u8(i) != 0xFF) { i++; continue }
+            val marker = u8(i + 1)
+            if (marker == 0xFF) { i++; continue }
+            if (marker == 0xD8 || marker == 0x01 || marker in 0xD0..0xD7) { i += 2; continue }
+            val isFrame = marker in 0xC0..0xCF && marker != 0xC4 && marker != 0xC8 && marker != 0xCC
+            if (isFrame) return Pair(u16(i + 7), u16(i + 5))
+            i += 2 + u16(i + 2)
+        }
+        return Pair(0, 0)
     }
 
     fun readTags(filePath: String, skipArtwork: Boolean = false): Map<String, String> {
@@ -95,10 +136,12 @@ object Id3Tagger {
             tags["LYRICS"] = first(tag, FieldKey.LYRICS)
             tags["ENCODER"] = first(tag, FieldKey.ENCODER)
             tags["LANGUAGE"] = first(tag, FieldKey.LANGUAGE)
-            
-            val artwork = if (skipArtwork) null else tag.firstArtwork
-            if (artwork != null && artwork.binaryData != null) {
-                tags["ARTWORK_BASE64"] = Base64.encodeToString(artwork.binaryData, Base64.NO_WRAP)
+
+            if (!skipArtwork) {
+                try {
+                    val data = tag.firstArtwork?.binaryData
+                    if (data != null && data.isNotEmpty()) tags["ARTWORK_BASE64"] = Base64.encodeToString(data, Base64.NO_WRAP)
+                } catch (_: Throwable) {}
             }
             
             val replayGainFields = listOf("REPLAYGAIN_TRACK_GAIN", "REPLAYGAIN_TRACK_PEAK", "REPLAYGAIN_ALBUM_GAIN", "REPLAYGAIN_ALBUM_PEAK")
@@ -106,13 +149,13 @@ object Id3Tagger {
                 val value = getReplayGainTag(tag, fieldName)
                 if (value.isNotEmpty()) tags[fieldName] = value
             }
-        } catch (e: Exception) {
+        } catch (e: Throwable) {
         }
         return tags
     }
 
     private fun first(tag: org.jaudiotagger.tag.Tag, key: FieldKey): String {
-        return try { tag.getFirst(key) ?: "" } catch (_: Exception) { "" }
+        return try { tag.getFirst(key) ?: "" } catch (_: Throwable) { "" }
     }
 
     private fun sniffImageMime(bytes: ByteArray): String {
