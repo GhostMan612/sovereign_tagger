@@ -30,6 +30,7 @@ class MainActivity: AudioServiceActivity() {
     private val SPIDER_CHANNEL = "com.sovereign.tagger/spider"
     private val SHARE_CHANNEL = "com.sovereign.tagger/share"
     private val WIDGET_CHANNEL = "com.sovereign.tagger/widget"
+    private val SFX_CHANNEL = "com.sovereign.tagger/sfx"
 
     private val REQ_WRITE = 7301
     private val REQ_DELETE = 7302
@@ -45,6 +46,7 @@ class MainActivity: AudioServiceActivity() {
     private var shareSink: EventChannel.EventSink? = null
     private var pendingShare: String? = null
     private val storageBridge by lazy { StorageBridge(this) }
+    private var sfxEngine: SfxEngine? = null
 
     private var pendingGrantResult: MethodChannel.Result? = null
     private val recoverableQueue = ArrayDeque<Uri>()
@@ -93,6 +95,12 @@ class MainActivity: AudioServiceActivity() {
                 mainHandler.post { result.error(code, e.message, null) }
             }
         }.start()
+    }
+
+    override fun onDestroy() {
+        sfxEngine?.release()
+        sfxEngine = null
+        super.onDestroy()
     }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
@@ -321,6 +329,24 @@ class MainActivity: AudioServiceActivity() {
                     val playing = call.argument<Boolean>("playing") ?: false
                     SovereignWidgetProvider.pushState(this, title, artist, playing)
                     result.success(true)
+                }
+                else -> result.notImplemented()
+            }
+        }
+
+        MethodChannel(messenger, SFX_CHANNEL).setMethodCallHandler { call, result ->
+            when (call.method) {
+                "load" -> {
+                    val sounds = call.argument<Map<String, String>>("sounds") ?: emptyMap()
+                    val engine = sfxEngine ?: SfxEngine().also { sfxEngine = it }
+                    sounds.forEach { (name, path) -> engine.load(name, path) }
+                    result.success(true)
+                }
+                "play" -> {
+                    val name = call.argument<String>("name") ?: ""
+                    val volume = (call.argument<Double>("volume") ?: 1.0).toFloat()
+                    val rate = (call.argument<Double>("rate") ?: 1.0).toFloat()
+                    result.success(sfxEngine?.play(name, volume, rate) ?: false)
                 }
                 else -> result.notImplemented()
             }

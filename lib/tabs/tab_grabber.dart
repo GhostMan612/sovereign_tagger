@@ -1188,10 +1188,6 @@ class _TabGrabberState extends State<TabGrabber> {
                     const SizedBox(width: 8),
                     Expanded(
                       child: CyberTapFeedback(
-                        enableHaptic: false,
-                        enableAudio: false,
-                        particleColor: themeColor,
-                        ringColor: themeColor,
                         child: OutlinedButton.icon(
                           onPressed: _isBusy ? null : _quickAudio,
                           icon: Icon(Icons.graphic_eq, color: themeColor),

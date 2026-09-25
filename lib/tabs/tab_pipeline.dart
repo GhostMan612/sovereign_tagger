@@ -481,11 +481,6 @@ class _TabPipelineState extends State<TabPipeline> {
                       children: [
                         Expanded(
                           child: CyberTapFeedback(
-                            enableHaptic: false,
-                            enableAudio: false,
-                            particleColor: themeColor,
-                            ringColor: themeColor,
-                            particleCount: 16,
                             child: ElevatedButton.icon(
                               onPressed: (_queue.isEmpty || _isBatchRunning) ? null : _executeBatch,
                               icon: const Icon(Icons.rocket_launch, color: Colors.black),

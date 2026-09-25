@@ -10,7 +10,10 @@ import 'package:ffmpeg_kit_extended_flutter/ffmpeg_kit_extended_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'screens/main_shell.dart';
 import 'core/feedback_settings.dart';
+import 'core/sfx.dart';
+import 'widgets/cyber_ink.dart';
 import 'widgets/machine_rain.dart';
+import 'widgets/tap_fx_layer.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -21,6 +24,7 @@ void main() async {
     SovereignState.accentColor.value = Color(savedColor);
   }
   await FeedbackSettings.load(prefs);
+  Sfx.init();
 
   runApp(const SovereignApp());
 }
@@ -39,7 +43,9 @@ class SovereignApp extends StatelessWidget {
           theme: ThemeData(
             colorScheme: ColorScheme.fromSeed(seedColor: themeColor, brightness: Brightness.dark),
             useMaterial3: true,
+            splashFactory: CyberInk.splashFactory,
           ),
+          builder: (context, child) => TapFxLayer(accent: SovereignState.accentColor, child: child ?? const SizedBox.shrink()),
           home: const SplashScreen(),
         );
       }

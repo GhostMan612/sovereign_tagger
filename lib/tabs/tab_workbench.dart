@@ -888,10 +888,6 @@ class _TabWorkbenchState extends State<TabWorkbench> {
                       Expanded(
                         flex: 2,
                         child: CyberTapFeedback(
-                          enableHaptic: false,
-                          enableAudio: false,
-                          particleColor: themeColor,
-                          ringColor: themeColor,
                           child: OutlinedButton.icon(
                             onPressed: _isProcessing || _isRecording ? null : _pickFile,
                             icon: Icon(Icons.folder_open, color: themeColor),
@@ -907,10 +903,7 @@ class _TabWorkbenchState extends State<TabWorkbench> {
                       const SizedBox(width: 12),
                       Expanded(
                         child: CyberTapFeedback(
-                          enableHaptic: false,
-                          enableAudio: false,
-                          particleColor: Colors.redAccent,
-                          ringColor: Colors.redAccent,
+                          fxColor: Colors.redAccent,
                           child: OutlinedButton.icon(
                             onPressed: _isProcessing ? null : _toggleRecording,
                             icon: Icon(_isRecording ? Icons.stop_circle : Icons.mic, color: _isRecording ? Colors.redAccent : Colors.redAccent),
@@ -1811,11 +1804,6 @@ class _TabWorkbenchState extends State<TabWorkbench> {
 
                   const SizedBox(height: 32),
                   CyberTapFeedback(
-                    enableHaptic: false,
-                    enableAudio: false,
-                    particleColor: themeColor,
-                    ringColor: themeColor,
-                    particleCount: 16,
                     child: ElevatedButton.icon(
                       onPressed: _isProcessing || _isRecording ? null : _executeOperation,
                       icon: const Icon(Icons.bolt, color: Colors.black),

@@ -680,11 +680,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 const SizedBox(height: 32),
 
                 CyberTapFeedback(
-                  enableHaptic: false,
-                  enableAudio: false,
-                  particleColor: themeColor,
-                  ringColor: themeColor,
-                  particleCount: 16,
                   child: ElevatedButton.icon(
                     onPressed: _isSaving ? null : _saveKeys,
                     icon: const Icon(Icons.save, color: Colors.black),

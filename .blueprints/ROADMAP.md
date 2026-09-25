@@ -239,6 +239,13 @@
 - [x] **27.8 Dependency max** — resolver audit: ffmpeg_kit 0.6.2, just_audio 0.10.6 (+audio_session 0.2.4, playlist API, EQ gains now true dB), audio_waveforms 2.0.2 (RecorderSettings), permission_handler 12.0.3, flutter_lints 6, launcher_icons 0.14.4. Still capped: file_picker 9 ↔ wakelock_plus 1.5.2 (win32 pair), permission_handler 13 (compileSdk 37)
 - Gate: `flutter analyze --no-pub` → "No issues found!" (Flutter 3.47.5); device smoke pending
 
+## Phase 28 — Game-feel pass (visual FX, SFX, ghost 2.0, transitions) [ ]
+- [x] **28.1 Feel** — native `SoundPool` SFX engine + 13-sound Dart synth bank (fixes UI sounds ducking music), global `TapFxLayer` (pulse / ring / spark burst + tap sound on every tappable), `CyberInk` theme splash, `CyberTapFeedback` fixed (press-scale, keeps child)
+- [ ] **28.2 Ghost look** — no black box, frosted-glass chat panel with accent outline, outlined query field, living ghost (float/breathe/blink/eyes/tail, talking/thinking/emotion), pauses when hidden
+- [ ] **28.3 Ghost brain** — offline, free: current-app knowledge, typo-tolerant matching, real commands, follow-ups
+- [ ] **28.4 Shaders + transitions** — GPU backdrop per tab, animated tab switches, page transitions, animated nav, perf pass
+- Gate per slice: `flutter analyze --no-pub` clean + scratch widget tests (flutter_tester) + shader compile (impellerc) where relevant; device smoke in SESSION_HANDOFF
+
 ## Phase S0–S4 — SOVEREIGN SDK EDITION (future track, operator-approved spec)
 
 > Rationale: yt-dlp/chaquopy is what blocks store distribution AND pins the toolchain ceiling (chaquopy 17.0.0 maxes AGP at 9.2, drags Python 3.14 wheel scarcity, ~120-150MB on-device Python tax, Built-in-Kotlin migration blocked). An SDK/core edition strips Python entirely → publishable build + unlocked ceiling + feature headroom. Full edition keeps living side-by-side for personal use.

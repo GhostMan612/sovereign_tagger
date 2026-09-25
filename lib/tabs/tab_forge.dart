@@ -758,10 +758,6 @@ class _TabForgeState extends State<TabForge> {
                   children: [
                     Expanded(
                       child: CyberTapFeedback(
-                        enableHaptic: false,
-                        enableAudio: false,
-                        particleColor: themeColor,
-                        ringColor: themeColor,
                         child: OutlinedButton.icon(
                           onPressed: _isProcessing ? null : _pickFile,
                           icon: Icon(Icons.folder_open, color: themeColor),
@@ -898,11 +894,6 @@ class _TabForgeState extends State<TabForge> {
                   ),
                   const SizedBox(height: 24),
                   CyberTapFeedback(
-                    enableHaptic: false,
-                    enableAudio: false,
-                    particleColor: themeColor,
-                    ringColor: themeColor,
-                    particleCount: 16,
                     child: ElevatedButton.icon(
                       onPressed: _isProcessing ? null : () => _save(),
                       icon: Icon(canFix ? Icons.build_circle : Icons.save_alt, color: Colors.black),

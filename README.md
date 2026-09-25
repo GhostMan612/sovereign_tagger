@@ -72,8 +72,8 @@ This application operates completely outside the walled gardens of standard app 
 - **Reduce Motion (Global)**: Disables all glitch/wobble/scanlines when enabled
 
 ### 11. **Cyberpunk Tap Feedback** — Audio + Visual
-- Haptics + embedded 880/1400Hz base64 WAV via `just_audio` data URI
-- `CyberTapFeedback`: particle burst (12 dots), expanding shockwave ring, button scale pulse (0.92→1.0)
+- 13 synthesized 48 kHz UI sounds (tap, select, confirm, back, error, whoosh, open, close, type, message, success, glitch) generated in Dart on first launch, played through native `SoundPool` — never ducks your music
+- Every button, list row, chip and switch gets a pulse outline, shockwave ring and spark burst automatically (`TapFxLayer`), plus the `CyberInk` splash inside the button
 
 ---
 
@@ -104,7 +104,7 @@ Click **"WRITE TO KERNEL"**. Use **Export** button to generate a `.bin` backup (
 - **YouTube breaks (Google anti-bot):** Settings → **CHECK FOR YT-DLP UPDATE** (`execute_scorched_earth` pulls latest tarball from GitHub, wipes `yt_dlp/` folder, hot-reloads). If that fails, run **ON-BOARD PYTHON DOCTOR** → inventories `*.py`, probes `yt_dlp` version, snapshots `extractor_args player_client=android,web`, surfaces `PATCH_REGISTRY` hits (android blocked / impersonate removed / 403 throttle / genius 429). Then **FULL STACK REFRESH** (`execute_full_scorched_earth` also best-effort upgrades `mutagen`/`lyricsgenius`).
 - **Downloads have no audio (Facebook):** Fixed in-app — silent-video probe + companion `bestaudio` self-heal. If still silent after 1 attempt, use **ADVANCED: FETCH ALL FORMATS** and pick a progressive stream.
 - **Workbench quality:** Studio toggle `LOSSLESS PCM` = true WAV. Normal DSP preserves container unless you explicitly **Convert Format**. Two-pass loudnorm parses last `{"input_i":…}` JSON.
-- **Haptics:** Button taps fire `TapFeedback` (`HapticFeedback` + embedded `880/1400Hz` 0.7–1.3KB base64 wav via `just_audio` data URI) — no asset files.
+- **Haptics & sound:** Taps fire `TapFeedback` → `Sfx` (native `SoundPool`, synthesized bank, no asset files); haptics follow the Settings toggle.
 - **ACRCloud mic stuck:** Fixed — bridge fully stops+releases client after every recognition.
 
 ---
@@ -113,7 +113,7 @@ Click **"WRITE TO KERNEL"**. Use **Export** button to generate a `.bin` backup (
 
 - **Assets are compile-time:** declared in `pubspec.yaml:34` `assets: - assets/` (`splash-screen-bg.png`, `ShareTechMono`/`VT323`). No runtime `File('assets/...')` writes — generated media goes via `getTempDirectory` + `MediaStore`.
 - **Size:** `ffmpeg_kit full+gpl` is ~40MB/ABI (`arm64-v8a,x86_64` only). Prefer code-drawn (`CustomPainter`/`Shader`/`Lottie` ~20KB `json`) over raster video — `MatrixRain` + `AmbientBackdrop` are code-drawn.
-- **Tap sounds:** Avoided `assets/sounds/*.wav` (~50KB each) by embedding base64 wavs in `lib/core/tap_feedback.dart`.
+- **Tap sounds:** No sound assets — `lib/core/sfx_synth.dart` synthesizes the bank at first launch (~0.2 s) and caches the WAVs.
 - **Per-tab dramatics:** `AmbientBackdrop` `BackdropVariant` pulses per tab at `alpha 0.035/0.18` + blur — subtle, no asset, 60fps via single `TextPainter` + 1 `AnimationController` per backdrop.
 
 ---
