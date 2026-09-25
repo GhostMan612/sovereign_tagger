@@ -55,3 +55,10 @@
 - G16: Mixtape Join (pipeline) uses concat demuxer `-f concat -safe 0` — requires uniform codec/sample-rate; guarded to PROCESSED `.mp3` items only. Always finish with `-write_xing 1` (G13).
 - G17: Whisper transcripts GATED: no verified `whisper` filter surface in ffmpeg 8.1.2 command-space + operator must bundle model into `assets/models/`. Check boot introspection log first; never ship speculative filter strings.
 - G9: Duration has no isBefore/isAfter helpers in this SDK — use <=/>= comparisons directly.
+- G18: just_audio 0.9.x Android effects multiply by 1000 into millibels, so its "decibel" values are really bels: pass dB × 0.1 to `AndroidEqualizerBand.setGain` / `AndroidLoudnessEnhancer.setTargetGain` and divide `minDecibels/maxDecibels` by 0.1 (`PlaybackFx._justAudioUnitsPerDb`). `equalizer.parameters` only completes after the player first loads a source.
+- G19: file_picker returns a CACHE COPY path; editing it never fixes the user's file. Use `PlatformFile.identifier` → `MediaStore.getMediaUri` (`storage.resolveMediaUri`) and write back through `createWriteRequest` + `openOutputStream(uri, "wt")`. MediaStore Files won't accept non-media (e.g. `.lrc`) under Music/ — embed LRC in LYRICS instead.
+- G20: yt-dlp Python API `extractor_args` must be `{ie: {arg: [values]}}`; the list form `{'youtube': ['player_client=...']}` is silently ignored (traverse_obj on a list).
+- G21: Python `urllib` rejects URLs containing raw spaces (`InvalidURL`) — always `urllib.parse.quote`/`urlencode` the whole query (the old MusicBrainz lookup failed on every call).
+- G22: `appwidget-provider android:configure` makes the launcher wait for a configuration result; without one the widget is cancelled. Don't declare it unless a real config activity exists.
+- G23: Script-patching Dart through Python: `\n` inside a non-raw Python string becomes a real newline inside the Dart literal → syntax error. Use `\\n` or raw strings; re-run analyze after every scripted patch.
+- G17 (update): Whisper model is downloaded on first Transcribe into app support storage (`WhisperModel.ensure`); bundling in `assets/models/` is optional.

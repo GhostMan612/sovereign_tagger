@@ -227,6 +227,16 @@
 - [x] **FEEDBACK MATRIX card** — Settings > UI PREFERENCES directly under accent color: `lib/core/feedback_settings.dart` persisted notifiers (burst/ring/pulse/sound/haptics — haptics default OFF per operator preference); gates spliced into `tap_feedback.dart` primitives + `cyber_tap_feedback.dart` `_triggerBurst` (per-layer combos, all-off skips animation); completion haptics via `machineConfirm()` on workbench/forge/grabber/pipeline success tails; loaded at boot
 - Gate: `flutter analyze --no-pub` → "No issues found!"
 
+## Phase 27 — De-pipeline + Forge save-back + Player core (cloud sweep) [x]
+- [x] **27.1 Grabber hand-off is voluntary** — download cards, M4A default, cancel, share intent, playlist cards
+- [x] **27.2 Forge standalone** — working copy + save-back over the original (createWriteRequest), review sheet, play in player, form-only reset/strip/clear
+- [x] **27.3 Spider** — timeouts, scored iTunes/Deezer/MusicBrainz candidates, LRCLIB duration match, Genius optional
+- [x] **27.4 Player core** — live device EQ + presets, ReplayGain, fades, video-aware transport, lock-screen art, queue UX, playlists/favorites/recent, embedded lyrics
+- [x] **27.5 Library** — MediaStore library (songs/albums/artists/folders/playlists/new), edit in Forge, system delete
+- [x] **27.6 Batch** — library multi-select, single permission prompt, confidence gate + REVIEW
+- [x] **27.7 Hygiene** — mojibake/BOM/.gitignore/local.properties, widget media buttons, Whisper model download
+- Gate: `flutter analyze --no-pub` → "No issues found!" (Flutter 3.47.5); device smoke pending
+
 ## Phase S0–S4 — SOVEREIGN SDK EDITION (future track, operator-approved spec)
 
 > Rationale: yt-dlp/chaquopy is what blocks store distribution AND pins the toolchain ceiling (chaquopy 17.0.0 maxes AGP at 9.2, drags Python 3.14 wheel scarcity, ~120-150MB on-device Python tax, Built-in-Kotlin migration blocked). An SDK/core edition strips Python entirely → publishable build + unlocked ceiling + feature headroom. Full edition keeps living side-by-side for personal use.
@@ -238,5 +248,6 @@
 - [ ] **S4 — SDK packaging**: flat `SovereignTagger-SDK.apk` via existing outputFileName pattern; distribution targets = GitHub Releases / F-Droid-style repo / direct APK (Play becomes *possible* for sdk flavor since no ripper inside — operator call). Version-of-record docs split: README gets an EDITIONS table.
 - Gate per slice: analyze clean + Moto G smoke; S3 additionally needs full release-build regression on both flavors.
 
-## Phase 27+ (future)
+## Phase 28+ (future)
+- True overlapping crossfade (second player), custom 15-band real-time DSP (device EQ is usually 5 bands), visualizer, Android Auto browse tree
 - Cloud sync, Last.fm scrobbling, Chromecast, Opus encoding, multi-user profiles

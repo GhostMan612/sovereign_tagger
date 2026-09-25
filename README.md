@@ -9,23 +9,23 @@ This application operates completely outside the walled gardens of standard app 
 ## 🛠 Capabilities
 
 ### 1. **The Grabber** — Stream Ripper
-- Rip from YouTube/SoundCloud/Bandcamp at max quality
-- Quick-audio `bestaudio/best` → Forge, quick-video `bestvideo[height<=RES]+bestaudio/best` (fixed interpolation, UUID `jobId`), or **ADVANCED: FETCH ALL FORMATS** → per-format picker with `audio+video` explicit `-map` merge via 3-rung ladder (`-map 0:v:0 -map 1:a:0` → AAC-remux → default, verified via `probeStreams`)
-- Facebook DASH silent-video self-heals with companion `bestaudio` fetch (capped 1 attempt)
-- `EXPORT AS` toggle: `MP3 320K` (default) / `SOURCE COPY` (webm/opus/m4a passthrough, zero transcode)
+- Rip from YouTube/SoundCloud/Bandcamp/1000+ sites; paste a link, **share** one into the app, or hunt by artist + title
+- **Nothing is forced**: each finished download becomes a card with editable title/artist/album/track, file name and thumbnail-as-cover, then **PLAY / SAVE TO MUSIC / SEND TO FORGE / DISCARD**
+- Audio modes: **M4A ORIGINAL** (default, the site's AAC stream, no re-encode), **MP3 320K**, **AS-IS**
+- Parallel downloads with progress + **cancel**; playlists become one card per track + SAVE ALL
+- Video: quick-video or per-format picker with 3-rung verified merge ladder; Facebook silent-video self-heal
 
-### 2. **The Forge** — ID3 Editor
-- Edit ID3 in-place via `Id3Tagger` (jaudiotagger, `deleteField` on empty), preserve container (`flac→flac`, `wav→wav`, `m4a→m4a`, `ogg→ogg`, `opus→opus`)
-- Write→read-back round-trip verify, high-res art, `LOSSLESS PCM` not transcoded
-- `EJECT MEDIA` deletes cache copy only, confirms for originals
-- Karaoke mode: isolated `LyricSyncScreen` player with transport bar + tempo warp, LRC sidecar parse + auto-scroll + tap-to-seek
+### 2. **The Forge** — Standalone Tag Editor
+- Mount any song (picker, or **Edit in Forge** from Library / Player / Grabber). Edits happen on a private working copy; nothing is written until **SAVE**
+- **SAVE & FIX ORIGINAL** rewrites the song in place (Android's modify-permission prompt) — no duplicates; **SAVE AS A NEW COPY** optional; editable file name
+- **SEARCH METADATA** (iTunes / Deezer / MusicBrainz candidates, scored) and **IDENTIFY** (ACRCloud) open a review sheet: current vs proposed per field, pick the right release, artwork, synced or plain lyrics
+- **PLAY IN PLAYER**, lyrics FIND (LRCLIB) + karaoke SYNC (embedded on save), read-back verification on the final file
 
-### 3. **The Pipeline** — Autonomous Batch
-- ACRCloud fingerprint (20s `8000Hz mono pcm_s16le` via `FFmpegExecutor`) + `spider.py` cascade (Genius→**LRCLIB**→SoundCloud→iTunes→MusicBrainz)
-- LRCLIB lyrics fallback (free, no key) after Genius
-- Buckets: `GHOST/PARTIAL/PRISTINE/PROCESSED/FAILED` with **Cancel** (halts loop) and **FAILED retry** (re-buckets to GHOST/PARTIAL)
-- **Mixtape Join**: lossless concat demuxer `-c copy -write_xing 1` of PROCESSED mp3s → MediaStore
-- Correct MIME mapping (`flac/wav/m4a/ogg/opus` via `StorageBridge.kt`)
+### 3. **Batch** — Many Songs At Once
+- Load from the Library (multi-select) or files; one permission prompt covers the whole batch; tracks are fixed in place
+- Matches ≥80% confidence are applied automatically; the rest land in **REVIEW** and open in the Forge
+- ACRCloud fingerprints GHOST tracks when keys are set, otherwise file names are used; Genius is optional
+- **Mixtape Join**: lossless concat of PROCESSED mp3s
 
 ### 4. **The Workbench** — Direct FFmpeg Injection
 - **Extract Audio**, **Clip** (`HH:MM:SS` validated, keyframe-aware `-ss` before `-i` for video), **Convert Format**, **Normalize LUFS -14** (single + **two-pass** `loudnorm` JSON), **Granular DSP** (speed `asetrate`/`aresample`, reverb `aecho`, reverse), **Apply Fades** (`afade` with duration-derived `outStart`), **Fold To Mono** (`pan`), **Trim Silence** (`silenceremove -45dB`)
@@ -35,14 +35,15 @@ This application operates completely outside the walled gardens of standard app 
 - **Crossfade/Gapless**: relocated to the **PLAYBACK ENGINE screen** (merge icon in Player AppBar)
 - **AI Denoise**: `afftdn=nf=-25`, **Parametric EQ** (5-band ±12dB), **Compress Dynamics** (`acompressor` 1-12:1)
 - **DSP Pitch Modes**: VARISPEED / RUBBERBAND / ATEMPO dropdown
-- **Whisper AI**: bundled `ggml-base.en.bin` (141MB), `-af "whisper=model=<path>:language=<en|auto>" -f srt`, writes `.srt` sidecar + text preview, self-diagnosing fallback pulls `-h filter=whisper`
+- **Whisper AI**: `ggml-base.en.bin` (141MB, downloaded once on first use or bundled from `assets/models/`), `-af "whisper=model=<path>:language=<en|auto>" -f srt`, writes `.srt` sidecar + text preview, self-diagnosing fallback pulls `-h filter=whisper`
 - **Studio Recorder**: Toggle `LOSSLESS PCM (48K WAV)` (default, `AudioRecord` 48k/16-bit WAV, header finalize LE, `ByteBuffer` reuse) or fallback `aac 48k/256k 50ms`
 
 ### 5. **The Player** — Theater Mode
-- Edge-to-edge `BoxFit.contain` with `InteractiveViewer` pinch 1→3x + bottom scrim
-- Controls: shuffle/repeat, **sleep timer** (bedtime 15-90m), **speed** `0.5→2.0x` persisted, **ENQUEUE FILES** + **Play Next** (`moveAfterCurrent` via `_queueLock`), **queue persist** (debounced JSON), **LRC Karaoke** sidecar parse (`_LyricsSheet` auto-scroll + tap-to-seek), **double-tap halves** ±10s + swipe prev/next
-- **Lockscreen notification** (`audio_service 0.18.19` `SovereignAudioHandler` + `AudioSession`, `FOREGROUND_SERVICE` perms)
-- **Crossfade 0–12s** (`acrossfade` filter) + **Gapless** (`ConcatenatingAudioSource` default-on) — configured in the **PLAYBACK ENGINE screen** (AppBar merge icon): instant-persist slider/toggle + **RUN GAPLESS AUDIT** 2-tone RMS test
+- Mini-player (art, prev/play/next) + full-screen Now Playing: pinch-zoom art, double-tap ±10s, swipe to skip, favorites
+- **Equalizer heard live**: 15-band curve + genre presets mapped onto the phone's EQ; **ReplayGain** (track/album + pre-amp, clip-safe); **fade transitions**
+- Queue: titles/artists, drag to reorder, swipe to remove, save as playlist; queue + position survive restarts
+- Lyrics: embedded synced (karaoke) or plain lyrics, sidecar `.lrc`, or fetch from LRCLIB
+- Lock screen / headset / notification controls with artwork; sleep timer with fade-out or end-of-track; speed 0.5–2x
 
 ### 6. **Ghost Avatar Tutorial Chatbot** — In-App Assistant (classifier-first)
 - Code-drawn Android ghost emoji silhouette, glitch effects (scanlines, RGB shift, jitter)
@@ -54,15 +55,13 @@ This application operates completely outside the walled gardens of standard app 
 - **Settings**: Visibility, auto-expand, reduce-motion (global), reset first-launch
 - *Pure-Dart classifier replacing abandoned TFLite: `lib/services/ghost_classifier.dart` — TF-IDF + cosine similarity, 15 intents, no native dep, identifies intent at 0.14 threshold then falls back to keyword routing — fully ceiling-safe.*
 
-### 7. **Library Tab** — MediaStore Browser
-- Browse by ALBUM / ARTIST / FOLDER dropdown
-- Real-time search filter by title/artist/album
-- Tap track → replaces queue, switches to PLAYER tab
-- Artwork decoded from base64 tags
+### 7. **Library Tab** — Your Music
+- Reads the phone's music library: **Songs, Albums, Artists, Folders, Playlists, New**; live search; sort
+- Favorites, Recently Played and your own playlists (reorder, rename, delete)
+- Long-press: play next, add to queue, add to playlist, favorite, **Edit in Forge**, delete (system prompt)
 
 ### 8. **Home Screen Widget** — RemoteViews
-- `SovereignWidgetProvider` (4-button: PREV/PLAY/NEXT/QUEUE)
-- Cyberpunk styling (black bg, accent border, `ShareTechMono`/`VT323`)
+- PREV / PLAY-PAUSE / NEXT drive playback through media buttons; shows the current track
 
 ### 9. **Backup/Restore** — XOR Encrypted
 - Export/import settings + EQ presets + persisted queue as encrypted JSON binary (XOR `0x53` + `base64`)
@@ -140,12 +139,12 @@ Click **"WRITE TO KERNEL"**. Use **Export** button to generate a `.bin` backup (
 ### Contextual Tutorials (Per Tab)
 | Tab       | Sample Tips                                                                                                                                               |
 |-----------|-----------------------------------------------------------------------------------------------------------------------------------------------------------|
-| GRABBER   | "Tap SEARCH → type query → pick format → DOWNLOAD", "EXPORT AS: MP3 320K or SOURCE COPY", "Facebook videos auto-heal with bestaudio"                      |
-| FORGE     | "Load file, edit tags, EXPORT preserves container", "EJECT = cache-only delete", "KARAOKE isolated player"                                                |
-| PIPELINE  | "GHOST→PARTIAL(ACR)→PRISTINE(Genius)→PROCESSED", "CANCEL halts batch", "MIXTAPE JOIN lossless concat"                                                     |
+| GRABBER   | "Paste/share a link or HUNT", "Cards: PLAY / SAVE / SEND TO FORGE / DISCARD", "M4A original by default"                                                   |
+| FORGE     | "Nothing written until SAVE", "Review sheet for SEARCH/IDENTIFY", "SAVE & FIX ORIGINAL rewrites in place"                                                 |
+| BATCH     | "Load from Library, one permission prompt", "≥80% auto-fixed, rest go to REVIEW", "MIXTAPE JOIN lossless concat"                                           |
 | WORKBENCH | "15-band EQ (AutoEq), LUFS -14, Whisper, PCM LOSSLESS", "Pitch modes: VARISPEED/RUBBERBAND/ATEMPO", "REPLAYGAIN scan writes TXXX tags"                    |
-| LIBRARY   | "Browse by ALBUM/ARTIST/FOLDER", "Tap track → replaces queue", "Artwork from base64 tags"                                                                 |
-| PLAYER    | "Mini-player + theater, pinch-zoom 1→3x", "Speed 0.5x–2x, sleep timer, shuffle/repeat", "Crossfade 0–12s + Gapless"                                       |
+| LIBRARY   | "Songs/Albums/Artists/Folders/Playlists/New", "PLAY ALL / SHUFFLE", "Long-press → Edit in Forge"                                                         |
+| PLAYER    | "Mini-player + Now Playing, pinch-zoom", "Queue drag/swipe, favorites, playlists", "Live EQ, ReplayGain, fades"                                           |
 | SETTINGS  | "Genius/ACR keys, color picker, FFmpeg probe, cache purge", "Backup/Restore encrypted JSON", "Ghost Tutorial: reduce-motion, reset first-launch" |
 
 ---

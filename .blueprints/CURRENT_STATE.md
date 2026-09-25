@@ -1,5 +1,15 @@
-# CURRENT_STATE.md — Sovereign Tagger v2 (post-Phase 25)
-> Snapshot as of 2026-08-25 — Phases 0-25 COMPLETE. `flutter analyze --no-pub` → `No issues found!`
+# CURRENT_STATE.md — Sovereign Tagger v2 (post-Phase 27)
+> Snapshot as of 2026-09-25 — Phases 0-27 COMPLETE. `flutter analyze --no-pub` → `No issues found!`
+>
+> **Phase 27 deltas (read before the older map below — rows it contradicts are superseded):**
+> - Cross-tab hand-off: `SovereignState.sendToForge(ForgeRequest)` (user-initiated only); `pendingForgePath` is gone. Shared URLs arrive via `SovereignState.pendingGrabberUrl`.
+> - New core modules: `title_cleaner`, `lrc`, `tag_io`, `storage_client`, `metadata_sources`, `forge_request`, `playback_fx`, `eq_mapper`, `playlists`, `whisper_model`; widgets `metadata_review_sheet`, `playlist_picker`.
+> - Forge/Batch save back over originals via `storage` channel `requestWriteAccess` + `overwriteMedia`; `exportToLibrary` returns `{uri,path,displayName}` (legacy `addToMediaStore` still returns the uri string for Workbench).
+> - Player: `AudioPlayer(audioPipeline: PlaybackFx.createPipeline())`; EQ/ReplayGain/fades in `PlaybackFx`; transport for handler/widget/mini-player goes through `AudioService.resume/pause/nextTrack/prevTrack` (video-aware). `autoMountMusicFolder` removed — the Library tab replaces it.
+> - Library tab = MediaStore (`storage.queryAudio`, `loadArtwork`), Pipeline tab labelled BATCH (`BatchItem`, REVIEW bucket).
+> - Grabber: `bridge.py` finished events carry `info`; `cancel(job_id)`, `fetch_thumbnail`; `extractor_args` removed (list form was silently ignored by yt-dlp).
+> - Playback Engine screen: fades + ReplayGain (crossfade/gapless toggles and the FFmpeg-only gapless audit were placebo and are removed).
+
 
 ## App identity
 

@@ -21,7 +21,7 @@ SovereignState (statics)            AudioService (statics + handler)
                                     ├─ repeatMode / isShuffle / sleepTimerMinutes / speedFactor
                                     ├─ _audioHandler SovereignAudioHandler (audio_service BaseAudioHandler, queue sync on every mutator)
                                     └─ _persist debounce (SharedPreferences JSON) + restore
-Cross-tab handoff: writer sets pendingForgePath + currentTab=1; TabForge listens & auto-loads.
+Cross-tab handoff (user-initiated only): SovereignState.sendToForge(ForgeRequest{path, origin, originUri, prefill}) sets pendingForge + currentTab=1; TabForge mounts a working copy. Shared links: pendingGrabberUrl.
 RULE: mutate queues ONLY via AudioService mutators inside _withQueueLock (replacePlaylist, reorderPlaylist, removeFromPlaylist, playNext, addToQueue, moveAfterCurrent, clearPlaylist).
 ```
 
@@ -31,9 +31,11 @@ RULE: mutate queues ONLY via AudioService mutators inside _withQueueLock (replac
 | `ytdlp` | `searchMedia` · `getFormats` · `downloadMedia(jobId UUID)` · `cancelDownload` · `updateCore` · `updateFullStack` · `runDoctor` · `getDoctorRegistry` | `bridge.py` (`job_id` templated `_v/_a.%(ext)s`, split `"vid+aud"` into two `YoutubeDL` runs with `extractor_args player_client=android,web`, orphan `temp_v` cleanup) + `updater.py` + `doctor.py` |
 | `ytdlp_events` | `EventChannel` progress JSON `{jobId,status,percent,speed,eta,current_file}` | `bridge.py` `create_hook` |
 | `id3` | `readTags` · `writeTags` (now `deleteField` on empty, `deleteArtworkField` on empty art) | `Id3Tagger.kt` jaudiotagger lossless in-place |
-| `storage` | `getTempDirectory` · `addToMediaStore` (now MIME map `flac→flac, wav→wav, m4a→mp4, ogg→ogg, opus→opus, mkv→x-matroska`) · `exportConfig` · `autoImportConfig` | `StorageBridge.kt` `RELATIVE_PATH MUSIC/MOVIES` + `IS_PENDING` |
+| `storage` | `queryAudio` · `loadArtwork` · `resolveMediaUri` · `requestWriteAccess` · `overwriteMedia` · `requestDelete` · `exportToLibrary` · `getTempDirectory` · `addToMediaStore` (now MIME map `flac→flac, wav→wav, m4a→mp4, ogg→ogg, opus→opus, mkv→x-matroska`) · `exportConfig` · `autoImportConfig` | `StorageBridge.kt` `RELATIVE_PATH MUSIC/MOVIES` + `IS_PENDING` |
 | `acrcloud` | `initialize` · `identify` | `AcrCloudBridge` |
-| `spider` | `scrape` (genius) | `spider.py` (Genius→SoundCloud with `extractor_args` → iTunes→MusicBrainz) |
+| `spider` | `scrape` · `fetchLyrics` · `fetchArtwork` | `spider.py` (scored iTunes/Deezer/MusicBrainz candidates + LRCLIB lyrics, Genius optional) |
+| `share` (Event) | shared URL strings | `MainActivity` ACTION_SEND |
+| `widget` | `update(title, artist, playing)` | `SovereignWidgetProvider.pushState` |
 | `pcm_recorder` | `hasPermission` · `startRecording(path, sampleRate, channels)` · `stopRecording` · `isRecording` | `PcmRecorderBridge.kt` `AudioRecord` 48k/16-bit WAV (header placeholder → `finalizeWavHeader` LE, `ByteBuffer` reuse) |
 | `permissions` (implicit) | via `permission_handler` Dart | `audio`/`videos`/`storage` `READ_MEDIA_*` runtime request before `autoMountMusicFolder` |
 

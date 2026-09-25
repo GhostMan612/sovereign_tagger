@@ -1,5 +1,5 @@
 # SESSION_HANDOFF.md — Sovereign Tagger v2
-> Read this FIRST every session. Updated Phase 25 complete 2026-08-25.
+> Read this FIRST every session. Updated Phase 27 complete 2026-09-25.
 
 ## DOCUMENT MAP — cold-start hooks (read top-to-bottom)
 
@@ -19,6 +19,29 @@ Conflict law: RULES.md > other docs; executable files > prose.
 Session-end law: update rows 2–4 every session (+ row 5 when a new gotcha is learned).
 
 ## Where we are
+
+**Date:** 2026-09-25
+**Phase:** 0–27 COMPLETE (27 = de-pipeline sweep, cloud session). `flutter analyze --no-pub` → `No issues found!` (Flutter 3.47.5). Device smoke of Phase 27 still pending on the Moto G — see Next actions.
+**Branch:** `claude/elegant-franklin-j99jl0` (based on `master`; `main` on GitHub is an empty initial commit — make `master` the default branch).
+
+## What shipped — Phase 27 (2026-09-25)
+
+- **Grabber is no longer a pipeline**: finished downloads become cards (editable title/artist/album/track/file name + thumbnail-as-cover) with PLAY / SAVE TO MUSIC / SEND TO FORGE / DISCARD. No auto tab switch, no `player.stop()` on download. Default audio = original M4A/AAC (no re-encode); MP3 320K / AS-IS optional. Parallel jobs + working CANCEL (`bridge.cancel` never existed before). Share-to-app (ACTION_SEND) fills the link box.
+- **Forge fixes the original**: mounts make a private working copy; SAVE writes tags there, then `StorageClient.overwriteOriginal` (MediaStore `createWriteRequest` on R+, RecoverableSecurityException on Q, legacy write ≤P). Before this, Forge/Pipeline edited a file_picker cache copy and `addToMediaStore`d a NEW file → originals never fixed + duplicates. Spider/ACR results go through `metadata_review_sheet.dart` (current vs proposed, candidate picker) instead of fill-empty-only. RESET/STRIP/CLEAR are form-only (they used to rewrite the file). PLAY IN PLAYER. Karaoke LRC embeds into LYRICS.
+- **Spider rewrite**: timeouts everywhere, scored candidates (iTunes/Deezer/MusicBrainz), LRCLIB `/api/get` with duration, Genius optional. Fixed: MB URL never worked (raw spaces), SoundCloud uploader written as ALBUM, "7 Rings" → track 7.
+- **Player**: EQ presets now drive `AndroidEqualizer` (was placebo), ReplayGain track/album + pre-amp, fade transitions (crossfade/gapless toggles were placebo; FFmpeg-only gapless audit removed). Handler actions route through the video-aware facade (fixes double audio on videos). End of queue keeps loaded state. Lock-screen art. Queue sheet with titles/drag/swipe/save-as-playlist. Favorites/playlists/recently played (`lib/core/playlists.dart`). Lyrics sheet reads embedded tags.
+- **Library tab** was a stub (file picker + nonexistent `storage.readTags`); now MediaStore-backed Songs/Albums/Artists/Folders/Playlists/New with Edit in Forge + system delete.
+- **Batch** (nav label, was PIPELINE): load from Library, one permission prompt, fix in place, ≥80% confidence auto-apply else REVIEW → Forge. Keys optional.
+- **Widget** buttons now send media-button broadcasts and show now-playing (they launched unhandled intents; `android:configure` removed).
+- **Hygiene**: mojibake repaired (`main.dart` splash, `ghost_avatar` glyphs), BOMs stripped, UTF-16 `.gitignore` line fixed, `local.properties` + build report untracked, Whisper model downloads on first use.
+
+## Next actions
+
+1. Device smoke (Moto G): Grabber card → SAVE TO MUSIC; share a YouTube link into the app; Forge on a Library song → SAVE & FIX ORIGINAL (permission prompt, no duplicate); SEARCH METADATA review sheet on a messy title; EQ preset audibly changes playback; lock-screen art/buttons; headset button during a video; widget buttons; Batch with one permission prompt.
+2. Build check: first `flutter build apk` after Phase 27 compiles new Kotlin (StorageBridge/MainActivity/Widget) — not compiled in the cloud session.
+3. Optional: true overlapping crossfade (dual player) and a custom 15-band DSP (device EQ is typically 5 bands) — Phase 28 candidates.
+
+## Where we were (Phase 25 snapshot)
 
 **Date:** 2026-08-25
 **Phase:** 0–25 COMPLETE. All gated `flutter analyze --no-pub` → `No issues found!`
