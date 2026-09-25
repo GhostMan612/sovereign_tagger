@@ -45,15 +45,11 @@ This application operates completely outside the walled gardens of standard app 
 - Lyrics: embedded synced (karaoke) or plain lyrics, sidecar `.lrc`, or fetch from LRCLIB
 - Lock screen / headset / notification controls with artwork; sleep timer with fade-out or end-of-track; speed 0.5–2x
 
-### 6. **Ghost Avatar Tutorial Chatbot** — In-App Assistant (classifier-first)
-- Code-drawn Android ghost emoji silhouette, glitch effects (scanlines, RGB shift, jitter)
-- Glitch laugh: wobble + particle burst + "hahaha" typewriter
-- Three-emotion particle system: **Sarcastic** (glitch squares 72%), **Happy** (circles 72%), **Serious** (matrix chars 72%)
-- **First-launch sequence**: "Welcome to... The Machine... Shall We Activate SkyNet? ... Just Kidding... hahaha!" → glitchLaugh
-- **Contextual tutorials**: 7 tabs × 3 tips each — classifier-first routing (`ghost_classifier.dart` TF-IDF, threshold 0.14), keyword fallback
-- **Suggestion chips**: Context-aware action chips
-- **Settings**: Visibility, auto-expand, reduce-motion (global), reset first-launch
-- *Pure-Dart classifier replacing abandoned TFLite: `lib/services/ghost_classifier.dart` — TF-IDF + cosine similarity, 15 intents, no native dep, identifies intent at 0.14 threshold then falls back to keyword routing — fully ceiling-safe.*
+### 6. **Ghost in the Machine** — Offline Co-Pilot (free, no cloud)
+- Living code-drawn ghost: floats, breathes, blinks, glances where you tap, rippling tail, hologram scanlines; listens while you type, thinks, talks in sync with its typing; emotions + glitch laugh
+- Frosted-glass chat panel (blurs what's behind it) with accent outline and outlined query field
+- **Brain** (`lib/services/ghost_brain.dart`, pure Dart): typo-tolerant understanding + BM25 knowledge base of every screen and fix, and real commands — `play <artist|album|song>`, `play X by Y`, `shuffle everything`, `queue X`, `play X next`, next / previous / pause, shuffle & repeat modes, `sleep in 30 min` / `stop after this song`, `what's playing`, `favorite this`, `fix this song` (Forge), `open forge|library|eq|settings`, `how many songs by X`, paste a link to grab it; "which one?" follow-ups and "more" for deeper answers
+- **First-launch sequence** + per-tab tutorial, suggestion chips, Settings: visibility, auto-expand, reduce-motion, reset first-launch
 
 ### 7. **Library Tab** — Your Music
 - Reads the phone's music library: **Songs, Albums, Artists, Folders, Playlists, New**; live search; sort
@@ -130,11 +126,11 @@ Click **"WRITE TO KERNEL"**. Use **Export** button to generate a `.bin` backup (
 → Contextual tutorial begins
 ```
 
-### Pure-Dart Intent Classifier (On-Device)
-- **Brain**: `lib/services/ghost_classifier.dart` — TF-IDF + cosine similarity, 15 intents, ~5KB centroids shipped as Dart consts
-- **Threshold**: 0.14 confidence → intent reply; below → keyword-chain fallback routing
-- **Routing order** (`_processUserQuery`): hide/laugh short-circuits → classifier → keyword chains
-- **Zero native deps**: replaces the abandoned `tflite_flutter` lane (fatal JVM-target mismatch 1.8 vs 25 under the frozen ceiling)
+### Ghost Brain (On-Device, Pure Dart)
+- **Engine**: `lib/services/ghost_brain.dart` — `GhostBrain.respond()` routes: link → grab, pending "which one?" choice, "more" follow-up, small talk, commands, then BM25 over ~28 knowledge entries
+- **Two views of input**: canonical words (synonyms + edit-distance typo fix) detect intent; raw words drive phrases and library search, so artist names like "Love" or "The Wires" survive
+- **App bridge**: `lib/services/ghost_world.dart` (`AppGhostWorld`) implements `GhostWorld` over `AudioService`, `SovereignState`, `PlaylistStore` and MediaStore — the brain itself has no Flutter imports and is unit-tested with a fake world
+- **Zero native deps, zero fees**: no model download, no network
 
 ### Contextual Tutorials (Per Tab)
 | Tab       | Sample Tips                                                                                                                                               |
@@ -198,7 +194,8 @@ lib/                                # ~10.3k LOC, 23 files
 │   ├── ghost_chat_overlay.dart    # 595L: Chat UI, first-launch, tutorials
 │   └── matrix_rain.dart           # 308L: MatrixRain + AmbientBackdrop
 └── services/
-    └── ghost_classifier.dart      # 339L: Pure-Dart TF-IDF intent classifier
+    ├── ghost_brain.dart           # Pure-Dart NLU + commands + knowledge base
+    └── ghost_world.dart           # GhostWorld bridge to AudioService/SovereignState
 
 android/
 ├── app/src/main/kotlin/com/sovereigntagger/

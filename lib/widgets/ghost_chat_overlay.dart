@@ -7,12 +7,12 @@ import 'dart:async';
 import 'dart:math';
 import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'ghost_avatar.dart';
 import '../screens/main_shell.dart';
 import '../core/ghost_settings.dart';
 import '../core/sfx.dart';
-import '../services/ghost_classifier.dart';
+import '../services/ghost_brain.dart';
+import '../services/ghost_world.dart';
 
 enum GhostChatState { collapsed, expanded, typing, listening }
 
@@ -44,7 +44,7 @@ class _GhostChatOverlayState extends State<GhostChatOverlay> with TickerProvider
   late final ScrollController _scrollController;
 
   GhostChatState _chatState = GhostChatState.collapsed;
-  late final GhostClassifier _classifier;
+  late final GhostBrain _brain = GhostBrain(AppGhostWorld(() => context));
   Offset _dragOffset = Offset.zero;
   bool _userInteracted = false;
 
@@ -102,7 +102,6 @@ class _GhostChatOverlayState extends State<GhostChatOverlay> with TickerProvider
     _inputController = TextEditingController();
     _inputFocus = FocusNode()..addListener(_onFocusChange);
     _scrollController = ScrollController();
-    _classifier = GhostClassifier();
 
     _checkFirstLaunch();
   }
@@ -185,17 +184,7 @@ class _GhostChatOverlayState extends State<GhostChatOverlay> with TickerProvider
   }
 
   void _addSuggestionsForTab(int tab) {
-    final suggestions = <String>[
-      if (tab == 0) ...["Search YouTube", "Download MP3 320K", "SOURCE COPY mode"],
-      if (tab == 1) ...["Load file to Forge", "Export with tags", "Karaoke mode"],
-      if (tab == 2) ...["Scan MediaStore", "Run batch", "Mixtape join"],
-      if (tab == 3) ...["ReplayGain scan", "Whisper transcribe", "15-band EQ"],
-      if (tab == 4) ...["Load queue", "Shuffle all", "Sleep timer 30m"],
-      if (tab == 5) ...["Playback engine", "EQ presets", "Gapless audit"],
-      if (tab == 6) ...["How to get Genius API key", "How to get ACRCloud keys", "Open Genius signup", "Open ACR console"],
-      "Help", "Settings", "Hide ghost",
-    ];
-    _showSuggestionChips(suggestions);
+    _showSuggestionChips([..._brain.suggestionsFor(tab), 'Hide ghost']);
   }
 
   void _showSuggestionChips(List<String> chips) {
@@ -203,17 +192,6 @@ class _GhostChatOverlayState extends State<GhostChatOverlay> with TickerProvider
       _messages.add(_ChatMessage(text: '', chips: chips, isGhost: true));
       _scrollToBottom();
     });
-  }
-
-  Future<void> _launchUrl(String url) async {
-    try {
-      await const MethodChannel('com.sovereign.tagger/storage').invokeMethod('openUrl', {'url': url});
-      if (mounted) {
-        await _typewriterSay("Registration page launched. Grab the key, then SETTINGS > paste > WRITE TO KERNEL.", isGhost: true);
-      }
-    } catch (_) {
-      if (mounted) await _typewriterSay("Browser fault. Open the URL manually from Settings.", isGhost: true);
-    }
   }
 
   Future<void> _handleUserInput(String text) async {
@@ -230,100 +208,26 @@ class _GhostChatOverlayState extends State<GhostChatOverlay> with TickerProvider
   }
 
   Future<void> _processUserQuery(String query) async {
-    final lower = query.toLowerCase();
-
-    if (lower.contains('hide') || lower.contains('go away') || lower.contains('dismiss')) {
-      await _toggleCollapse();
-      return;
+    final reply = await _brain.respond(query);
+    if (!mounted) return;
+    switch (reply.tone) {
+      case GhostTone.happy:
+        widget.ghostController.setEmotion(GhostEmotion.happy);
+        break;
+      case GhostTone.sarcastic:
+        widget.ghostController.setEmotion(GhostEmotion.sarcastic);
+        break;
+      case GhostTone.info:
+        break;
     }
-    if (lower.contains('laugh') || lower.contains('joke') || lower.contains('skynet')) {
-      await widget.ghostController.glitchLaugh();
-      await _typewriterSay("hahaha! *glitches maniacally*", isGhost: true);
-      _addSuggestionsForTab(SovereignState.currentTab.value);
-      return;
+    if (reply.laugh) unawaited(widget.ghostController.glitchLaugh());
+    await _typewriterSay(reply.text, isGhost: true);
+    if (!mounted) return;
+    if (reply.chips.isNotEmpty) _showSuggestionChips(reply.chips);
+    if (reply.hide && _chatState == GhostChatState.expanded) {
+      await Future.delayed(const Duration(milliseconds: 600));
+      if (mounted && _chatState == GhostChatState.expanded) await _toggleCollapse();
     }
-
-    if (lower.contains('open genius') || lower.contains('genius signup') || lower.contains('genius registration')) {
-      await _launchUrl('https://genius.com/api-clients');
-      return;
-    }
-    if (lower.contains('open acr') || lower.contains('acr signup') || lower.contains('acr registration') || lower.contains('acr console')) {
-      await _launchUrl('https://console.acrcloud.com/');
-      return;
-    }
-    if (lower.contains('genius key') || lower.contains('genius api') || lower.contains('lyrics key') || lower.contains('client access token')) {
-      await widget.ghostController.glitchLaugh();
-      await _typewriterSay("GENIUS KEY RITUAL: 1) Say 'OPEN GENIUS' and I launch the client page. 2) New API Client → name it anything → SAVE. 3) Copy the CLIENT ACCESS TOKEN. 4) SETTINGS > GENIUS API > paste > WRITE TO KERNEL. Without it: no lyrics, no album art.", isGhost: true);
-      _addSuggestionsForTab(SovereignState.currentTab.value);
-      return;
-    }
-    if (lower.contains('acr key') || lower.contains('acrcloud key') || lower.contains('fingerprint key') || lower.contains('acr api')) {
-      await widget.ghostController.glitchLaugh();
-      await _typewriterSay("ACRCLOUD RITUAL: 1) Say 'OPEN ACR' — I launch the console. 2) Free account → Audio & Video Recognition → Create Project → Recorded Audio → ACRCloud Music bucket. 3) Copy HOST + ACCESS KEY + ACCESS SECRET. 4) SETTINGS > ACRCLOUD > paste all three > WRITE TO KERNEL. Without it, fingerprinting is off — BATCH falls back to file names.", isGhost: true);
-      _addSuggestionsForTab(SovereignState.currentTab.value);
-      return;
-    }
-
-    String response = "";
-    final intent = _classifier.classify(query);
-    if (intent != null) {
-      response = await _replyForIntent(intent);
-    } else if (lower.contains('grab') || lower.contains('download') || lower.contains('youtube')) {
-      response = await _getContextualReply(0);
-    } else if (lower.contains('tag') || lower.contains('forge') || lower.contains('export') || lower.contains('karaoke')) {
-      response = await _getContextualReply(1);
-    } else if (lower.contains('pipe') || lower.contains('batch') || lower.contains('acr') || lower.contains('mixtape')) {
-      response = await _getContextualReply(2);
-    } else if (lower.contains('dsp') || lower.contains('eq') || lower.contains('loudnorm') || lower.contains('whisper') || lower.contains('pcm') || lower.contains('denoise')) {
-      response = await _getContextualReply(3);
-    } else if (lower.contains('librar') || lower.contains('browse') || lower.contains('album') || lower.contains('artist')) {
-      response = await _getContextualReply(4);
-    } else if (lower.contains('play') || lower.contains('queue') || lower.contains('speed') || lower.contains('sleep') || lower.contains('crossfade') || lower.contains('gapless')) {
-      response = await _getContextualReply(5);
-    } else if (lower.contains('setting') || lower.contains('color') || lower.contains('backup') || lower.contains('ghost')) {
-      response = await _getContextualReply(6);
-    } else if (lower.contains('help') || lower.contains('what') || lower.contains('how')) {
-      response = "I'm your ghost in the machine. Ask me about GRABBER, FORGE, BATCH, WORKBENCH, LIBRARY, PLAYER, or SETTINGS. Or just tap a suggestion chip below.";
-    } else {
-      response = "Signal unclear. Try: 'how do I download', 'what is forge', 'replaygain scan', 'crossfade 5s', or tap a chip below.";
-    }
-
-    await _typewriterSay(response, isGhost: true);
-    _addSuggestionsForTab(SovereignState.currentTab.value);
-  }
-
-  Future<String> _replyForIntent(String intent) async {
-    switch (intent) {
-      case 'GRABBER':
-        return _getContextualReply(0);
-      case 'FORGE':
-        return _getContextualReply(1);
-      case 'PIPELINE':
-        return _getContextualReply(2);
-      case 'WORKBENCH':
-      case 'WHISPER':
-      case 'EQ':
-      case 'REPLAYGAIN':
-        return _getContextualReply(3);
-      case 'LIBRARY':
-        return _getContextualReply(4);
-      case 'PLAYER':
-      case 'CROSSFADE':
-      case 'GAPLESS':
-        return _getContextualReply(5);
-      case 'SETTINGS':
-      case 'BACKUP':
-        return _getContextualReply(6);
-      case 'WIDGET':
-        return _getContextualReply(4);
-      default:
-        return _getContextualReply(SovereignState.currentTab.value);
-    }
-  }
-
-  Future<String> _getContextualReply(int tab) async {
-    final tutorial = _tutorials[tab] ?? _tutorials[0]!;
-    return tutorial[Random().nextInt(tutorial.length)];
   }
 
   void _addMessage(_ChatMessage message) {
