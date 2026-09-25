@@ -306,6 +306,11 @@ class _TabGrabberState extends State<TabGrabber> {
 
     switch (job.mode) {
       case _ExportMode.original:
+        if (rawExt != 'webm' && rawExt != 'mkv') return rawPath;
+        final codec = await probeAudioCodec(rawPath);
+        if (codec == 'opus') return run('-vn -c:a copy', 'opus', 'REMUX');
+        if (codec == 'vorbis') return run('-vn -c:a copy', 'ogg', 'REMUX');
+        if (codec == 'aac') return run('-vn -c:a copy -movflags +faststart', 'm4a', 'REMUX');
         return rawPath;
       case _ExportMode.mp3:
         if (rawExt == 'mp3') return rawPath;
