@@ -19,9 +19,8 @@
 ## Commands
 
 ```powershell
-flutter pub get                              # everything maxed except file_picker 9 / wakelock_plus 1.5.2 (win32 pair) and permission_handler 12 (compileSdk 37)
-flutter analyze --no-pub 2>&1 | Select-String -Pattern "error •|warning •" | Select-Object -First 20
-flutter analyze --no-pub 2>&1 | Select-Object -Last 3   # expect "No issues found!"
+C:\android\flutter\bin\flutter.bat pub get    # SDK lives in C:\android\flutter — NOT C:\src. Bare `flutter` may not resolve; always use this path. Everything maxed except file_picker 9 / wakelock_plus 1.5.2 (win32 pair) and permission_handler 12 (compileSdk 37)
+C:\android\flutter\bin\flutter.bat analyze --no-pub  # expect "No issues found!"
 # flutter build apk --release  — DO NOT RUN HERE. Device-dependent, Android Studio does Moto G install.
 ```
 
