@@ -27,9 +27,13 @@ import '../tabs/tab_pipeline.dart';
 import '../tabs/tab_workbench.dart';
 import '../tabs/tab_player.dart';
 import '../tabs/tab_library.dart';
+import '../widgets/animated_tab_stack.dart';
+import '../widgets/cyber_backdrop.dart';
+import '../widgets/cyber_nav_bar.dart';
 import '../widgets/machine_rain.dart';
 import '../widgets/ghost_avatar.dart';
 import '../widgets/ghost_chat_overlay.dart';
+import '../core/sfx.dart';
 import '../core/tap_feedback.dart';
 import '../core/ghost_settings.dart';
 import 'settings_screen.dart';
@@ -1005,7 +1009,9 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
           height: 40,
           decoration: BoxDecoration(color: Colors.black, border: Border.all(color: themeColor.withValues(alpha: 0.4)), borderRadius: BorderRadius.circular(4)),
           clipBehavior: Clip.antiAlias,
-          child: image != null ? Image(image: image.image, fit: BoxFit.cover, gaplessPlayback: true) : Icon(Icons.keyboard_arrow_up, color: themeColor),
+          child: image != null
+              ? Hero(tag: 'now-playing-art', child: Image(image: image.image, fit: BoxFit.cover, gaplessPlayback: true))
+              : Icon(Icons.keyboard_arrow_up, color: themeColor),
         );
       },
     );
@@ -1061,14 +1067,14 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
                       3 => BackdropVariant.workbench,
                       _ => BackdropVariant.generic,
                     };
-                    return AmbientBackdrop(accentColor: themeColor, variant: variant);
+                    return CyberBackdrop(accentColor: themeColor, variant: variant);
                   },
                 ),
               ),
               Column(
                 children: [
                   Expanded(
-                    child: IndexedStack(
+                    child: AnimatedTabStack(
                       index: SovereignState.currentTab.value,
                       children: _tabs,
                     ),
@@ -1218,21 +1224,19 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
               ),
             ],
           ),
-          bottomNavigationBar: BottomNavigationBar(
-            currentIndex: SovereignState.currentTab.value,
-            onTap: (index) => SovereignState.currentTab.value = index,
-            type: BottomNavigationBarType.fixed,
-            backgroundColor: Colors.black,
-            selectedItemColor: themeColor,
-            unselectedItemColor: Colors.white38,
-            selectedLabelStyle: const TextStyle(fontFamily: 'ShareTechMono', fontWeight: FontWeight.bold, fontSize: 12),
-            unselectedLabelStyle: const TextStyle(fontFamily: 'ShareTechMono', fontSize: 10),
+          bottomNavigationBar: CyberNavBar(
+            index: SovereignState.currentTab.value,
+            accent: themeColor,
+            onTap: (index) {
+              if (index != SovereignState.currentTab.value) Sfx.play(SfxId.whoosh);
+              SovereignState.currentTab.value = index;
+            },
             items: const [
-              BottomNavigationBarItem(icon: Icon(Icons.download), label: 'GRABBER'),
-              BottomNavigationBarItem(icon: Icon(Icons.edit_note), label: 'FORGE'),
-              BottomNavigationBarItem(icon: Icon(Icons.auto_awesome_motion), label: 'BATCH'),
-              BottomNavigationBarItem(icon: Icon(Icons.build), label: 'WORKBENCH'),
-              BottomNavigationBarItem(icon: Icon(Icons.library_music), label: 'LIBRARY'),
+              CyberNavItem(Icons.download, 'GRABBER'),
+              CyberNavItem(Icons.edit_note, 'FORGE'),
+              CyberNavItem(Icons.auto_awesome_motion, 'BATCH'),
+              CyberNavItem(Icons.build, 'WORKBENCH'),
+              CyberNavItem(Icons.library_music, 'LIBRARY'),
             ],
           ),
         );

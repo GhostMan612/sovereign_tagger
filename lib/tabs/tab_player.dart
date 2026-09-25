@@ -317,11 +317,14 @@ class TheaterScreen extends StatelessWidget {
                                           child: InteractiveViewer(
                                             minScale: 1.0,
                                             maxScale: 3.0,
-                                            child: Image(
-                                              image: image.image,
-                                              fit: BoxFit.contain,
-                                              filterQuality: FilterQuality.high,
-                                              gaplessPlayback: true,
+                                            child: Hero(
+                                              tag: 'now-playing-art',
+                                              child: Image(
+                                                image: image.image,
+                                                fit: BoxFit.contain,
+                                                filterQuality: FilterQuality.high,
+                                                gaplessPlayback: true,
+                                              ),
                                             ),
                                           ),
                                         );

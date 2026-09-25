@@ -110,7 +110,8 @@ Click **"WRITE TO KERNEL"**. Use **Export** button to generate a `.bin` backup (
 - **Assets are compile-time:** declared in `pubspec.yaml:34` `assets: - assets/` (`splash-screen-bg.png`, `ShareTechMono`/`VT323`). No runtime `File('assets/...')` writes — generated media goes via `getTempDirectory` + `MediaStore`.
 - **Size:** `ffmpeg_kit full+gpl` is ~40MB/ABI (`arm64-v8a,x86_64` only). Prefer code-drawn (`CustomPainter`/`Shader`/`Lottie` ~20KB `json`) over raster video — `MatrixRain` + `AmbientBackdrop` are code-drawn.
 - **Tap sounds:** No sound assets — `lib/core/sfx_synth.dart` synthesizes the bank at first launch (~0.2 s) and caches the WAVs.
-- **Per-tab dramatics:** `AmbientBackdrop` `BackdropVariant` pulses per tab at `alpha 0.035/0.18` + blur — subtle, no asset, 60fps via single `TextPainter` + 1 `AnimationController` per backdrop.
+- **Per-tab dramatics:** `CyberBackdrop` runs `shaders/backdrop.frag` on the GPU (30 fps, own `RepaintBoundary`, paused in background): accent nebula + synthwave grid floor, plus a per-tab layer — Grabber data streams, Forge embers, Batch scan bands, Workbench waveform. Falls back to the old `AmbientBackdrop` painter if a device can't load the shader.
+- **Motion:** `AnimatedTabStack` slides/fades tabs (state kept, hidden tabs' tickers paused), `CyberNavBar` springs a glowing pill between tabs (whoosh SFX), `CyberPageTransitionsBuilder` rises pages in behind an accent scanline sweep, and cover art flies from the mini-player into the full player (Hero).
 
 ---
 

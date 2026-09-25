@@ -97,6 +97,7 @@ Sovereign Tagger — autonomous Android media pipeline: yt-dlp (chaquopy Python 
 | FX1 | cyber_tap_feedback / tap_feedback | Buttons never animated (burst widget replaced child with infinite CustomPaint; only 8 buttons wrapped); UI beeps were 8 kHz via just_audio and could duck music | 28.1 | **FIXED** global `TapFxLayer` + `CyberInk` + SoundPool `Sfx` synth bank (G26–G28) — device smoke pending |
 | GH12 | ghost_avatar / ghost_chat_overlay | Ghost never animated at rest (only materialize/laugh busy-loops), opaque black box behind the whole overlay, flat opaque panel, unoutlined input | 28.2 | **FIXED** ticker-driven living ghost + moods, glass panel (G29/G30) — device smoke pending |
 | GH13 | services/ghost_brain | Ghost could only route keywords into 7 canned per-tab paragraphs (some describing removed features); couldn't act or see app state | 28.3 | **FIXED** `GhostBrain` (commands + library search + BM25 KB + follow-ups) over `AppGhostWorld`; `ghost_classifier.dart` removed |
+| UI1 | main_shell / main.dart | Instant tab swaps (IndexedStack kept hidden tabs animating), stock nav bar and route transitions, CPU-painted backdrop repainting the tab tree | 28.4 | **FIXED** `CyberBackdrop` shader, `AnimatedTabStack`, `CyberNavBar`, `CyberPageTransitionsBuilder`, Hero art (G32/G33) — device smoke pending |
 
 ## Toolchain notes (dependency ceiling: win32 pair + compileSdk 37)
 

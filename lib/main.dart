@@ -12,6 +12,7 @@ import 'screens/main_shell.dart';
 import 'core/feedback_settings.dart';
 import 'core/sfx.dart';
 import 'widgets/cyber_ink.dart';
+import 'widgets/cyber_page_transitions.dart';
 import 'widgets/machine_rain.dart';
 import 'widgets/tap_fx_layer.dart';
 
@@ -44,6 +45,10 @@ class SovereignApp extends StatelessWidget {
             colorScheme: ColorScheme.fromSeed(seedColor: themeColor, brightness: Brightness.dark),
             useMaterial3: true,
             splashFactory: CyberInk.splashFactory,
+            pageTransitionsTheme: const PageTransitionsTheme(builders: {
+              TargetPlatform.android: CyberPageTransitionsBuilder(),
+              TargetPlatform.iOS: CyberPageTransitionsBuilder(),
+            }),
           ),
           builder: (context, child) => TapFxLayer(accent: SovereignState.accentColor, child: child ?? const SizedBox.shrink()),
           home: const SplashScreen(),
