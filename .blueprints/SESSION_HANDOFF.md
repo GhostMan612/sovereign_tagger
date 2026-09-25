@@ -22,7 +22,7 @@ Session-end law: update rows 2–4 every session (+ row 5 when a new gotcha is l
 
 **Date:** 2026-09-25
 **Phase:** 0–27 COMPLETE (27 = de-pipeline sweep, cloud session). `flutter analyze --no-pub` → `No issues found!` (Flutter 3.47.5). Device smoke of Phase 27 still pending on the Moto G — see Next actions.
-**Branch:** `claude/elegant-franklin-j99jl0` (based on `master`; `main` on GitHub is an empty initial commit — make `master` the default branch).
+**Branch:** `main` is the single canonical branch (2026-09-25: `master` history + the Claude Phase 27 branch were merged into it). `master` and `claude/elegant-franklin-j99jl0` are fully contained in `main` — do new work on `main` (or short-lived branches off it), not on `master`.
 
 ## What shipped — Phase 27 (2026-09-25)
 
