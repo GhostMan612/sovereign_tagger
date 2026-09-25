@@ -35,6 +35,8 @@ object Id3Tagger {
                         "GENRE" -> if (value.isEmpty()) tag.deleteField(FieldKey.GENRE) else tag.setField(FieldKey.GENRE, value)
                         "DISC_NO" -> if (value.isEmpty()) tag.deleteField(FieldKey.DISC_NO) else tag.setField(FieldKey.DISC_NO, value)
                         "TRACK" -> if (value.isEmpty()) tag.deleteField(FieldKey.TRACK) else tag.setField(FieldKey.TRACK, value)
+                        "TRACK_TOTAL" -> if (value.isEmpty()) tag.deleteField(FieldKey.TRACK_TOTAL) else tag.setField(FieldKey.TRACK_TOTAL, value)
+                        "DISC_TOTAL" -> if (value.isEmpty()) tag.deleteField(FieldKey.DISC_TOTAL) else tag.setField(FieldKey.DISC_TOTAL, value)
                         "COMMENT" -> if (value.isEmpty()) tag.deleteField(FieldKey.COMMENT) else tag.setField(FieldKey.COMMENT, value)
                         "COMPOSER" -> if (value.isEmpty()) tag.deleteField(FieldKey.COMPOSER) else tag.setField(FieldKey.COMPOSER, value)
                         "PRODUCER" -> if (value.isEmpty()) tag.deleteField(FieldKey.PRODUCER) else tag.setField(FieldKey.PRODUCER, value)
@@ -72,22 +74,27 @@ object Id3Tagger {
         val tags = mutableMapOf<String, String>()
         try {
             val audioFile = AudioFileIO.read(File(filePath))
+            try {
+                tags["DURATION_MS"] = ((audioFile.audioHeader?.preciseTrackLength ?: 0.0) * 1000).toLong().toString()
+            } catch (_: Exception) {}
             val tag = audioFile.tag ?: return tags
 
-            tags["TITLE"] = tag.getFirst(FieldKey.TITLE)
-            tags["ARTIST"] = tag.getFirst(FieldKey.ARTIST)
-            tags["ALBUM"] = tag.getFirst(FieldKey.ALBUM)
-            tags["ALBUM_ARTIST"] = tag.getFirst(FieldKey.ALBUM_ARTIST)
-            tags["YEAR"] = tag.getFirst(FieldKey.YEAR)
-            tags["GENRE"] = tag.getFirst(FieldKey.GENRE)
-            tags["DISC_NO"] = tag.getFirst(FieldKey.DISC_NO)
-            tags["TRACK"] = tag.getFirst(FieldKey.TRACK)
-            tags["COMMENT"] = tag.getFirst(FieldKey.COMMENT)
-            tags["COMPOSER"] = tag.getFirst(FieldKey.COMPOSER)
-            tags["PRODUCER"] = tag.getFirst(FieldKey.PRODUCER)
-            tags["LYRICS"] = tag.getFirst(FieldKey.LYRICS)
-            tags["ENCODER"] = tag.getFirst(FieldKey.ENCODER)
-            tags["LANGUAGE"] = tag.getFirst(FieldKey.LANGUAGE)
+            tags["TITLE"] = first(tag, FieldKey.TITLE)
+            tags["ARTIST"] = first(tag, FieldKey.ARTIST)
+            tags["ALBUM"] = first(tag, FieldKey.ALBUM)
+            tags["ALBUM_ARTIST"] = first(tag, FieldKey.ALBUM_ARTIST)
+            tags["YEAR"] = first(tag, FieldKey.YEAR)
+            tags["GENRE"] = first(tag, FieldKey.GENRE)
+            tags["DISC_NO"] = first(tag, FieldKey.DISC_NO)
+            tags["TRACK"] = first(tag, FieldKey.TRACK)
+            tags["TRACK_TOTAL"] = first(tag, FieldKey.TRACK_TOTAL)
+            tags["DISC_TOTAL"] = first(tag, FieldKey.DISC_TOTAL)
+            tags["COMMENT"] = first(tag, FieldKey.COMMENT)
+            tags["COMPOSER"] = first(tag, FieldKey.COMPOSER)
+            tags["PRODUCER"] = first(tag, FieldKey.PRODUCER)
+            tags["LYRICS"] = first(tag, FieldKey.LYRICS)
+            tags["ENCODER"] = first(tag, FieldKey.ENCODER)
+            tags["LANGUAGE"] = first(tag, FieldKey.LANGUAGE)
             
             val artwork = tag.firstArtwork
             if (artwork != null && artwork.binaryData != null) {
@@ -102,6 +109,10 @@ object Id3Tagger {
         } catch (e: Exception) {
         }
         return tags
+    }
+
+    private fun first(tag: org.jaudiotagger.tag.Tag, key: FieldKey): String {
+        return try { tag.getFirst(key) ?: "" } catch (_: Exception) { "" }
     }
 
     private fun sniffImageMime(bytes: ByteArray): String {
