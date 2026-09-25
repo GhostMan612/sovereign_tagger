@@ -5,11 +5,13 @@
 
 import 'dart:async';
 import 'dart:math';
+import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'ghost_avatar.dart';
 import '../screens/main_shell.dart';
 import '../core/ghost_settings.dart';
+import '../core/sfx.dart';
 import '../services/ghost_classifier.dart';
 
 enum GhostChatState { collapsed, expanded, typing, listening }
@@ -34,16 +36,14 @@ class GhostChatOverlay extends StatefulWidget {
 
 class _GhostChatOverlayState extends State<GhostChatOverlay> with TickerProviderStateMixin {
   late final AnimationController _controller;
-  late final AnimationController _typewriterController;
-  late final AnimationController _bubbleController;
+  late final Animation<double> _panelCurve;
+  final Random _rng = Random();
   late final List<_ChatMessage> _messages;
   late final TextEditingController _inputController;
   late final FocusNode _inputFocus;
   late final ScrollController _scrollController;
 
   GhostChatState _chatState = GhostChatState.collapsed;
-  String _currentTypingText = '';
-  Timer? _typewriterTimer;
   late final GhostClassifier _classifier;
   Offset _dragOffset = Offset.zero;
   bool _userInteracted = false;
@@ -96,12 +96,11 @@ class _GhostChatOverlayState extends State<GhostChatOverlay> with TickerProvider
   @override
   void initState() {
     super.initState();
-    _controller = AnimationController(vsync: this, duration: const Duration(milliseconds: 300));
-    _typewriterController = AnimationController(vsync: this, duration: const Duration(milliseconds: 50));
-    _bubbleController = AnimationController(vsync: this, duration: const Duration(milliseconds: 200));
+    _controller = AnimationController(vsync: this, duration: const Duration(milliseconds: 340));
+    _panelCurve = CurvedAnimation(parent: _controller, curve: Curves.easeOutBack, reverseCurve: Curves.easeInCubic);
     _messages = [];
     _inputController = TextEditingController();
-    _inputFocus = FocusNode();
+    _inputFocus = FocusNode()..addListener(_onFocusChange);
     _scrollController = ScrollController();
     _classifier = GhostClassifier();
 
@@ -147,23 +146,41 @@ class _GhostChatOverlayState extends State<GhostChatOverlay> with TickerProvider
   }
 
   Future<void> _typewriterSay(String text, {bool isGhost = true}) async {
-    _currentTypingText = '';
     final message = _ChatMessage(text: '', isGhost: isGhost, isTyping: true);
     setState(() {
       _messages.add(message);
       _scrollToBottom();
     });
+    if (isGhost) widget.ghostController.setMood(GhostMood.talking);
 
-    for (int i = 0; i < text.length; i++) {
+    for (int i = 1; i <= text.length; i++) {
       if (!mounted) return;
-      _currentTypingText += text[i];
-      _messages.last = _ChatMessage(text: _currentTypingText, isGhost: isGhost, isTyping: true);
-      setState(() {});
-      await Future.delayed(Duration(milliseconds: 30 + Random().nextInt(50)));
+      final index = _messages.indexWhere((m) => m.id == message.id);
+      if (index < 0) break;
+      setState(() => _messages[index] = _messages[index].copyWith(text: text.substring(0, i)));
+      final char = text[i - 1];
+      if (isGhost && char.trim().isNotEmpty) {
+        widget.ghostController.talk();
+        if (i.isEven) Sfx.play(SfxId.type);
+      }
+      await Future.delayed(Duration(milliseconds: 22 + _rng.nextInt(34)));
     }
-    if (mounted) {
-      _messages.last = _ChatMessage(text: text, isGhost: isGhost, isTyping: false);
-      setState(() {});
+    if (!mounted) return;
+    final index = _messages.indexWhere((m) => m.id == message.id);
+    if (index >= 0) setState(() => _messages[index] = _messages[index].copyWith(text: text, isTyping: false));
+    if (isGhost) {
+      widget.ghostController.setMood(_inputFocus.hasFocus && _inputController.text.isNotEmpty ? GhostMood.listening : GhostMood.idle);
+      Sfx.play(SfxId.message);
+    }
+  }
+
+  void _onInputChanged(String text) {
+    widget.ghostController.setMood(text.trim().isEmpty ? GhostMood.idle : GhostMood.listening);
+  }
+
+  void _onFocusChange() {
+    if (!_inputFocus.hasFocus && _inputController.text.trim().isEmpty) {
+      widget.ghostController.setMood(GhostMood.idle);
     }
   }
 
@@ -199,11 +216,17 @@ class _GhostChatOverlayState extends State<GhostChatOverlay> with TickerProvider
     }
   }
 
-  void _handleUserInput(String text) {
+  Future<void> _handleUserInput(String text) async {
     if (text.trim().isEmpty) return;
+    _userInteracted = true;
     _inputController.clear();
+    Sfx.play(SfxId.select);
     _addMessage(_ChatMessage(text: text, isGhost: false));
-    _processUserQuery(text);
+    widget.ghostController.setMood(GhostMood.thinking);
+    await Future.delayed(Duration(milliseconds: 380 + _rng.nextInt(320)));
+    if (!mounted) return;
+    widget.ghostController.setMood(GhostMood.idle);
+    await _processUserQuery(text);
   }
 
   Future<void> _processUserQuery(String query) async {
@@ -325,9 +348,14 @@ void _scrollToBottom() {
   Future<void> _toggleCollapse() async {
     _userInteracted = true;
     if (_chatState == GhostChatState.expanded) {
+      Sfx.play(SfxId.close);
+      _inputFocus.unfocus();
+      widget.ghostController.setMood(GhostMood.idle);
       setState(() => _chatState = GhostChatState.collapsed);
       await _controller.reverse();
     } else {
+      Sfx.play(SfxId.open);
+      widget.ghostController.setEmotion(GhostEmotion.happy);
       setState(() => _chatState = GhostChatState.expanded);
       await _controller.forward();
       await Future.delayed(const Duration(milliseconds: 300));
@@ -348,12 +376,9 @@ void _scrollToBottom() {
   @override
   void dispose() {
     _controller.dispose();
-    _typewriterController.dispose();
-    _bubbleController.dispose();
     _inputController.dispose();
     _inputFocus.dispose();
     _scrollController.dispose();
-    _typewriterTimer?.cancel();
     super.dispose();
   }
 
@@ -363,139 +388,38 @@ void _scrollToBottom() {
       valueListenable: widget.accentColor,
       builder: (context, themeColor, child) {
         return AnimatedBuilder(
-          animation: _controller,
+          animation: _panelCurve,
           builder: (context, child) {
+            final t = _panelCurve.value;
             final panelVisible = _chatState == GhostChatState.expanded || _controller.value > 0;
-
             return Transform.translate(
               offset: _dragOffset,
-child: Container(
-                decoration: BoxDecoration(
-                  color: Colors.black,
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                padding: const EdgeInsets.all(6),
-                child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: [
-                if (panelVisible)
-                  Transform.scale(
-                    scale: 0.8 + 0.2 * _controller.value,
-                    alignment: Alignment.bottomRight,
-                    child: Opacity(
-                      opacity: _controller.value.clamp(0.0, 1.0),
-                      child: ConstrainedBox(
-                        constraints: const BoxConstraints(maxWidth: 300, maxHeight: 400),
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                              Padding(
-                                padding: const EdgeInsets.only(left: 8, right: 2, bottom: 2),
-                                child: Row(
-                                  children: [
-                                    Icon(Icons.auto_awesome, color: themeColor, size: 18),
-                                    const SizedBox(width: 8),
-                                    Text(
-                                      "GHOST IN THE MACHINE",
-                                      style: TextStyle(fontFamily: 'ShareTechMono', fontSize: 12, fontWeight: FontWeight.bold, color: themeColor),
-                                    ),
-                                    const Spacer(),
-                                    IconButton(
-                                      icon: const Icon(Icons.power_settings_new, color: Colors.redAccent, size: 18),
-                                      tooltip: "CLOSE GHOST",
-                                      onPressed: () {
-                                        if (_chatState == GhostChatState.expanded) {
-                                          _controller.reverse().then((_) {
-                                            if (mounted) _chatState = GhostChatState.collapsed;
-                                          });
-                                        }
-                                        GhostSettings.setVisible(false);
-                                      },
-                                      padding: EdgeInsets.zero,
-                                      constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
-                                    ),
-                                    IconButton(
-                                      icon: Icon(Icons.close, color: themeColor, size: 18),
-                                      tooltip: "MINIMIZE",
-                                      onPressed: _toggleCollapse,
-                                      padding: EdgeInsets.zero,
-                                      constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                              Flexible(
-                                child: ListView.builder(
-                                  controller: _scrollController,
-                                  reverse: true,
-                                  shrinkWrap: true,
-                                  padding: const EdgeInsets.all(12),
-                                  itemCount: _messages.length,
-                                  itemBuilder: (context, index) {
-                                    final msg = _messages[_messages.length - 1 - index];
-                                    if (msg.chips != null) {
-                                      return _buildSuggestionChips(msg.chips!, themeColor);
-                                    }
-                                    return _buildMessageBubble(msg, themeColor);
-                                  },
-                                ),
-                              ),
-                              Padding(
-                                padding: const EdgeInsets.fromLTRB(8, 4, 8, 4),
-                                child: Row(
-                                  children: [
-                                    Expanded(
-                                      child: TextField(
-                                        controller: _inputController,
-                                        focusNode: _inputFocus,
-                                        style: const TextStyle(fontFamily: 'ShareTechMono', color: Colors.white, fontSize: 13),
-                                        decoration: const InputDecoration(
-                                          hintText: "QUERY THE GHOST...",
-                                          hintStyle: TextStyle(fontFamily: 'VT323', color: Colors.white38, fontSize: 12),
-                                          border: InputBorder.none,
-                                          isDense: true,
-                                          contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-                                        ),
-                                        onSubmitted: _handleUserInput,
-                                        textCapitalization: TextCapitalization.sentences,
-                                      ),
-                                    ),
-                                    IconButton(
-                                      icon: Icon(Icons.send, color: themeColor, size: 20),
-                                      onPressed: () => _handleUserInput(_inputController.text),
-                                      padding: EdgeInsets.zero,
-                                      constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                             ],
-                           ),
-                         ),
-                       ),
-                     ),
-                 GestureDetector(
-                  onPanUpdate: _onDrag,
-                  child: Transform.translate(
-                    offset: Offset(0, 20 * (1 - _controller.value)),
-                    child: Opacity(
-                      opacity: 1.0,
-                      child: GhostAvatar(
-                        key: widget.ghostKey,
-                        size: 64,
-                        accentColor: widget.accentColor,
-                        onTap: _toggleCollapse,
-                        onLongPress: () {
-                          widget.ghostController.glitchLaugh();
-                        },
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  if (panelVisible)
+                    Transform.translate(
+                      offset: Offset(0, 18 * (1 - t)),
+                      child: Transform.scale(
+                        scale: 0.85 + 0.15 * t,
+                        alignment: Alignment.bottomRight,
+                        child: _buildPanel(themeColor, t.clamp(0.0, 1.0)),
                       ),
                     ),
+                  if (panelVisible) const SizedBox(height: 6),
+                  GestureDetector(
+                    onPanUpdate: _onDrag,
+                    child: GhostAvatar(
+                      key: widget.ghostKey,
+                      size: 64,
+                      accentColor: widget.accentColor,
+                      onTap: _toggleCollapse,
+                      onLongPress: () => widget.ghostController.glitchLaugh(),
+                    ),
                   ),
-                ),
-              ],
-            ),
-            ),
+                ],
+              ),
             );
           },
         );
@@ -503,76 +427,196 @@ child: Container(
     );
   }
 
+  Widget _buildPanel(Color themeColor, double a) {
+    final radius = BorderRadius.circular(16);
+    final width = min(300.0, MediaQuery.sizeOf(context).width - 32);
+    return ConstrainedBox(
+      constraints: BoxConstraints(minWidth: width, maxWidth: width, maxHeight: 400),
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          borderRadius: radius,
+          boxShadow: [BoxShadow(color: themeColor.withValues(alpha: 0.28 * a), blurRadius: 22, spreadRadius: 1)],
+        ),
+        child: ClipRRect(
+          borderRadius: radius,
+          child: BackdropFilter(
+            filter: ui.ImageFilter.blur(sigmaX: 0.01 + 16 * a, sigmaY: 0.01 + 16 * a),
+            child: Container(
+              decoration: BoxDecoration(
+                borderRadius: radius,
+                border: Border.all(color: themeColor.withValues(alpha: 0.7 * a), width: 1.2),
+                gradient: LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [
+                    themeColor.withValues(alpha: 0.14 * a),
+                    Colors.black.withValues(alpha: 0.38 * a),
+                    Colors.black.withValues(alpha: 0.52 * a),
+                  ],
+                ),
+              ),
+              child: Opacity(
+                opacity: a,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(12, 6, 4, 4),
+                      child: Row(
+                        children: [
+                          Icon(Icons.auto_awesome, color: themeColor, size: 16),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              "GHOST IN THE MACHINE",
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(fontFamily: 'ShareTechMono', fontSize: 12, fontWeight: FontWeight.bold, color: themeColor, letterSpacing: 1),
+                            ),
+                          ),
+                          IconButton(
+                            icon: const Icon(Icons.power_settings_new, color: Colors.redAccent, size: 18),
+                            tooltip: "CLOSE GHOST",
+                            onPressed: () {
+                              Sfx.play(SfxId.close);
+                              if (_chatState == GhostChatState.expanded) {
+                                _controller.reverse().then((_) {
+                                  if (mounted) _chatState = GhostChatState.collapsed;
+                                });
+                              }
+                              GhostSettings.setVisible(false);
+                            },
+                            padding: EdgeInsets.zero,
+                            constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                          ),
+                          IconButton(
+                            icon: Icon(Icons.close, color: themeColor, size: 18),
+                            tooltip: "MINIMIZE",
+                            onPressed: _toggleCollapse,
+                            padding: EdgeInsets.zero,
+                            constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                          ),
+                        ],
+                      ),
+                    ),
+                    Container(height: 1, margin: const EdgeInsets.symmetric(horizontal: 12), color: themeColor.withValues(alpha: 0.25)),
+                    Flexible(
+                      child: ListView.builder(
+                        controller: _scrollController,
+                        reverse: true,
+                        shrinkWrap: true,
+                        padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
+                        itemCount: _messages.length,
+                        itemBuilder: (context, index) {
+                          final msg = _messages[_messages.length - 1 - index];
+                          final child = msg.chips != null ? _buildSuggestionChips(msg.chips!, themeColor) : _buildMessageBubble(msg, themeColor);
+                          return _Entrance(key: ValueKey(msg.id), fromLeft: msg.isGhost, child: child);
+                        },
+                      ),
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(10, 4, 10, 10),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: TextField(
+                              controller: _inputController,
+                              focusNode: _inputFocus,
+                              onChanged: _onInputChanged,
+                              cursorColor: themeColor,
+                              style: const TextStyle(fontFamily: 'ShareTechMono', color: Colors.white, fontSize: 13),
+                              decoration: InputDecoration(
+                                hintText: "QUERY THE GHOST...",
+                                hintStyle: const TextStyle(fontFamily: 'VT323', color: Colors.white38, fontSize: 14),
+                                isDense: true,
+                                filled: true,
+                                fillColor: Colors.black.withValues(alpha: 0.35),
+                                contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                                enabledBorder: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(10),
+                                  borderSide: BorderSide(color: themeColor.withValues(alpha: 0.45)),
+                                ),
+                                focusedBorder: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(10),
+                                  borderSide: BorderSide(color: themeColor, width: 1.6),
+                                ),
+                              ),
+                              onSubmitted: _handleUserInput,
+                              textCapitalization: TextCapitalization.sentences,
+                            ),
+                          ),
+                          const SizedBox(width: 6),
+                          DecoratedBox(
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              border: Border.all(color: themeColor.withValues(alpha: 0.7)),
+                              color: themeColor.withValues(alpha: 0.12),
+                            ),
+                            child: IconButton(
+                              icon: Icon(Icons.send, color: themeColor, size: 18),
+                              onPressed: () => _handleUserInput(_inputController.text),
+                              padding: EdgeInsets.zero,
+                              constraints: const BoxConstraints(minWidth: 38, minHeight: 38),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _buildMessageBubble(_ChatMessage msg, Color themeColor) {
     final isGhost = msg.isGhost;
     return Align(
       alignment: isGhost ? Alignment.centerLeft : Alignment.centerRight,
-      child: AnimatedBuilder(
-        animation: _bubbleController,
-        builder: (context, child) {
-          return Container(
-            margin: const EdgeInsets.symmetric(vertical: 4),
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-            constraints: const BoxConstraints(maxWidth: 240),
-            decoration: BoxDecoration(
-              color: isGhost ? Colors.black : themeColor.withAlpha(200),
-              border: Border.all(color: isGhost ? themeColor.withAlpha(150) : themeColor, width: 1),
-              borderRadius: BorderRadius.circular(12).copyWith(
-                bottomLeft: isGhost ? const Radius.circular(2) : const Radius.circular(12),
-                bottomRight: isGhost ? const Radius.circular(12) : const Radius.circular(2),
-              ),
-              boxShadow: isGhost ? [
-                BoxShadow(color: themeColor.withAlpha(50), blurRadius: 8, spreadRadius: 1),
-              ] : null,
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                if (isGhost) ...[
-                  Row(
-                    children: [
-                      Icon(Icons.auto_awesome, color: themeColor, size: 12),
-                      const SizedBox(width: 4),
-                      Text(
-                        msg.isTyping ? "GHOST..." : "GHOST",
-                        style: TextStyle(
-                          fontFamily: 'ShareTechMono',
-                          fontSize: 9,
-                          fontWeight: FontWeight.bold,
-                          color: themeColor,
-                        ),
-                      ),
-                    ],
+      child: Container(
+        margin: const EdgeInsets.symmetric(vertical: 4),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        constraints: const BoxConstraints(maxWidth: 240),
+        decoration: BoxDecoration(
+          color: isGhost ? Colors.black.withValues(alpha: 0.35) : themeColor.withValues(alpha: 0.85),
+          border: Border.all(color: isGhost ? themeColor.withValues(alpha: 0.5) : themeColor, width: 1),
+          borderRadius: BorderRadius.circular(12).copyWith(
+            bottomLeft: isGhost ? const Radius.circular(2) : const Radius.circular(12),
+            bottomRight: isGhost ? const Radius.circular(12) : const Radius.circular(2),
+          ),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (isGhost) ...[
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.auto_awesome, color: themeColor, size: 11),
+                  const SizedBox(width: 4),
+                  Text(
+                    msg.isTyping ? "GHOST ▸ TRANSMITTING" : "GHOST",
+                    style: TextStyle(fontFamily: 'ShareTechMono', fontSize: 9, fontWeight: FontWeight.bold, color: themeColor),
                   ),
-                  const SizedBox(height: 2),
                 ],
-                Text(
-                  msg.text,
-                  style: TextStyle(
-                    fontFamily: isGhost ? 'VT323' : 'ShareTechMono',
-                    fontSize: isGhost ? 14 : 12,
-                    color: isGhost ? Colors.white : Colors.black,
-                    height: 1.3,
-                  ),
-                ),
-                if (msg.isTyping)
-                  Padding(
-                    padding: const EdgeInsets.only(top: 4),
-                    child: SizedBox(
-                      width: 20,
-                      height: 4,
-                      child: LinearProgressIndicator(
-                        valueColor: AlwaysStoppedAnimation<Color>(themeColor),
-                        backgroundColor: Colors.transparent,
-                        minHeight: 2,
-                      ),
-                    ),
-                  ),
-              ],
+              ),
+              const SizedBox(height: 2),
+            ],
+            Text(
+              msg.isTyping ? '${msg.text}_' : msg.text,
+              style: TextStyle(
+                fontFamily: isGhost ? 'VT323' : 'ShareTechMono',
+                fontSize: isGhost ? 15 : 12,
+                color: isGhost ? Colors.white : Colors.black,
+                height: 1.25,
+              ),
             ),
-          );
-        },
+          ],
+        ),
       ),
     );
   }
@@ -580,34 +624,78 @@ child: Container(
   Widget _buildSuggestionChips(List<String> chips, Color themeColor) {
     return Align(
       alignment: Alignment.centerLeft,
-      child: Wrap(
-        spacing: 6,
-        runSpacing: 6,
-        children: chips.map((chip) => ActionChip(
-          label: Text(chip, style: const TextStyle(fontFamily: 'ShareTechMono', fontSize: 11, color: Colors.black)),
-          backgroundColor: themeColor,
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-          onPressed: () => _handleUserInput(chip),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-          side: BorderSide.none,
-        )).toList(),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 4),
+        child: Wrap(
+          spacing: 6,
+          runSpacing: 6,
+          children: chips
+              .map((chip) => ActionChip(
+                    label: Text(chip, style: TextStyle(fontFamily: 'ShareTechMono', fontSize: 11, color: themeColor)),
+                    backgroundColor: themeColor.withValues(alpha: 0.12),
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                    onPressed: () => _handleUserInput(chip),
+                    shape: const StadiumBorder(),
+                    side: BorderSide(color: themeColor.withValues(alpha: 0.6)),
+                  ))
+              .toList(),
+        ),
+      ),
+    );
+  }
+}
+
+class _Entrance extends StatefulWidget {
+  final Widget child;
+  final bool fromLeft;
+
+  const _Entrance({super.key, required this.child, required this.fromLeft});
+
+  @override
+  State<_Entrance> createState() => _EntranceState();
+}
+
+class _EntranceState extends State<_Entrance> with SingleTickerProviderStateMixin {
+  late final AnimationController _in = AnimationController(vsync: this, duration: const Duration(milliseconds: 260))..forward();
+  late final Animation<double> _curve = CurvedAnimation(parent: _in, curve: Curves.easeOutCubic);
+
+  @override
+  void dispose() {
+    _in.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FadeTransition(
+      opacity: _curve,
+      child: SlideTransition(
+        position: Tween<Offset>(begin: Offset(widget.fromLeft ? -0.08 : 0.08, 0.15), end: Offset.zero).animate(_curve),
+        child: widget.child,
       ),
     );
   }
 }
 
 class _ChatMessage {
+  static int _counter = 0;
+
+  final int id;
   final String text;
   final bool isGhost;
   final bool isTyping;
   final List<String>? chips;
 
   _ChatMessage({
+    int? id,
     required this.text,
     required this.isGhost,
     this.isTyping = false,
     this.chips,
-  });
+  }) : id = id ?? ++_counter;
+
+  _ChatMessage copyWith({String? text, bool? isTyping}) =>
+      _ChatMessage(id: id, text: text ?? this.text, isGhost: isGhost, isTyping: isTyping ?? this.isTyping, chips: chips);
 }
 
 class _LaunchStep {

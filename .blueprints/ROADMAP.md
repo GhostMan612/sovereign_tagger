@@ -241,7 +241,7 @@
 
 ## Phase 28 — Game-feel pass (visual FX, SFX, ghost 2.0, transitions) [ ]
 - [x] **28.1 Feel** — native `SoundPool` SFX engine + 13-sound Dart synth bank (fixes UI sounds ducking music), global `TapFxLayer` (pulse / ring / spark burst + tap sound on every tappable), `CyberInk` theme splash, `CyberTapFeedback` fixed (press-scale, keeps child)
-- [ ] **28.2 Ghost look** — no black box, frosted-glass chat panel with accent outline, outlined query field, living ghost (float/breathe/blink/eyes/tail, talking/thinking/emotion), pauses when hidden
+- [x] **28.2 Ghost look** — no black box, frosted-glass chat panel with accent outline, outlined query field, living ghost (float/breathe/blink/eyes/tail, talking/thinking/emotion), pauses when hidden
 - [ ] **28.3 Ghost brain** — offline, free: current-app knowledge, typo-tolerant matching, real commands, follow-ups
 - [ ] **28.4 Shaders + transitions** — GPU backdrop per tab, animated tab switches, page transitions, animated nav, perf pass
 - Gate per slice: `flutter analyze --no-pub` clean + scratch widget tests (flutter_tester) + shader compile (impellerc) where relevant; device smoke in SESSION_HANDOFF

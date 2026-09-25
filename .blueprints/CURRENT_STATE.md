@@ -95,6 +95,7 @@ Sovereign Tagger — autonomous Android media pipeline: yt-dlp (chaquopy Python 
 | PW1 | workbench PCM | static "PCM CAPTURING" indicator | 25 | **FIXED** `_PcmWavePainter` live 48-bar level meter fed by `PcmRecorderBridge` peak tap → `pcm_events` EventChannel (50ms throttle, zero extra alloc in read loop) |
 | AR1 | player art / Id3Tagger / tab_grabber | Album art missing in player: no fallback when tags lack art; YouTube DASH m4a failed every tag write (Grabber save aborted); jaudiotagger in desktop mode (FLAC/OGG art write threw an Error, hung the channel); APIC picture type 255 | 27.9 | **FIXED** art cascade (tag → MediaMetadataRetriever → folder image), `isAndroid=true` + raw FLAC/Vorbis picture blocks + type 3, m4a remux + `TagIO` DASH flatten (G24/G25) — device smoke pending |
 | FX1 | cyber_tap_feedback / tap_feedback | Buttons never animated (burst widget replaced child with infinite CustomPaint; only 8 buttons wrapped); UI beeps were 8 kHz via just_audio and could duck music | 28.1 | **FIXED** global `TapFxLayer` + `CyberInk` + SoundPool `Sfx` synth bank (G26–G28) — device smoke pending |
+| GH12 | ghost_avatar / ghost_chat_overlay | Ghost never animated at rest (only materialize/laugh busy-loops), opaque black box behind the whole overlay, flat opaque panel, unoutlined input | 28.2 | **FIXED** ticker-driven living ghost + moods, glass panel (G29/G30) — device smoke pending |
 
 ## Toolchain notes (dependency ceiling: win32 pair + compileSdk 37)
 
