@@ -8,9 +8,12 @@ package com.sovereigntagger
 import android.util.Base64
 import org.jaudiotagger.audio.AudioFileIO
 import org.jaudiotagger.tag.FieldKey
+import org.jaudiotagger.tag.TagField
+import org.jaudiotagger.tag.id3.AbstractID3v2Frame
 import org.jaudiotagger.tag.id3.AbstractID3v2Tag
+import org.jaudiotagger.tag.id3.ID3v23Frame
+import org.jaudiotagger.tag.id3.ID3v23Tag
 import org.jaudiotagger.tag.id3.ID3v24Frame
-import org.jaudiotagger.tag.id3.ID3v24Tag
 import org.jaudiotagger.tag.id3.framebody.FrameBodyTXXX
 import org.jaudiotagger.tag.images.ArtworkFactory
 import java.io.File
@@ -49,7 +52,7 @@ object Id3Tagger {
                                 val imageBytes = Base64.decode(value, Base64.DEFAULT)
                                 val artwork = ArtworkFactory.getNew()
                                 artwork.binaryData = imageBytes
-                                artwork.mimeType = "image/jpeg"
+                                artwork.mimeType = sniffImageMime(imageBytes)
                                 tag.deleteArtworkField()
                                 tag.setField(artwork)
                             }
@@ -91,7 +94,6 @@ object Id3Tagger {
                 tags["ARTWORK_BASE64"] = Base64.encodeToString(artwork.binaryData, Base64.NO_WRAP)
             }
             
-            // Read ReplayGain tags
             val replayGainFields = listOf("REPLAYGAIN_TRACK_GAIN", "REPLAYGAIN_TRACK_PEAK", "REPLAYGAIN_ALBUM_GAIN", "REPLAYGAIN_ALBUM_PEAK")
             replayGainFields.forEach { fieldName ->
                 val value = getReplayGainTag(tag, fieldName)
@@ -102,25 +104,31 @@ object Id3Tagger {
         return tags
     }
 
+    private fun sniffImageMime(bytes: ByteArray): String {
+        if (bytes.size > 4 && bytes[0] == 0x89.toByte() && bytes[1] == 0x50.toByte() && bytes[2] == 0x4E.toByte() && bytes[3] == 0x47.toByte()) return "image/png"
+        return "image/jpeg"
+    }
+
     private fun setReplayGainTag(tag: org.jaudiotagger.tag.Tag, fieldName: String, value: String) {
         try {
             val id3Tag = tag as? AbstractID3v2Tag ?: return
-            if (value.isEmpty()) {
-                val it = id3Tag.getFields("TXXX").iterator()
-                while (it.hasNext()) {
-                    val f = it.next()
-                    try {
-                        val body = (f as? ID3v24Frame)?.body as? FrameBodyTXXX
-                        if (body?.description == fieldName) it.remove()
-                    } catch (_: Exception) {}
-                }
-            } else {
+            val kept = mutableListOf<TagField>()
+            for (f in id3Tag.getFields("TXXX")) {
+                val body = (f as? AbstractID3v2Frame)?.body as? FrameBodyTXXX
+                if (body?.description != fieldName) kept.add(f)
+            }
+            id3Tag.removeFrame("TXXX")
+            for (f in kept) id3Tag.addField(f)
+            if (value.isNotEmpty()) {
                 val body = FrameBodyTXXX()
                 body.description = fieldName
                 body.text = value
-                val frame = ID3v24Frame("TXXX")
+                val frame: AbstractID3v2Frame = when (id3Tag) {
+                    is ID3v23Tag -> ID3v23Frame("TXXX")
+                    else -> ID3v24Frame("TXXX")
+                }
                 frame.body = body
-                id3Tag.setField(frame)
+                id3Tag.addField(frame)
             }
         } catch (_: Exception) {}
     }
@@ -131,7 +139,7 @@ object Id3Tagger {
             val fields = id3Tag.getFields("TXXX")
             for (f in fields) {
                 try {
-                    val body = (f as? ID3v24Frame)?.body as? FrameBodyTXXX
+                    val body = (f as? AbstractID3v2Frame)?.body as? FrameBodyTXXX
                     if (body?.description == fieldName) return body.text ?: ""
                 } catch (_: Exception) {}
             }
