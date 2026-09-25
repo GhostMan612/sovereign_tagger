@@ -1,0 +1,122 @@
+# SESSION_HANDOFF.md — Sovereign Tagger v2
+> Read this FIRST every session. Updated Phase 25 complete 2026-08-25.
+
+## DOCUMENT MAP — cold-start hooks (read top-to-bottom)
+
+| # | File | Holds | When to read |
+|---|------|-------|--------------|
+| 0 | `AGENTS.md` (root) | Auto-injected into every session by opencode — the true guaranteed entry point; compact ramping guide + laws table | automatic |
+| 1 | `.blueprints/RULES.md` | **CANONICAL** operating law: read-only paths, git discipline, §3 technical laws incl. **§3.1 POWERSHELL MOJIBAKE BAN** | EVERY session, before any edit |
+| 2 | THIS FILE | Latest session deltas ("What shipped"), Next actions queue, Open decisions, toolchain notes | EVERY session |
+| 3 | `.blueprints/CURRENT_STATE.md` | Verified per-file architecture map (~10.3k LOC), known-issue registry (`K/A/V/GH/CS/EQ/PW` rows — check before touching grabber/pipeline/workbench/player/ghost/settings), frozen-ceiling toolchain notes | before writing code |
+| 4 | `.blueprints/ROADMAP.md` | Phase tracker (Phases 0–26+, `[x]/[~]/[ ]/[-]`) with per-phase verification gates | when planning/phases |
+| 5 | `.blueprints/BLUEPRINTS.md` | Design specs + **append-only GOTCHA REGISTRY** (SPEC-S* ids) | before novel features |
+| 6 | `.blueprints/ARCHITECTURE.md` | Boot flow + data-flow reference diagrams | structural changes |
+| — | `README.md` (root) | Operator-facing capabilities/API-keys/maintenance docs (kept synced with reality) | release/closeout/doc work |
+| — | `pubspec.yaml`, `android/app/build.gradle`, `gradle.properties` | **Executable truth**: frozen dep ceiling pins, `SOVEREIGN_TAGGER.apk` name, debug-signing fallback, chaquopy/python version, builtInKotlin opt-out | any dependency/signing/build question |
+
+Conflict law: RULES.md > other docs; executable files > prose.
+Session-end law: update rows 2–4 every session (+ row 5 when a new gotcha is learned).
+
+## Where we are
+
+**Date:** 2026-08-25
+**Phase:** 0–25 COMPLETE. All gated `flutter analyze --no-pub` → `No issues found!`
+**Project:** `C:\sovereign_tagger` (promoted from playground copy). No APK built on this host; Android Studio on Moto G is sole compiler.
+
+## What shipped (delta since last handoff 2026-08-24)
+
+- **Phase 25 — Contextual Settings Split (jetAudio pattern)** [x]:
+  - Research verdict: jetAudio uses one settings tree + contextual entry points, NOT per-tab screens. Mapped accordingly.
+  - `lib/screens/playback_engine_screen.dart` — Crossfade 0–12s + Gapless toggle + Gapless Audit moved out of Settings; persists instantly (`onChangeEnd` slider / switch change) to `crossfade_duration`/`gapless_enabled`. Entry: Player AppBar merge-icon action.
+  - `lib/screens/eq_presets_screen.dart` — 15-band preset matrix moved out of Settings; SAVE PRESET/FLAT, `_dirty` PopScope discard-confirm. Syncs with Workbench via `eq15_band_$i`. Entry: Workbench header tune icon.
+  - Root Settings now KERNEL/SYSTEM only (~772 L): keys, accent color, maintenance, ghost, backup/restore. Backup/Restore untouched (reads prefs directly).
+- **Phase 25 hotfix round (same session, operator feedback)** [x]:
+  - **GH7 — ghost never rendered**: `GhostChatOverlay.build` returned a nested `Positioned` while MainShell already wrapped the overlay in one → ParentDataWidget assertion silently killed the whole ghost subtree (no orb, no chat, no first-launch sequence). Overlay now returns a plain `Column`; full file rewritten clean. Tutorial copy de-staled ("train TFLite" refs removed; PLAYER tip now mentions merge/tune icons).
+  - **CS4 — EQ moved to PLAYER** (this was the point of the jetAudio research): tune icon on Player AppBar opens `EqPresetsScreen`; Workbench header icon removed. Sliders rebuilt as big VERTICAL rails (260px tall via RotatedBox quarterTurns:3, 52px band width, horizontal-scroll rack, thumb r11). Workbench keeps its 15-band DSP op + SAVE PRESET sync (`eq15_band_$i`).
+  - **PW1 — PCM live wave finished**: bridge computes peak in existing read loop (merged single pass, zero extra alloc), throttled 50ms → `pcm_events` EventChannel → `PcmRecorder.amplitudes()` → `_PcmWavePainter` 48-bar redAccent level meter + midline in Workbench lossless capture box; sub cancelled at HALT/dispose. Native side (PcmRecorderBridge.kt listener + MainActivity pcm_events channel) landed earlier in session.
+    - Build fix: first device run failed `compileDebugKotlin` — `Short > Int` peak comparison resolved to star-projected `Number & Comparable<*>` under KGP 2.3.20 (prohibits `compareTo`). Fix: explicit `val v: Int = if (s < 0) -s.toInt() else s.toInt()` (`PcmRecorderBridge.kt:75`). Verified `:app:compileDebugKotlin` BUILD SUCCESSFUL on host; full assembleDebug via Android Studio pending re-run.
+- **Phase 25 device-smoke round 2 (GH7 still-no-ghost root cause chain)** [x]:
+  - **GH7b — avatar build crash**: device log threw `opacity >= 0.0 && opacity <= 1.0` at `ghost_avatar.dart:613` every frame → `AnimatedOpacity` error widget = orb invisible even after Positioned fix. Root cause: `_materialize` uses `Curves.easeOutBack` (overshoots >1.0) and `_dematerialize` `easeInBack` (`1-t`) — both leave [0,1]. Fix: `_opacity.clamp(0.0, 1.0)` + `_scale.clamp(0.0, ∞)` at the widget.
+  - **GH7c — consumed first-launch flag**: earlier broken builds ran overlay initState + animations invisibly (rendering crashed AFTER initState), so `setFirstLaunchComplete()` persisted without the sequence ever being seen. Key bumped to `ghost_first_launch_complete_v2`; MainShell now reads via `GhostSettings.firstLaunchComplete` instead of raw old key. Sequence will replay once on next cold start.
+  - **Launch boops explained** (operator query): NOT mic-access tones — they are our own TapFeedback wavs fired by the invisible ghost: `materialize()`→`matrixTap()`, `glitchLaugh()`→`matrixConfirm()`, dematerialize→`matrixBoop()` (ghost_avatar.dart:486/507/531, 8kHz mono base64 wavs via just_audio). They'll accompany visible animations now. Remove/re-pitch if unwanted.
+  - **Workbench SwitchListTile assertion**: "LOSSLESS PCM" switch inside decorated Container → ListTile ink assertion; wrapped in `Material(color: transparent)` (same pattern as Phase 21 queue-sheet fix).
+  - **GH9 — THE ACTUAL RENDER KILLER (z-order)**: round-2 log had zero Flutter exceptions, sounds played, IME fired — ghost was building fine but **painted UNDER the tabs**: it sat at Stack child #2 while the tab `Column` (opaque black `Scaffold` per tab + mini-player) came after it in the same `Stack`, covering the full body. Fix: ghost `ValueListenableBuilder` moved to **last Stack child** (paints on top of everything). Ghost was rendering correctly the whole time — buried.
+  - **Auto-keyboard killed**: chat's `_controller.addStatusListener` requested input focus on programmatic expand → IME popped at every launch. Listener removed; focus now only via user-initiated orb tap (`_toggleCollapse`).
+  - **GH10 — orb painted off-canvas (the "just a box" bug)**: `_drawGhost` used `ghostPath.shift(center)` — path is authored in a 100×100 design space, shift only TRANSLATED it by the canvas midpoint so the silhouette drew at 32→132px on a 64px canvas (~75% off-screen; only chat panel visible → "box with text and buttons"). Fix: proper canvas mapping — translate to center, `scale(shortestSide/100)`, recenter on path bounds (51,57). Orb silhouette + accent glow now fills the 64px box.
+  - **Drag-to-move**: orb is the drag handle (`GestureDetector.onPanUpdate` on avatar), whole overlay (panel included) follows via `Transform.translate(_dragOffset)`; clamped to screen bounds in overlay state.
+  - **Auto-collapse**: after contextual tutorial finishes, panel collapses back to orb-only after 8s unless user already interacted (`_userInteracted` flag set by manual toggle/input).
+  - **GH11 — orb scale/opacity zero-init + racy materialize (agent-audited root cause)**: `GhostAvatarState._scale/_opacity` init 0.0 and the ONLY materialize caller is MainShell's one-shot postFrameCallback, which fires while overlay is collapsed-shrink → `GlobalKey.currentState == null` → `_state?._materialize() ?? Future.value()` silent no-op → fresh state mounts at scale-0/opacity-0 forever. Fixes: (1) avatar SELF-materializes post-frame on mount (silent=true — no launch beep); (2) overlay NEVER returns shrink — collapsed = orb-only, always mounted/tappable (also kills state-destruction-on-collapse F8); (3) overlay `_checkFirstLaunch` now reads GhostSettings v2 flag (was raw old key — F10 desync); (4) orb opacity constant 1.0; auto-collapse 8s→12s. Agent audit: ses_fc4c0342affe9rzuG4NtYBtQnr findings F1-F10.
+  - **GH12 — shape + panel restyle (operator feedback post-verification)**: old silhouette path was a lumpy multi-loop blob → replaced with clean classic ghost (dome cubic head, straight sides, 4-scallop quadratic hem; bounds x20-80 y8-~89, center 50/49) + oval eyes/mouth drawn on main pass only (`customPaint == null` guard keeps RGB-shift layers body-only). Chat panel DE-BOXED: outer Container decoration (bg/border/radius/glow) removed — header row, bubbles, input float free with minimal padding; power/X buttons unchanged.
+  - **Release closeout** (operator demand): still gated per repo law — no host `flutter build apk --release`; Android Studio does device builds. Signing currently falls back to debug keystore unless `SOVEREIGN_KEYSTORE` env/local.properties provided (`app/build.gradle:62`).
+  - Remaining launch-log noise confirmed benign: mali_gralloc format errors, BLASTBufferQueue max-frames spam, HWUI undefined symbols, Choreographer skips during startup, SELinux vendor prop denials.
+
+- **Phases 16–21 completed** (were missing from handoff docs): safe patches (`0.5.13/2.14.0/1.5.2` inside `win32 5.9.0` cap), 6 mounted guards, true-lossless PCM bridge, tap feedback, per-tab pulsing grid (Phase 16), heavier electric arcs + traveling comets (Phase 19), Whisper transcription wired via bundled `ggml-base.en.bin` 141MB (Phase 18), Whisper command corrected from DOCS output + `AudioServiceActivity` migration + status boxes top + staging hygiene + HALT auto-export + Material bottom sheets + AmbientBackdrop lifecycle pause (Phase 20), video merge probe retry + queue-end pause/rewind + ACR mic release + queue-sheet Material wrapper (Phase 21).
+- **Phase 22 completed**: All 8 F-Droid-grade items shipped:
+  - ReplayGain scanner (`ebur128` → TXXX tags via id3)
+  - 15-band `anequalizer` (AutoEq, 25Hz–16kHz, Q=1.2, Settings↔Workbench sync)
+  - Crossfade 0–12s + Gapless toggle (Settings → Playback Engine)
+  - Gapless Audit test (2-tone pattern → RMS gap measurement)
+  - LRCLIB lyrics fallback in `spider.py` (free, no key, after Genius)
+  - Home screen widget (`SovereignWidgetProvider` — RemoteViews, 4-button control)
+  - Library tab (`TabLibrary` — MediaStore browse by Album/Artist/Folder, search, play)
+  - Backup/Restore (XOR `0x53` encrypted JSON: settings + EQ presets + persisted queue)
+- **Phase 23 — Cyberpunk Tap Feedback** [x]:
+  - `lib/core/cyber_tap_feedback.dart` — `CyberTapFeedback` widget with particle burst (12 exploding dots), expanding shockwave ring, button scale pulse
+  - Pre-computed trajectories, single `AnimationController`, `CustomPainter` reuse — zero alloc during animation
+  - `CyberButton` / `CyberIconButton` convenience widgets (primary/secondary styling, accent glow shadow)
+  - Integrates with existing `TapFeedback` (haptic + 880/1400Hz base64 tick/boop)
+  - Zero battery drain: particles only live during 300ms burst, no background timers
+- **Phase 24 — Ghost Avatar Tutorial Chatbot** [x] (Slices 24.1–24.5, TFLite lane ripped in C — ceiling conflict):
+  - `lib/widgets/ghost_avatar.dart` — `GhostAvatar` widget: code-drawn Android ghost emoji silhouette, glitch effects (scanlines, RGB shift, jitter), glitch laugh (wobble + particle burst + "hahaha" typewriter)
+  - Three-emotion particle system: sarcastic (glitch squares 72%), happy (circles 72%), serious (matrix chars 72%) with weighted randomization
+  - Animations: materialize (easeOutBack), dematerialize (easeInBack), glitchLaugh (wobble + particle burst + "hahaha" typewriter)
+  - OverlayEntry integration: floats in MainShell bottom-right, persists across tabs, 72px collapsed orb
+  - `GhostSettings` — ValueNotifiers for reduceMotion, visible, autoExpand, firstLaunchComplete (SharedPreferences persisted; useTflite removed)
+  - Reduce motion global: disables ghost glitch/wobble/scanlines + AmbientBackdrop/MatrixRain
+  - Integrated in MainShell: Positioned bottom-right (above bottom nav), ValueListenableBuilder for visibility
+  - `lib/widgets/ghost_chat_overlay.dart` — `GhostChatOverlay`: Chat UI with typewriter text, message bubbles, suggestion chips, text input + send
+  - First-launch sequence: "Welcome to... The Machine... SkyNet? Just Kidding... hahaha!" with glitchLaugh
+  - Contextual tutorials: `lib/services/ghost_classifier.dart` pure-Dart TF-IDF + cosine similarity (15 intents, threshold 0.14, no native dep) → `GhostChatOverlay` now tries classifier first, falls back to keyword routing
+  - Suggestion chips: Context-aware action chips for quick queries
+  - GlobalKey integration: MainShell controller drives GhostAvatar in overlay
+  - Settings: Ghost Tutorial section now visibility / auto-expand / reduce-motion (global) / reset first-launch (TFLite toggle + train button removed — replaced by pure-Dart classifier)
+  - Build: `tflite_flutter` removed from pubspec (sole JVM-target mismatch source), `SovereignTagger.apk` flat name
+- **Repo cleanup** [x]: Removed dead scaffolding (`lib/core/jobs`, `lib/core/models`, `tools/`), stale blueprint files, old versioned blueprints.
+- **Safe patches inside frozen `^` ceiling** (no `--major-versions`): `ffmpeg_kit 0.5.12→0.5.13`, `video_player 2.13.0→2.14.0`, `wakelock 1.5.2` maxed (`1.7.0` blocked by `file_picker ^9 win32 ^5.9.0` vs `win32 ^6.0.1` — intentional). `pubspec.yaml:16,23,26` now `^0.5.13/^2.14.0/^1.5.2` lock `0.5.13/2.14.0/1.5.2` synced, Studio no longer throws `win32` mismatch. `^0.6.0/^12/^0.10/^13` still blocked for dedicated major session.
+- **6 mounted guards** `tab_forge:85,180,276` `tab_grabber:201,226` `tab_pipeline:52,66` `tab_workbench:154` `main_shell:72` + `FilePicker PlatformException` wrappers + pipeline `if(!mounted) break`.
+- **True-lossless PCM** `android/app/src/main/kotlin/com/sovereigntagger/PcmRecorderBridge.kt:18` `AudioRecord` 48k/16-bit WAV (header placeholder → LE finalize, single `ByteBuffer` reuse) + `lib/core/pcm_recorder.dart` + `lib/tabs/tab_workbench.dart:110` `LOSSLESS PCM (48K WAV)` toggle default ON (fallback `aac 48k/256k 50ms`).
+- **Tap feedback** `lib/core/tap_feedback.dart:10` haptics + embedded `880/1400Hz` 0.7–1.3KB base64 wav via `just_audio` data URI + `dispose()`.
+- **Per-tab electricity** `lib/widgets/matrix_rain.dart:98` `AmbientBackdrop` now `Stateful` `4s` pulse, `BackdropVariant` per tab (grabber vertical, forge slow, pipeline horizontal, workbench mixed) `alpha 0.035` grid + `0.18` sparks, `MainShell` `ValueListenableBuilder currentTab` switch.
+- **Whisper AI** bundled `assets/models/ggml-base.en.bin` (141MB) + `pubspec.yaml:37` + `tab_workbench.dart:_executeWhisper` extracts to cache, runs `-af "whisper=model=<path>:language=<en|auto>" -f srt`, writes `.srt` sidecar + text preview. Self-diagnosing: failure pulls `-h filter=whisper` into `_whisperReport` panel. Settings probe card has **DOCS** button for ground-truth syntax.
+- **Critical 5 HOLD** still gated: `ffmpeg queue Future<void> _drain` `22`, `jobId UUID` `48`, `Id3 deleteField` `Id3Tagger.kt:23`, `bridge split orphan` `114`, `Storage MIME` `StorageBridge.kt:39`.
+- **HIGH 6 HOLD** still gated: extractor `android,web` rotation `bridge.py:19` + `spider.py:79`, `_queueLock` serialized `main_shell:72`, `PcmRecorderBridge:60` reuse, runtime `READ_MEDIA_*` via `permission_handler`, scoped-storage cache copy.
+
+## Toolchain notes (frozen ceiling)
+
+- `pubspec.yaml:6` `sdk >=3.0.0 <4.0.0` / `Flutter 3.47 / Dart 3.13` / `compileSdk 36 / NDK 28.2 / JDK 25 bundled jbr/bin/java 25.0.2` / `compileOptions 1.8` shim (bump to `17` only in dedicated Java session). `AGP 9.0.1 / KGP 2.3.20 / Gradle 9.1.0` at ceiling (Chaquo max `9.2`). `python 3.14` top but few wheels — `app/build.gradle:54` fallback to `"3.11"` comment. `3.12+` is 64-bit only (`arm64-v8a,x86_64` only). `minSdk 26 / abiFilters arm64-v8a,x86_64` 64-bit-only documented.
+- **Repo cleaned**: Removed dead scaffolding (`lib/core/jobs`, `lib/core/models`, `tools/`), stale blueprints (old versions, PDFs, large text dumps).
+- Verification: `flutter analyze --no-pub` only; no `test/` suite; device smoke required for `audio_service` notification, FB mux, PCM WAV, rain perf, Whisper transcribe, Ghost chat.
+
+## Next actions
+
+1. **Device smoke on Moto G** (Android Studio `Install`): **Ghost: orb materializes bottom-right, first-launch SkyNet sequence plays, chat expands, classifier replies, hide/laugh chips** (GH7 fix — verify no console ParentDataWidget error); **Player AppBar tune icon → vertical EQ rack renders + saves; merge icon → Playback Engine**; **Workbench REC → live red wave bars move with mic level** (PW1); Whisper transcribe → `.srt` sidecar; ReplayGain scan → verify tags written; 15-band EQ op → apply/verify; Crossfade 0–12s → verify; Gapless Audit → run test pattern; LRCLIB fallback → verify lyrics fill; Home widget → add to launcher; Library tab → scan MediaStore; Backup/Restore → round-trip; `grabber` quick-video `1080/720` + FB silent-heal; `pipeline` batch cancel/retry; `workbench` PCM record → HALT auto-export → DSP; `player` edge-to-edge pinch + `sleep/speed/LRC` + queue persist; `splash` rain + per-tab pulses 60fps.
+2. **Git decision**: `C:\sovereign_tagger` has NO `.git` — repo is unversioned. Operator to decide: `git init` + explicit-path staging discipline, or stay unversioned.
+3. **Phase 26+** (future, optional): Cloud sync, Last.fm scrobbling, Chromecast, Opus encoding, multi-user profiles.
+4. **Optional major session (explicit ask only):** `flutter pub upgrade --major-versions` → `ffmpeg 0.6.0 / file_picker 12 / just_audio 0.10 / permission_handler 13 / audio_waveforms 2.0` + `java 1.8→17` + `compileSdk` bump — needs Moto G regression.
+5. **PCM wave amplitude (nice-to-have):** wire `AudioRecord` max amplitude to `onCurrentDuration` stream for live wave in lossless mode (currently static `PCM CAPTURING` indicator).
+6. **UI/UX polish session (operator-flagged):** buttons/taps still lack sound FX + visual feedback across tabs — `CyberTapFeedback`/`CyberButton`/`CyberIconButton` (`lib/core/cyber_tap_feedback.dart`) exist from Phase 23 but are NOT wired into most surfaces. Sweep grabber/forge/pipeline/workbench/library/player/settings: wrap primary actions with `CyberTapFeedback`, wire `TapFeedback.machineTap/Boop/Confirm` (post-matrix-rename names) to presses, verify haptics on device.
+7. **Phase 26 staged** (ROADMAP has full slices): 26.0 ghost scrim [x] + 26.0b key onboarding [x] (storage/openUrl intent channel, settings title hyperlinks, ghost rituals/chips) shipped; next up **26.1 Waveform Studio** — use `audio_waveforms` `PlayerController.extractWaveformData` (dep already owned) + custom painter peak/RMS dual-shade, pinch-x viewport zoom, drag selection → CLIP op; then 26.2 ops pack (`adeclick`/`deesser`/`alimiter`/`mcompand`/`amix`/`acrossfade`/`apad`/`dcshift`), 26.3 yt-dlp help sheet, 26.4 spectrogram stretch (`showspectrogrampic`). Research base: Lexis/WaveEditor/WavePad/Audacity feature digests in ROADMAP Phase 26 notes.
+7. **Phase 26 SHIPPED (all slices)** [x]: ghost scrim; key onboarding (`storage/openUrl`, settings hyperlinks, ghost rituals/chips); **Waveform Studio** (`lib/widgets/waveform_studio.dart` — FFmpeg s16le→peak buckets, mirrored painter w/ selection shading, adaptive ruler, drag-select w/ edge zones, zoom ±/FIT + RangeSlider pan, auto-syncs CLIP fields); **9 new Workbench ops** (Insert Silence/Delete Region/Mix With File/Crossfade Join/adeclick/deesser/alimiter/mcompand/highpass — all container-preserving, second-media picker for mix/xfade); **yt-dlp FIELD MANUAL** sheet in Grabber header help icon; Tone Generator + Spectrogram Snapshot ops; MediaStore tail falls back to cache-path note; tap-feedback sweep wired `machineTap()` into 25 handlers (internal chains excluded); **visual CyberTapFeedback installed** around 8 primary buttons in pure-visual mode (burst+ring+pulse; haptic/audio flags off so inner button's machineTap stays single-source).
+7b. **FEEDBACK MATRIX card** (Settings > UI PREFERENCES, right under accent color): `lib/core/feedback_settings.dart` (persisted ValueNotifiers: burst/ring/pulse/sound/haptics; haptics default OFF per operator) loaded at boot in main.dart. Gates live inside `tap_feedback.dart` primitives (sound+haptic) and `cyber_tap_feedback.dart` `_triggerBurst` (per-layer visual gating; all-off skips animation entirely). Completion haptics added via `machineConfirm()` at workbench/forge/grabber/pipeline success tails — so HAPTICS toggle = buzz on actions AND completions, SOUND toggle = clicks/boops, VISUAL layers = any combo of the three.
+8. **TOOLING LAW (new, RULES.md §3.1 + AGENTS.md table):** PowerShell text pipelines are BANNED for source edits — PS 5.1 mis-reads UTF-8 as ANSI (mojibake `—`→`â€"`) and caused silent letter swaps (`setState`→`setYtate`, `Text`→`RextStyle`) during Phase 25 matrix-rename pass AND earlier sessions. Editor tools only; Python `encoding='utf-8'` if scripted; always follow with analyze + `'â€|Ã|Â'` signature grep.
+9. **Device smoke additions for P26:** wave studio loads peaks + drag-select syncs CLIP fields; Insert Silence/Delete Region round-trip; Mix + Crossfade need SECOND MEDIA mounted first; adclick on a noisy clip; deesser/limiter audible; tone gen lands in Music vault + auto-mounts; spectrogram PNG path shown in status (cache fallback expected until png MIME added); grabber FIELD MANUAL opens; taps beep across tabs without double-fires during downloads.
+
+## Open decisions (deferred-zero-bloat)
+
+- `test/` suite — keep absent unless operator opts in; `flutter_test` declared but unused.
+- Major bumps (`^0.6.0` etc.) — stay pinned until dedicated session.
+- Java `1.8→17` — stay shimmed until dedicated Java session.
+- **SDK EDITION track approved (spec only)**: ROADMAP "Phase S0–S4" — dual-flavor future (full = personal w/ yt-dlp; sdk = publishable, Python ripped). Prerequisite order matters: S1 Dart spider port BEFORE S2 flavor split BEFORE S3 ceiling raise. win32/file_picker cap documented as orthogonal to Python removal.
+
+(End of file - total 44 lines)

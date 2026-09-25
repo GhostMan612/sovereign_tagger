@@ -1,0 +1,1 @@
+Drop ggml whisper model here (e.g. ggml-tiny.en.bin from https://huggingface.co/ggerganov/whisper.cpp)

@@ -1,0 +1,141 @@
+// ============================================================
+// As Above, So Below. As Within, So Without.
+// The Future Dictates the Past and the Past is Always Present.
+// ============================================================
+
+package com.sovereigntagger
+
+import android.util.Base64
+import org.jaudiotagger.audio.AudioFileIO
+import org.jaudiotagger.tag.FieldKey
+import org.jaudiotagger.tag.id3.AbstractID3v2Tag
+import org.jaudiotagger.tag.id3.ID3v24Frame
+import org.jaudiotagger.tag.id3.ID3v24Tag
+import org.jaudiotagger.tag.id3.framebody.FrameBodyTXXX
+import org.jaudiotagger.tag.images.ArtworkFactory
+import java.io.File
+
+object Id3Tagger {
+    fun writeTags(filePath: String, metadata: Map<String, String>): Boolean {
+        return try {
+            val audioFile = AudioFileIO.read(File(filePath))
+            val tag = audioFile.tagOrCreateAndSetDefault
+
+            metadata.forEach { (key, value) ->
+                try {
+                    when (key.uppercase()) {
+                        "TITLE" -> if (value.isEmpty()) tag.deleteField(FieldKey.TITLE) else tag.setField(FieldKey.TITLE, value)
+                        "ARTIST" -> if (value.isEmpty()) tag.deleteField(FieldKey.ARTIST) else tag.setField(FieldKey.ARTIST, value)
+                        "ALBUM" -> if (value.isEmpty()) tag.deleteField(FieldKey.ALBUM) else tag.setField(FieldKey.ALBUM, value)
+                        "ALBUM_ARTIST" -> if (value.isEmpty()) tag.deleteField(FieldKey.ALBUM_ARTIST) else tag.setField(FieldKey.ALBUM_ARTIST, value)
+                        "YEAR" -> if (value.isEmpty()) tag.deleteField(FieldKey.YEAR) else tag.setField(FieldKey.YEAR, value)
+                        "GENRE" -> if (value.isEmpty()) tag.deleteField(FieldKey.GENRE) else tag.setField(FieldKey.GENRE, value)
+                        "DISC_NO" -> if (value.isEmpty()) tag.deleteField(FieldKey.DISC_NO) else tag.setField(FieldKey.DISC_NO, value)
+                        "TRACK" -> if (value.isEmpty()) tag.deleteField(FieldKey.TRACK) else tag.setField(FieldKey.TRACK, value)
+                        "COMMENT" -> if (value.isEmpty()) tag.deleteField(FieldKey.COMMENT) else tag.setField(FieldKey.COMMENT, value)
+                        "COMPOSER" -> if (value.isEmpty()) tag.deleteField(FieldKey.COMPOSER) else tag.setField(FieldKey.COMPOSER, value)
+                        "PRODUCER" -> if (value.isEmpty()) tag.deleteField(FieldKey.PRODUCER) else tag.setField(FieldKey.PRODUCER, value)
+                        "LYRICS" -> if (value.isEmpty()) tag.deleteField(FieldKey.LYRICS) else tag.setField(FieldKey.LYRICS, value)
+                        "ENCODER" -> if (value.isEmpty()) tag.deleteField(FieldKey.ENCODER) else tag.setField(FieldKey.ENCODER, value)
+                        "LANGUAGE" -> if (value.isEmpty()) tag.deleteField(FieldKey.LANGUAGE) else tag.setField(FieldKey.LANGUAGE, value)
+                        "REPLAYGAIN_TRACK_GAIN" -> setReplayGainTag(tag, "REPLAYGAIN_TRACK_GAIN", value)
+                        "REPLAYGAIN_TRACK_PEAK" -> setReplayGainTag(tag, "REPLAYGAIN_TRACK_PEAK", value)
+                        "REPLAYGAIN_ALBUM_GAIN" -> setReplayGainTag(tag, "REPLAYGAIN_ALBUM_GAIN", value)
+                        "REPLAYGAIN_ALBUM_PEAK" -> setReplayGainTag(tag, "REPLAYGAIN_ALBUM_PEAK", value)
+                        "ARTWORK_BASE64" -> {
+                            if (value.isEmpty()) {
+                                tag.deleteArtworkField()
+                            } else {
+                                val imageBytes = Base64.decode(value, Base64.DEFAULT)
+                                val artwork = ArtworkFactory.getNew()
+                                artwork.binaryData = imageBytes
+                                artwork.mimeType = "image/jpeg"
+                                tag.deleteArtworkField()
+                                tag.setField(artwork)
+                            }
+                        }
+                    }
+                } catch (e: Exception) {
+                }
+            }
+            audioFile.commit()
+            true
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    fun readTags(filePath: String): Map<String, String> {
+        val tags = mutableMapOf<String, String>()
+        try {
+            val audioFile = AudioFileIO.read(File(filePath))
+            val tag = audioFile.tag ?: return tags
+
+            tags["TITLE"] = tag.getFirst(FieldKey.TITLE)
+            tags["ARTIST"] = tag.getFirst(FieldKey.ARTIST)
+            tags["ALBUM"] = tag.getFirst(FieldKey.ALBUM)
+            tags["ALBUM_ARTIST"] = tag.getFirst(FieldKey.ALBUM_ARTIST)
+            tags["YEAR"] = tag.getFirst(FieldKey.YEAR)
+            tags["GENRE"] = tag.getFirst(FieldKey.GENRE)
+            tags["DISC_NO"] = tag.getFirst(FieldKey.DISC_NO)
+            tags["TRACK"] = tag.getFirst(FieldKey.TRACK)
+            tags["COMMENT"] = tag.getFirst(FieldKey.COMMENT)
+            tags["COMPOSER"] = tag.getFirst(FieldKey.COMPOSER)
+            tags["PRODUCER"] = tag.getFirst(FieldKey.PRODUCER)
+            tags["LYRICS"] = tag.getFirst(FieldKey.LYRICS)
+            tags["ENCODER"] = tag.getFirst(FieldKey.ENCODER)
+            tags["LANGUAGE"] = tag.getFirst(FieldKey.LANGUAGE)
+            
+            val artwork = tag.firstArtwork
+            if (artwork != null && artwork.binaryData != null) {
+                tags["ARTWORK_BASE64"] = Base64.encodeToString(artwork.binaryData, Base64.NO_WRAP)
+            }
+            
+            // Read ReplayGain tags
+            val replayGainFields = listOf("REPLAYGAIN_TRACK_GAIN", "REPLAYGAIN_TRACK_PEAK", "REPLAYGAIN_ALBUM_GAIN", "REPLAYGAIN_ALBUM_PEAK")
+            replayGainFields.forEach { fieldName ->
+                val value = getReplayGainTag(tag, fieldName)
+                if (value.isNotEmpty()) tags[fieldName] = value
+            }
+        } catch (e: Exception) {
+        }
+        return tags
+    }
+
+    private fun setReplayGainTag(tag: org.jaudiotagger.tag.Tag, fieldName: String, value: String) {
+        try {
+            val id3Tag = tag as? AbstractID3v2Tag ?: return
+            if (value.isEmpty()) {
+                val it = id3Tag.getFields("TXXX").iterator()
+                while (it.hasNext()) {
+                    val f = it.next()
+                    try {
+                        val body = (f as? ID3v24Frame)?.body as? FrameBodyTXXX
+                        if (body?.description == fieldName) it.remove()
+                    } catch (_: Exception) {}
+                }
+            } else {
+                val body = FrameBodyTXXX()
+                body.description = fieldName
+                body.text = value
+                val frame = ID3v24Frame("TXXX")
+                frame.body = body
+                id3Tag.setField(frame)
+            }
+        } catch (_: Exception) {}
+    }
+
+    private fun getReplayGainTag(tag: org.jaudiotagger.tag.Tag, fieldName: String): String {
+        try {
+            val id3Tag = tag as? AbstractID3v2Tag ?: return ""
+            val fields = id3Tag.getFields("TXXX")
+            for (f in fields) {
+                try {
+                    val body = (f as? ID3v24Frame)?.body as? FrameBodyTXXX
+                    if (body?.description == fieldName) return body.text ?: ""
+                } catch (_: Exception) {}
+            }
+        } catch (_: Exception) {}
+        return ""
+    }
+}

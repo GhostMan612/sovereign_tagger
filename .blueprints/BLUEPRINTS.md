@@ -1,0 +1,57 @@
+# BLUEPRINTS.md — Design specs & gotcha registry
+> Index of legacy docs + living design specs for v2 work. Gotchas append-only.
+
+## Legacy blueprint archive (pre-existing, preserved)
+| File | What it is |
+|------|-----------|
+| `sovereign_tagger_flutter_blueprints_v1.0.md` / `v2.0.md` / `v2.1.md` | Historical build blueprints of the original app |
+| `sovereign tagger master upgrade blu.txt` | Master upgrade notes (13KB) |
+| `sovereign_tagger full code base.txt` (102KB) | Full source snapshot — DO NOT read whole; probe if needed |
+| `sovereign_tagger build report.txt` | Historical build report |
+| `??? THE MASTER BLUEPRINT PHASE 13.txt` | Phase-13 note from prior arc |
+| `AI Chatbot's Gradle Build Loop.pdf` | Build-loop reference |
+
+---
+
+## SPEC-S1: Splash falling-code animation (Phase 8)
+- `MatrixRainPainter extends CustomPainter`: columns of katakana+hex glyphs falling at varying speeds/alpha trails.
+- Layered UNDER existing `assets/splash-screen-bg.png` (bg darkened as today); rain tinted by `SovereignState.accentColor`.
+- Single `AnimationController` (vsync), ~24fps effective via tick throttling; glyph set randomized per column head; trail via fade rectangles.
+- Boot text/progress UI unchanged on top. Zero new assets. Teardown safe (controller.dispose).
+
+## SPEC-S2: Player overhaul (Phase 4 + 10)
+- Background playback: `audio_service 0.18.19` + `audio_session` with `lib/core/audio_handler.dart` `SovereignAudioHandler extends BaseAudioHandler` wrapping the existing `AudioService.player`. Manifest `AudioService` + `MediaButtonReceiver` (foregroundServiceType=mediaPlayback), handler `syncQueue`/`updateNowPlaying` on every playlist mutation and `_readTags`. `MainActivity` stays `FlutterActivity` (no superclass swap).
+- Modes: shuffle toggles shuffled order list; repeat off/all/one mapped to just_audio LoopMode.
+- Queue ops: "play next" inserts at currentIndex+1 in BOTH playlist + audio source via new AudioService mutators (`moveAfterCurrent` async).
+- Theater LRC panel: `lib/tabs/tab_player.dart` `_LyricsSheet` parse `.lrc` sidecar → timestamped lines → auto-scroll active line; tap line = seek. Reuses lyric parser logic extracted from lyric_sync_screen.
+- Persistence: queue paths + index + position saved to SharedPreferences (debounced); restored on boot behind splash.
+- Gestures: double-tap halves on artwork ±10s (`_DoubleTapSeek`); horizontal drag on artwork = seek scrub preview.
+
+## SPEC-S3: Integrations — Zero-Bloat Decision (Phase 14)
+- Empty `lib/integrations/genius|itunes|musicbrainz|ollama/` were 0-byte scaffolding. **Deleted** — they added no bytes to APK but confused ownership.
+- Enrichment lives centrally in `android/app/src/main/python/sovereign_yt/spider.py` cascade: Genius (lyrics+art) → SoundCloud thumb fallback → iTunes → MusicBrainz. Single Python HTTP path = 0 extra Dart deps, no duplicate `http`/`dio` bloat, consistent with gated `android/data` file ownership (grabber/forge own the files, spider only enriches paths).
+- Ollama (local LLM) deferred: model ≥1-2GB would blow APK and violates near-ZERO bloat. If wanted, run as **remote** Ollama endpoint, still via spider.py, not a Dart integration. Re-create `lib/integrations/` only if you need a Dart-side HTTP client that bypasses Python entirely.
+
+## SPEC-S4: Scorched Earth + On-Board Python Doctor (Phase 15)
+- `android/app/src/main/python/sovereign_yt/updater.py`: `execute_scorched_earth()` still wipes `yt_dlp/` folder and tarball-reinstalls from GitHub. New `update_python_stack()` best-effort `pip install --upgrade mutagen lyricsgenius`; `execute_full_scorched_earth()` composes both (yt-dlp authoritative, deps best-effort offline-safe).
+- `android/app/src/main/python/sovereign_yt/doctor.py`: explicit knowledge base `PATCH_REGISTRY` (youtube_android_blocked / impersonate_removed / 403 throttle / genius 429 / outdated extractor) with signatures, files/lines, and hotfixes. Exposes `diagnose(error_log)` and `get_registry()` — inventories `*.py` payload, probes `yt_dlp` version, snapshots `extractor_args` from `bridge.py`. Surfaced in Settings via `com.sovereign.tagger/ytdlp` channel methods `runDoctor`/`getDoctorRegistry`/`updateFullStack`.
+- Zero-bloat: `doctor.py` is ~4KB, no deps beyond stdlib; it never shells to pip on its own. Hot-patching extractor_args remains manual (edit `bridge.py` via the patch hint) until a future byte-patch writer is added — intentional to avoid self-modifying-code risk on locked Android.
+
+## GOTCHA REGISTRY (append-only; G# referenced from RULES §3)
+- G1: `ffmpeg_kit_extended_flutter` fork exposes both execute() (SYNC, blocks platform thread) and executeAsync(). Never ship sync in UI paths.
+- G2: yt-dlp split downloads return two files under requested_downloads[0].filepath each; composite `"a+b"` ids must be split Python-side BEFORE ydl runs (bridge.py:140) — Flutter merge assumes exactly two payloads.
+- G3: jaudiotagger commits are lossless but throw on unsupported containers (some WAVs); always try/catch and report field-level failures upward.
+- G4: MediaStore export needs ~500ms settle after rename on some devices (forge:342 delay exists for this reason — do not remove without device retest).
+- G5: chaquopy Python cannot shell out to ffmpeg CLI for yt-dlp merges; Flutter-side FFmpegKit owns ALL muxing.
+- G6: fork API surface differs from upstream ffmpeg_kit_flutter — probing is `FFprobeKit.getMediaInformationAsync(path)` → session.getMediaInformation() → `.streams` (List, non-null) with `.type` field (no getType()). No FFmpegKit.getMediaInformation.
+- G7: Facebook muxing failure modes (Phase 2 design): (a) FB often exposes zero `audio only` formats → old merge-picker dead-end; progressive streams usually carry audio so single-format download + probe resolves it; (b) DASH video-only picks slip through raw-rename path with no audio → self-heal chain (probe → companion bestaudio fetch → event-chained merge); (c) container/codec quirks defeat explicit-map copy → 3-rung ladder: explicit maps copy / AAC-remuxed companion / default selection, each verified via ffprobe stream counts. Event chaining hazard: companion 'finished' event may arrive before downloadMedia invokeMethod returns — guard via `_companionPendingVideo == null` check after await.
+- G8: This machine's pub endpoint does not serve just_audio_background beyond 0.0.1-beta.17 (resolver reports "^0.x doesn't match any versions" for all modern lines). beta.17 is incompatible with just_audio 0.9.x platform interface. audio_service 0.18.19 + audio_session 0.1.25 ARE resolvable — implemented as `lib/core/audio_handler.dart` `SovereignAudioHandler` with manifest service/receiver, no MainActivity superclass swap needed.
+- G10: `lib/integrations/` empty scaffolding weighed 0 bytes in APK (dirs not packaged) but confused ownership; canonical enrichment is `spider.py` cascade, not Dart integrations. Delete unless you need a Dart HTTP path.
+- G11: `android/data` gated files: grabber/forge own file ownership via `storage` channel `getTempDirectory` + `addToMediaStore`; integrations must not take ownership, only enrich metadata by path.
+- G12: `doctor.py` must not auto-mutate `bridge.py`/`spider.py` source on disk (Android lock + signature risk); surface patch hints, let operator trigger `execute_full_scorched_earth` instead.
+- G13: jaudiotagger MP3 `commit()` can drop/shift the Xing header → players estimate duration = filesize ÷ first-frame-bitrate (phantom 32kbps/44:12 on a 4:13 track). Every mp3 written via id3 channel after an ffmpeg transcode gets a `probeDurationMs` drift check; >2s drift triggers lossless `-c copy -write_xing 1 -id3v2_version 3` repair (`tab_grabber.dart` audio path).
+- G14: `full+gpl` build (FFmpeg 8.1.2) exposes far more than we call: rubberband (formant-safe pitch), afftdn (FFT denoise), dynaudnorm, acompressor, equalizer/bass/treble, ebur128, atempo, concat demuxer, thumbnail/tile, drawtext/ass, x264/x265/vpx/aom. All driven via plain command strings through `FFmpegExecutor.execute` — zero native rebuild. Verify actual availability on-device via the boot `getRegisteredFilters()` log before adding exotic ops.
+- G15: `atempo` accepts 0.5-2.0 per instance (chain for wider); `rubberband=pitch=X` keeps tempo, `atempo=X` keeps pitch, `asetrate` moves both — exposed as Workbench DSP "MODE" dropdown.
+- G16: Mixtape Join (pipeline) uses concat demuxer `-f concat -safe 0` — requires uniform codec/sample-rate; guarded to PROCESSED `.mp3` items only. Always finish with `-write_xing 1` (G13).
+- G17: Whisper transcripts GATED: no verified `whisper` filter surface in ffmpeg 8.1.2 command-space + operator must bundle model into `assets/models/`. Check boot introspection log first; never ship speculative filter strings.
+- G9: Duration has no isBefore/isAfter helpers in this SDK — use <=/>= comparisons directly.
