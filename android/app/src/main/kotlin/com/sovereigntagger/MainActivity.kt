@@ -193,8 +193,9 @@ class MainActivity: AudioServiceActivity() {
                 }
                 "readTags" -> {
                     val filePath = call.argument<String>("filePath") ?: ""
+                    val skipArtwork = call.argument<Boolean>("skipArtwork") ?: false
                     Thread {
-                        val tags = Id3Tagger.readTags(filePath)
+                        val tags = Id3Tagger.readTags(filePath, skipArtwork)
                         mainHandler.post { result.success(tags) }
                     }.start()
                 }

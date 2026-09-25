@@ -256,9 +256,12 @@ def _pick_release(releases):
 
 
 def _musicbrainz(artist, title):
-    query = f'recording:"{search_form(title)}"'
+    def lucene(text):
+        return search_form(text).replace('\\', ' ').replace('"', ' ').strip()
+
+    query = f'recording:"{lucene(title)}"'
     if artist:
-        query += f' AND artist:"{search_form(artist)}"'
+        query += f' AND artist:"{lucene(artist)}"'
     url = "https://musicbrainz.org/ws/2/recording?fmt=json&limit=8&query=" + urllib.parse.quote(query)
     data = _get_json(url)
     out = []
@@ -282,8 +285,19 @@ def _musicbrainz(artist, title):
                 if tracks:
                     track_no = str(tracks[0].get("number") or "")
         first = (r.get("first-release-date") or "")[:4]
+        rg = (rel or {}).get("release-group") or {}
+        secondary = [t.lower() for t in (rg.get("secondary-types") or [])]
+        disamb = (r.get("disambiguation") or "").lower()
+        penalty = 0.0
+        if "live" in secondary or "live" in disamb:
+            penalty += 0.08
+        if any(t in secondary for t in ("compilation", "soundtrack", "remix", "dj-mix", "mixtape/street")):
+            penalty += 0.04
+        if rel and rel.get("status") not in (None, "Official"):
+            penalty += 0.03
         out.append({
             "source": "musicbrainz",
+            "penalty": penalty,
             "id": r.get("id", ""),
             "title": r.get("title", ""),
             "search_title": r.get("title", ""),
@@ -391,7 +405,7 @@ def scrape_metadata(artist_name, song_title, genius_token="", duration_ms=0, alb
             errors.append(f"{name}: {e}")
 
     for c in candidates:
-        c["score"] = score_candidate(c, artist, title, duration_ms)
+        c["score"] = score_candidate(c, artist, title, duration_ms) - c.get("penalty", 0.0)
         c["score"] += {"itunes": 0.004, "deezer": 0.002}.get(c["source"], 0.0)
     candidates.sort(key=lambda c: c["score"], reverse=True)
 

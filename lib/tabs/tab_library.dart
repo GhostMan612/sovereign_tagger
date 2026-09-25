@@ -186,6 +186,7 @@ class _TabLibraryState extends State<TabLibrary> with AutomaticKeepAliveClientMi
 
   void _onTab() {
     if (SovereignState.currentTab.value == 4 && !_loadedOnce) _scan();
+    if (_detail != null && mounted) setState(() {});
   }
 
   void _scheduleRefresh() {
@@ -731,7 +732,7 @@ class _TabLibraryState extends State<TabLibrary> with AutomaticKeepAliveClientMi
       valueListenable: SovereignState.accentColor,
       builder: (context, themeColor, child) {
         return PopScope(
-          canPop: _detail == null,
+          canPop: _detail == null || SovereignState.currentTab.value != 4,
           onPopInvokedWithResult: (didPop, _) {
             if (!didPop && _detail != null) setState(() => _detail = null);
           },

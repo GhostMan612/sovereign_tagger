@@ -324,7 +324,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
       // Backup persisted queue
       final queueJson = prefs.getString('persist_queue');
       if (queueJson != null) {
-        backup['playlists']['persist_queue'] = jsonDecode(queueJson);
+        final queue = Map<String, dynamic>.from(jsonDecode(queueJson) as Map);
+        final posJson = prefs.getString('persist_queue_pos');
+        if (posJson != null) queue.addAll(Map<String, dynamic>.from(jsonDecode(posJson) as Map));
+        backup['playlists']['persist_queue'] = queue;
       }
       
       final encryptedData = _encrypt(jsonEncode(backup));
@@ -395,7 +398,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
       // Restore playlist
       final playlists = backup['playlists'] as Map<String, dynamic>?;
       if (playlists != null && playlists['persist_queue'] != null) {
-        await prefs.setString('persist_queue', jsonEncode(playlists['persist_queue']));
+        final queue = Map<String, dynamic>.from(playlists['persist_queue'] as Map);
+        await prefs.setString('persist_queue', jsonEncode({'paths': queue['paths'] ?? []}));
+        await prefs.setString('persist_queue_pos', jsonEncode({'index': queue['index'] ?? 0, 'positionMs': queue['positionMs'] ?? 0}));
       }
       
       if (!mounted) return;

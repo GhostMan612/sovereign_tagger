@@ -70,7 +70,7 @@ object Id3Tagger {
         }
     }
 
-    fun readTags(filePath: String): Map<String, String> {
+    fun readTags(filePath: String, skipArtwork: Boolean = false): Map<String, String> {
         val tags = mutableMapOf<String, String>()
         try {
             val audioFile = AudioFileIO.read(File(filePath))
@@ -96,7 +96,7 @@ object Id3Tagger {
             tags["ENCODER"] = first(tag, FieldKey.ENCODER)
             tags["LANGUAGE"] = first(tag, FieldKey.LANGUAGE)
             
-            val artwork = tag.firstArtwork
+            val artwork = if (skipArtwork) null else tag.firstArtwork
             if (artwork != null && artwork.binaryData != null) {
                 tags["ARTWORK_BASE64"] = Base64.encodeToString(artwork.binaryData, Base64.NO_WRAP)
             }

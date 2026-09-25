@@ -18,9 +18,9 @@ class TagIO {
 
   static bool canWrite(String path) => writableExtensions.contains(TitleCleaner.extensionOf(path));
 
-  static Future<Map<String, String>> read(String path) async {
+  static Future<Map<String, String>> read(String path, {bool withArtwork = true}) async {
     try {
-      final Map<Object?, Object?>? raw = await _channel.invokeMethod('readTags', {'filePath': path});
+      final Map<Object?, Object?>? raw = await _channel.invokeMethod('readTags', {'filePath': path, 'skipArtwork': !withArtwork});
       if (raw == null) return {};
       return raw.map((k, v) => MapEntry(k.toString(), v?.toString() ?? ''));
     } catch (_) {
@@ -37,13 +37,21 @@ class TagIO {
     }
   }
 
+  static String _normalized(String key, String value) {
+    final v = value.trim();
+    if (key == 'TRACK' || key == 'DISC_NO') {
+      final n = int.tryParse(v.split('/').first.trim());
+      return n == null ? v : n.toString();
+    }
+    if (key == 'YEAR') return v.length >= 4 ? v.substring(0, 4) : v;
+    return v;
+  }
+
   static List<String> verify(Map<String, String> wanted, Map<String, String> back) {
     final mismatches = <String>[];
     for (final key in const ['TITLE', 'ARTIST', 'ALBUM', 'ALBUM_ARTIST', 'YEAR', 'GENRE', 'TRACK', 'DISC_NO']) {
-      final w = (wanted[key] ?? '').trim();
       if (!wanted.containsKey(key)) continue;
-      final b = (back[key] ?? '').trim();
-      if (w != b) mismatches.add(key);
+      if (_normalized(key, wanted[key] ?? '') != _normalized(key, back[key] ?? '')) mismatches.add(key);
     }
     if ((wanted['ARTWORK_BASE64'] ?? '').isNotEmpty && (back['ARTWORK_BASE64'] ?? '').isEmpty) mismatches.add('ARTWORK');
     if ((wanted['LYRICS'] ?? '').trim().isNotEmpty && (back['LYRICS'] ?? '').trim().isEmpty) mismatches.add('LYRICS');

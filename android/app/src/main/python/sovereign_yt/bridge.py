@@ -221,7 +221,7 @@ def download(url, options_json, job_id, out_dir, progress_callback):
                 "info": _info_block(info_v),
             }))
         else:
-            template = f"{job_id}_%(playlist_index|0)s_%(id)s.%(ext)s" if allow_playlist else f"{job_id}.%(ext)s"
+            template = f"{job_id}_%(playlist_index|0)s_%(id)s.%(ext)s"
             with yt_dlp.YoutubeDL(opts(format_id, template, "single")) as ydl:
                 info = ydl.extract_info(url, download=True)
                 entries = [e for e in (info.get("entries") or []) if e] if (info.get("_type") == "playlist" or "entries" in info) else None

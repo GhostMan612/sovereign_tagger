@@ -565,24 +565,28 @@ class _TabGrabberState extends State<TabGrabber> {
         final ok = await TagIO.write(card.path, card.tags());
         if (!ok) throw Exception("Tag write failed");
       }
-      final temp = await StorageClient.tempDir();
-      final dir = Directory('$temp/export_${DateTime.now().microsecondsSinceEpoch}');
+      final parent = card.path.substring(0, card.path.lastIndexOf('/'));
+      final dir = Directory('$parent/export_${DateTime.now().microsecondsSinceEpoch}');
       dir.createSync(recursive: true);
       final name = TitleCleaner.withExtension(card.fileName.text.trim().isEmpty ? 'Untitled' : card.fileName.text.trim(), card.ext);
       final staged = '${dir.path}/$name';
       SaveResult result;
+      await File(card.path).rename(staged);
       try {
-        await File(card.path).copy(staged);
         result = await StorageClient.exportToLibrary(staged, card.title.text.trim().isEmpty ? name : card.title.text.trim());
-      } finally {
+      } catch (_) {
+        try {
+          await File(staged).rename(card.path);
+        } catch (_) {}
         try {
           dir.deleteSync(recursive: true);
         } catch (_) {}
+        rethrow;
       }
-      await AudioService.replacePathInQueue(card.path, result.path);
       try {
-        if (File(card.path).existsSync()) File(card.path).deleteSync();
+        dir.deleteSync(recursive: true);
       } catch (_) {}
+      await AudioService.replacePathInQueue(card.path, result.path);
       if (!mounted) return;
       if (!silent) TapFeedback.machineConfirm();
       setState(() {

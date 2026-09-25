@@ -79,6 +79,7 @@ class AudioService {
   static final ValueNotifier<double> speedFactor = ValueNotifier<double>(1.0);
   static final ValueNotifier<int> infoRevision = ValueNotifier<int>(0);
   static final Map<String, TrackInfo> _info = {};
+  static final Map<String, Future<TrackInfo>> _infoInFlight = {};
 
   static Timer? sleepTimer;
   static DateTime? _sleepDeadline;
@@ -104,16 +105,20 @@ class AudioService {
     _info[path] = info;
   }
 
-  static Future<TrackInfo> ensureInfo(String path) async {
+  static Future<TrackInfo> ensureInfo(String path) {
     final existing = _info[path];
-    if (existing != null) return existing;
+    if (existing != null) return Future.value(existing);
+    return _infoInFlight.putIfAbsent(path, () => _loadInfo(path).whenComplete(() => _infoInFlight.remove(path)));
+  }
+
+  static Future<TrackInfo> _loadInfo(String path) async {
     final name = path.split('/').last;
     if (_isVideoPath(path)) {
       final info = TrackInfo(title: name.contains('.') ? name.substring(0, name.lastIndexOf('.')) : name);
       _info[path] = info;
       return info;
     }
-    final tags = await TagIO.read(path);
+    final tags = await TagIO.read(path, withArtwork: false);
     final info = TrackInfo(
       title: (tags['TITLE'] ?? '').isNotEmpty ? tags['TITLE']! : (name.contains('.') ? name.substring(0, name.lastIndexOf('.')) : name),
       artist: tags['ARTIST'] ?? '',
@@ -204,7 +209,7 @@ class AudioService {
         }
         if (sleepAtEndOfTrack.value) sleepAtEndOfTrack.value = false;
       }
-      if (!state.playing) _persistQueue();
+      if (!state.playing) _persistPosition();
       _audioHandler?.refreshState();
       _pushWidget();
     });
@@ -234,7 +239,7 @@ class AudioService {
     player.positionStream.listen((pos) {
       if (!player.playing) return;
       final now = DateTime.now();
-      if (now.difference(_lastPersist) > const Duration(seconds: 5)) _persistQueue();
+      if (now.difference(_lastPersist) > const Duration(seconds: 5)) _persistPosition();
       final idx = currentIndex.value;
       if (pos > const Duration(seconds: 30) && idx >= 0 && idx < playlist.value.length) {
         final path = playlist.value[idx].path;
@@ -322,7 +327,7 @@ class AudioService {
       if (_wantPlaying && !player.playing) player.play();
       await _readTags(path, token);
     }
-    _persistQueue();
+    _persistPosition();
     _pushWidget();
   }
 
@@ -531,22 +536,30 @@ class AudioService {
     });
   }
 
-  static Future<void> persistNow() => _persistQueue(force: true);
+  static Future<void> persistNow() => _persistPosition();
 
-  static Future<void> _persistQueue({bool force = false}) async {
+  static int _positionMs() => isVideo.value ? (videoController.value?.value.position.inMilliseconds ?? 0) : player.position.inMilliseconds;
+
+  static Future<void> _persistQueue() async {
     _lastPersist = DateTime.now();
     try {
       final prefs = await SharedPreferences.getInstance();
       if (playlist.value.isEmpty) {
         await prefs.remove('persist_queue');
+        await prefs.remove('persist_queue_pos');
         return;
       }
-      final payload = jsonEncode({
-        'paths': playlist.value.map((f) => f.path).toList(),
-        'index': currentIndex.value,
-        'positionMs': isVideo.value ? (videoController.value?.value.position.inMilliseconds ?? 0) : player.position.inMilliseconds,
-      });
-      await prefs.setString('persist_queue', payload);
+      await prefs.setString('persist_queue', jsonEncode({'paths': playlist.value.map((f) => f.path).toList()}));
+      await _persistPosition();
+    } catch (_) {}
+  }
+
+  static Future<void> _persistPosition() async {
+    _lastPersist = DateTime.now();
+    try {
+      if (playlist.value.isEmpty) return;
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('persist_queue_pos', jsonEncode({'index': currentIndex.value, 'positionMs': _positionMs()}));
     } catch (_) {}
   }
 
@@ -558,8 +571,10 @@ class AudioService {
       final data = jsonDecode(raw);
       final paths = (data['paths'] as List<dynamic>? ?? []).cast<String>();
       if (paths.isEmpty) return false;
+      final posRaw = prefs.getString('persist_queue_pos');
+      final pos = posRaw == null ? data : jsonDecode(posRaw);
       final files = <File>[];
-      var idx = (data['index'] as int?) ?? 0;
+      var idx = (pos['index'] as int?) ?? 0;
       for (var i = 0; i < paths.length; i++) {
         final f = File(paths[i]);
         if (f.existsSync()) {
@@ -570,7 +585,7 @@ class AudioService {
       }
       if (files.isEmpty) return false;
       if (idx < 0 || idx >= files.length) idx = 0;
-      final posMs = (data['positionMs'] as int?) ?? 0;
+      final posMs = (pos['positionMs'] as int?) ?? 0;
       await replacePlaylist(files, startIndex: idx, startPosition: Duration(milliseconds: posMs));
       return true;
     } catch (_) {
@@ -659,6 +674,7 @@ class AudioService {
     _wantPlaying = true;
     final targetIsVideo = _isVideoPath(playlist.value[index].path);
     if (isVideo.value) await videoController.value?.pause();
+    if (targetIsVideo && player.playing) await player.pause();
     hasMedia.value = true;
     try {
       if (index == currentIndex.value && player.currentIndex == index) {
@@ -702,7 +718,7 @@ class AudioService {
       _pushWidget();
     }
     await player.pause();
-    _persistQueue();
+    _persistPosition();
   }
 
   static Future<void> seek(Duration position) async {
@@ -765,7 +781,7 @@ class AudioService {
     await videoController.value?.pause();
     await videoController.value?.seekTo(Duration.zero);
     WakelockPlus.disable();
-    _persistQueue();
+    _persistPosition();
     _pushWidget();
   }
 

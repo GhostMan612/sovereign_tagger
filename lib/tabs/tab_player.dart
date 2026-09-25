@@ -192,7 +192,10 @@ class TheaterScreen extends StatelessWidget {
                                   key: ValueKey('q_${index}_${file.path}'),
                                   direction: DismissDirection.endToStart,
                                   background: Container(color: Colors.redAccent.withValues(alpha: 0.25), alignment: Alignment.centerRight, padding: const EdgeInsets.only(right: 20), child: const Icon(Icons.remove_circle_outline, color: Colors.redAccent)),
-                                  onDismissed: (_) => AudioService.removeFromPlaylist(index),
+                                  confirmDismiss: (_) async {
+                                    await AudioService.removeFromPlaylist(index);
+                                    return false;
+                                  },
                                   child: Material(
                                     color: Colors.transparent,
                                     child: ListTile(
