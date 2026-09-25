@@ -5,6 +5,7 @@
 # The Future Dictates the Past and the Past is Always Present.
 # ============================================================
 
+import importlib
 import os
 import sys
 import shutil
@@ -78,6 +79,14 @@ def execute_scorched_earth():
         keys_to_remove = [k for k in sys.modules if k.startswith('yt_dlp')]
         for k in keys_to_remove:
             del sys.modules[k]
+
+        for name in ("sovereign_yt.bridge", "sovereign_yt.spider"):
+            mod = sys.modules.get(name)
+            if mod is not None:
+                try:
+                    importlib.reload(mod)
+                except Exception:
+                    pass
 
         return json.dumps({
             "status": "success", 
