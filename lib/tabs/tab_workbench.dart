@@ -20,6 +20,7 @@ import '../core/cyber_tap_feedback.dart';
 import '../screens/main_shell.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../widgets/waveform_studio.dart';
+import '../core/whisper_model.dart';
 
 class TabWorkbench extends StatefulWidget {
   const TabWorkbench({super.key});
@@ -515,23 +516,19 @@ class _TabWorkbenchState extends State<TabWorkbench> {
       setState(() { _isProcessing = true; _statusMessage = "Whisper: Locating Model Payload..."; _opProgress = 0.0; });
 
       final tempDir = await _storageChannel.invokeMethod('getTempDirectory');
-      final modelDir = Directory("$tempDir/whisper_model");
-      if (!modelDir.existsSync()) modelDir.createSync(recursive: true);
-      final modelFile = File("${modelDir.path}/ggml-base.en.bin");
-
-      if (!modelFile.existsSync() || modelFile.lengthSync() < 100000000) {
-        setState(() => _statusMessage = "Whisper: Extracting 141MB Model (first run only)...");
-        try {
-          final data = await rootBundle.load('assets/models/ggml-base.en.bin');
-          final sink = modelFile.openWrite();
-          sink.add(data.buffer.asUint8List(data.offsetInBytes, data.lengthInBytes));
-          await sink.flush();
-          await sink.close();
-        } catch (e) {
+      File modelFile;
+      try {
+        modelFile = await WhisperModel.ensure(onProgress: (stage, p) {
           if (!mounted) return;
-          setState(() { _isProcessing = false; _statusMessage = "ERR: Model Extraction Failed: $e\n\nVerify assets/models/ggml-base.en.bin exists and rebuild."; });
-          return;
-        }
+          setState(() {
+            _opProgress = p;
+            _statusMessage = "Whisper: $stage (141MB, first run only) ${(p * 100).toStringAsFixed(0)}%...";
+          });
+        });
+      } catch (e) {
+        if (!mounted) return;
+        setState(() { _isProcessing = false; _statusMessage = "ERR: Whisper Model Unavailable: $e\n\nConnect to the internet and run Transcribe again — the model downloads once (141MB) from huggingface.co."; });
+        return;
       }
 
       final srtPath = "$tempDir/whisper_${DateTime.now().millisecondsSinceEpoch}.srt";
