@@ -71,6 +71,9 @@ class GhostClassifier {
       'auto fetch metadata',
     ],
     'PIPELINE': [
+      'batch tagger',
+      'batch tab',
+      'fix many songs',
       'batch process',
       'ghost partial pristine processed failed',
       'acrcloud identify',

@@ -57,38 +57,38 @@ class _GhostChatOverlayState extends State<GhostChatOverlay> with TickerProvider
 
   final Map<int, List<String>> _tutorials = {
     0: [
-      "You're in GRABBER — the downloader. Tap SEARCH, type a query, pick a format, hit DOWNLOAD.",
-      "EXPORT AS: MP3 320K (default) or SOURCE COPY (webm/opus/m4a passthrough).",
-      "Facebook videos often lack audio — GRABBER auto-heals with bestaudio companion.",
+      "You're in GRABBER. Paste a link, SHARE one into the app from YouTube, or HUNT by artist + title.",
+      "Finished downloads become cards: fix title/artist/file name, then PLAY, SAVE TO MUSIC, SEND TO FORGE or DISCARD. Nothing moves on its own.",
+      "Audio defaults to the original M4A stream (no re-encode). MP3 320K and AS-IS are in the mode menu. Silent Facebook videos auto-heal.",
     ],
     1: [
-      "FORGE is the ID3 editor. Load a file, edit tags, EXPORT preserves container (mp3/flac/wav/m4a/ogg/opus).",
-      "EJECT = cache-only delete with confirm dialog. Your originals are never touched.",
-      "KARAOKE launches isolated player with transport bar + tempo warp. LRC sidecar supported.",
+      "FORGE is the tag editor. Mount any song (or EDIT IN FORGE from Library/Player). Nothing touches the file until SAVE.",
+      "SEARCH METADATA / IDENTIFY show a review sheet: tick what to change, then APPLY. SAVE & FIX ORIGINAL rewrites the song in place.",
+      "PLAY IN PLAYER previews the song. FIND pulls lyrics, SYNC stamps karaoke timings that get embedded on save.",
     ],
     2: [
-      "PIPELINE batch processes: GHOST → PARTIAL (ACR) → PRISTINE (Genius) → PROCESSED.",
-      "CANCEL halts the batch. FAILED items can RETRY (re-buckets to GHOST/PARTIAL).",
-      "MIXTAPE JOIN: lossless concat of PROCESSED mp3s → single file in Music.",
+      "BATCH fixes many songs at once. Load FROM LIBRARY, then EXECUTE. Android asks once for permission to modify them.",
+      "Confident matches are fixed in place. Unsure ones land in REVIEW — tap one to finish it in the FORGE.",
+      "Long-press a track to re-identify it from scratch. MIXTAPE JOIN glues PROCESSED mp3s losslessly.",
     ],
     3: [
       "WORKBENCH DSP: 15-band EQ (AutoEq), LUFS -14, Whisper transcribe, PCM LOSSLESS 48k/16-bit WAV.",
       "Pitch modes: VARISPEED (pitch+tempo), RUBBERBAND (pitch only), ATEMPO (tempo only).",
-      "REPLAYGAIN scan writes TXXX tags. The tune icon up top opens EQ PRESETS.",
+      "REPLAYGAIN scan writes tags the PLAYER uses to even out loudness.",
     ],
     4: [
-      "LIBRARY: Browse MediaStore by ALBUM/ARTIST/FOLDER. Search filters in real-time.",
-      "Tap any track → replaces queue, switches to PLAYER tab.",
-      "Artwork decoded from base64 tags. Long-press for queue actions.",
+      "LIBRARY: every song on the phone. SONGS, ALBUMS, ARTISTS, FOLDERS, PLAYLISTS and NEW. Search filters live.",
+      "Tap a song to play from there. PLAY ALL / SHUFFLE on any list. Long-press for play next, queue, favorite, playlist, FORGE.",
+      "Favorites and Recently Played live under PLAYLISTS.",
     ],
     5: [
-      "PLAYER: Mini-player + theater mode. Pinch-zoom artwork (1→3x). Double-tap = ±10s seek.",
-      "Speed 0.5x–2x, sleep timer, shuffle/repeat. Queue persists across restarts.",
-      "Merge icon opens PLAYBACK ENGINE (crossfade/gapless). Tune icon opens 15-BAND EQ PRESETS.",
+      "PLAYER: tap the mini-player for full screen. Pinch-zoom artwork, double-tap to seek ±10s, swipe to skip.",
+      "Queue: drag to reorder, swipe to remove, save as playlist. Lyrics button shows embedded karaoke lyrics or fetches them.",
+      "Tune icon = EQUALIZER (heard live). Merge icon = PLAYBACK ENGINE (fades + ReplayGain).",
     ],
     6: [
       "SETTINGS: Genius/ACR keys, color picker, FFmpeg probe, cache purge, backup/restore.",
-      "Playback lives on the PLAYER tab now — crossfade/gapless/EQ presets live there.",
+      "Keys are optional now: metadata search and lyrics work without Genius, ACR is only for fingerprinting.",
       "Ghost Tutorial: reduce-motion, auto-expand, visibility toggle, reset first-launch.",
     ],
   };
@@ -236,7 +236,7 @@ class _GhostChatOverlayState extends State<GhostChatOverlay> with TickerProvider
     }
     if (lower.contains('acr key') || lower.contains('acrcloud key') || lower.contains('fingerprint key') || lower.contains('acr api')) {
       await widget.ghostController.glitchLaugh();
-      await _typewriterSay("ACRCLOUD RITUAL: 1) Say 'OPEN ACR' — I launch the console. 2) Free account → Audio & Video Recognition → Create Project → Recorded Audio → ACRCloud Music bucket. 3) Copy HOST + ACCESS KEY + ACCESS SECRET. 4) SETTINGS > ACRCLOUD > paste all three > WRITE TO KERNEL. Without it: Pipeline identification is blind.", isGhost: true);
+      await _typewriterSay("ACRCLOUD RITUAL: 1) Say 'OPEN ACR' — I launch the console. 2) Free account → Audio & Video Recognition → Create Project → Recorded Audio → ACRCloud Music bucket. 3) Copy HOST + ACCESS KEY + ACCESS SECRET. 4) SETTINGS > ACRCLOUD > paste all three > WRITE TO KERNEL. Without it, fingerprinting is off — BATCH falls back to file names.", isGhost: true);
       _addSuggestionsForTab(SovereignState.currentTab.value);
       return;
     }
@@ -260,7 +260,7 @@ class _GhostChatOverlayState extends State<GhostChatOverlay> with TickerProvider
     } else if (lower.contains('setting') || lower.contains('color') || lower.contains('backup') || lower.contains('ghost')) {
       response = await _getContextualReply(6);
     } else if (lower.contains('help') || lower.contains('what') || lower.contains('how')) {
-      response = "I'm your ghost in the machine. Ask me about GRABBER, FORGE, PIPELINE, WORKBENCH, LIBRARY, PLAYER, or SETTINGS. Or just tap a suggestion chip below.";
+      response = "I'm your ghost in the machine. Ask me about GRABBER, FORGE, BATCH, WORKBENCH, LIBRARY, PLAYER, or SETTINGS. Or just tap a suggestion chip below.";
     } else {
       response = "Signal unclear. Try: 'how do I download', 'what is forge', 'replaygain scan', 'crossfade 5s', or tap a chip below.";
     }
