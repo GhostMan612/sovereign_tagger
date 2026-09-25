@@ -1,0 +1,57 @@
+name: sovereign_tagger
+description: "The Sovereign Mantle unified media engine."
+publish_to: "none"
+version: 1.0.0+1
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+    
+  path_provider: ^2.1.2
+  path: ^1.8.3
+
+  ffmpeg_kit_extended_flutter: ^0.5.13
+  file_picker: ^9.0.0
+  shared_preferences: ^2.2.3
+  just_audio: ^0.9.36
+  audio_service: ^0.18.19
+  audio_session: ^0.1.25
+  permission_handler: ^11.3.1
+  video_player: ^2.14.0
+  audio_waveforms: ^1.1.0
+  flutter_colorpicker: ^1.1.0
+  wakelock_plus: ^1.5.2
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^3.0.0
+  flutter_launcher_icons: ^0.13.1
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/
+    - assets/models/
+  fonts:
+    - family: ShareTechMono
+      fonts:
+        - asset: assets/ShareTechMono-Regular.ttf
+    - family: VT323
+      fonts:
+        - asset: assets/VT323-Regular.ttf
+
+flutter_launcher_icons:
+  android: true
+  ios: false
+  image_path: "assets/app-icon.png"
+  min_sdk_android: 26
+  adaptive_icon_background: "#000000"
+  adaptive_icon_foreground: "assets/app-icon.png"
+
+ffmpeg_kit_extended_config:
+  type: "full"
+  gpl: true

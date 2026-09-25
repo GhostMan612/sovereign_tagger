@@ -1,0 +1,100 @@
+// build.gradle
+
+// ============================================================
+// As Above, So Below. As Within, So Without.
+// The Future Dictates the Past and the Past is Always Present.
+// ============================================================
+
+plugins {
+    id "com.android.application"
+    id "kotlin-android"
+    id "dev.flutter.flutter-gradle-plugin"
+    id "com.chaquo.python"
+}
+
+def localProperties = new Properties()
+def localPropertiesFile = rootProject.file("local.properties")
+if (localPropertiesFile.exists()) {
+    localPropertiesFile.withReader("UTF-8") { reader ->
+        localProperties.load(reader)
+    }
+}
+
+def flutterVersionCode = localProperties.getProperty("flutter.versionCode") ?: "1"
+def flutterVersionName = localProperties.getProperty("flutter.versionName") ?: "1.0"
+
+android {
+    namespace = "com.sovereigntagger"
+    
+    compileSdk = 36
+    ndkVersion = flutter.ndkVersion
+
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_1_8
+        targetCompatibility = JavaVersion.VERSION_1_8
+    }
+
+    kotlinOptions {
+        jvmTarget = "1.8"
+    }
+
+    defaultConfig {
+        applicationId = "com.sovereigntagger"
+        minSdk = 26
+        targetSdk = flutter.targetSdkVersion
+        versionCode = flutterVersionCode.toInteger()
+        versionName = flutterVersionName
+
+        ndk {
+            // 64-bit only drops armeabi-v7a ~30% APK bloat; minSdk 26 = 99% of active devices 64-bit. Re-add "armeabi-v7a" only if Moto G 32-bit support required.
+            abiFilters "arm64-v8a", "x86_64"
+        }
+
+        python {
+            // Chaquopy LTS is 3.11; 3.14 is bleeding edge and will fail if chaquopy plugin <15.x. If Gradle sync fails with "Python 3.14 not found", change to "3.11".
+            version "3.14"
+            pip {
+                install "yt-dlp"
+                install "mutagen"
+                install "lyricsgenius"
+            }
+        }
+    }
+
+    signingConfigs {
+        release {
+            def keystorePath = System.getenv("SOVEREIGN_KEYSTORE") ?: localProperties.getProperty("sovereign.keystore")
+            if (keystorePath != null && file(keystorePath).exists()) {
+                storeFile file(keystorePath)
+                storePassword System.getenv("SOVEREIGN_STORE_PASSWORD") ?: localProperties.getProperty("sovereign.storePassword") ?: ""
+                keyAlias System.getenv("SOVEREIGN_KEY_ALIAS") ?: localProperties.getProperty("sovereign.keyAlias") ?: ""
+                keyPassword System.getenv("SOVEREIGN_KEY_PASSWORD") ?: localProperties.getProperty("sovereign.keyPassword") ?: ""
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            if (signingConfigs.release.storeFile != null && signingConfigs.release.storeFile.exists()) {
+                signingConfig = signingConfigs.release
+            } else {
+                signingConfig = signingConfigs.debug
+            }
+        }
+    }
+
+    applicationVariants.all { variant ->
+        variant.outputs.all { output ->
+            outputFileName = "SovereignTagger.apk"
+        }
+    }
+}
+
+flutter {
+    source = "../.."
+}
+
+dependencies {
+    implementation fileTree(dir: "${project.projectDir}/libs", include: ['*.jar'])
+    implementation 'net.jthink:jaudiotagger:3.0.1'
+}

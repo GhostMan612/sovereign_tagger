@@ -1,0 +1,9 @@
+Side-quest debrief — how the Recovery Coach works 🧠
+Hand this to Claude Code:
+
+Layer	File	What it is
+Brain (default)	lib/services/recovery_coach_service.dart	Zero-ML scripted engine: crisis keyword list → 10 intents matched by token scoring → template replies with action buttons. No model, no network, works on 1GB RAM devices
+Classifier (optional)	lib/services/coach_tflite_intent_service.dart + tools/train_coach_intent.py	14–24KB INT8 TFLite model: embedding-bag → 64-unit dense → softmax, trained in 60s on ~600 synthetic phrases (Python 3.12 + tensorflow-cpu via uv venv — TF has no 3.14 wheels). Dart side loads vocab, tokenizes identically to trainer, feeds float IDs, softmaxes. Below-confidence → keyword floor
+Safety order (non-negotiable)	chatbot_screen.dart	Guardrail regex → crisis keywords → model → keywords → "unknown" redirect. The model can only improve replies; it can never suppress a crisis path
+The trick for Sovereign Mantle	—	For an OS-scale tutorial agent: same pattern scales — scripted intents for "how do I X" + tiny classifier for routing + your existing docs as the knowledge pack. No LLM needed until you want one, and then GGUF-on-device is the optional layer (already scaffolded in the checklist)
+The whole coach is ~700 lines of Dart + a 60-second Python training script. That's the whole magic.
