@@ -1,8 +1,0 @@
-# Only runtime bloat stays out. The doctrine and the tool manifest are TRACKED.
-node_modules/
-
-# NOTE (2026-09-30): this file previously ignored package.json, package-lock.json,
-# bun.lock, and itself. Combined with the root .gitignore NOT ignoring
-# .opencode/, the entire 11-agent workflow was untracked - the rulebook had no
-# version control and no clone ever received it. The plugin pin is now tracked
-# so the toolchain is reproducible.

@@ -47,29 +47,3 @@ app.*.map.json
 /local.properties
 /android/build/
 assets/models/*.bin
-
-# ─── Agent workflow doctrine — TRACKED (added 2026-09-30) ──────────────────
-# The 11 agent definitions + 3 slash commands ARE the workflow. They were
-# untracked, so the entire rulebook was one `rm` away from being lost and no
-# clone ever received it. Commit the doctrine; ignore only runtime bloat.
-# .opencode/node_modules/ is already ignored by .opencode/.gitignore.
-
-# ─── Build output / binaries that must never be committed ───────────────────
-# A 9.5 MB screen recording (20260803_110842.mp4) sat in the repo root with NO
-# ignore rule, held back only by the prose rule "never `git add .`". Ignore it
-# mechanically so one careless add cannot commit it permanently.
-*.mp4
-*.mov
-*.apk
-*.aab
-*.keystore
-*.jks
-Screenshot_*.png
-screenshot_*.png
-
-# Untracked platform scaffolding — this is an Android-only app (AGENTS.md).
-# Nothing here should ever be committed.
-/windows/
-/.metadata
-/devtools_options.yaml
-
