@@ -13,20 +13,55 @@
 
 1. `.blueprints/RULES.md` (canonical law) → 2. `.blueprints/SESSION_HANDOFF.md` (deltas + next actions; its top **DOCUMENT MAP** table hooks every doc) → 3. `.blueprints/CURRENT_STATE.md` + `ROADMAP.md` → 4. `BLUEPRINTS.md`/`ARCHITECTURE.md` as needed.
 - Session end: update `SESSION_HANDOFF.md` + tick `ROADMAP.md` + refresh `CURRENT_STATE.md`.
-- `.blueprints/` is untracked — do not add it to git.
+- `.blueprints/` **is tracked** (RULES / SESSION_HANDOFF / CURRENT_STATE / ROADMAP / ARCHITECTURE / BLUEPRINTS). Docs previously claimed it was untracked; that was false and it is now recorded accurately. Stage by explicit path like any other file.
 - Stage by explicit path only (`git add lib/tabs/tab_foo.dart`). `git add .` / `git add -A` forbidden. No `force-push` without ask.
+
+## ⛔ THE SHELL GATE — read before you touch anything
+
+> **During a plan, the shell must not be called at all.** Not once. Not "just to
+> check one thing". The plan is not finished, so there is nothing to verify *for*.
+> Verification is an **end-of-plan** activity. Calling it early makes the work
+> slower and produces stale signal you must re-derive.
+>
+> | You want to… | Use | NEVER |
+> |---|---|---|
+> | see a file / line numbers / a value | `read` | `type`, `cat`, `Get-Content`, `head` |
+> | find where a symbol lives | `grep` | `Select-String`, `rg`, `findstr` |
+> | find a file by name | `glob` | `Get-ChildItem`, `ls`, `dir` |
+> | change text | `edit` | `Set-Content`, `sed -i`, `Out-File` |
+> | create a file | `write` | `New-Item`, heredoc |
+> | **does it compile? tests pass?** | **NOTHING — queue it** | the shell |
+> | **`git status` / `diff` / `commit`** | **NOTHING — queue it** | the shell |
+> | **device / smoke / screenshot** | **NOTHING — queue it** | the shell |
+>
+> **Three named traps:** (1) "let me just check it compiles" — 20–90s every time,
+> and the analyzer is blind to every bug class this repo actually has; (2) "one
+> quick git status"; (3) "one probe to see what's going on".
+>
+> **Correct shape of a plan:** `read → edit → read → edit …` for the whole phase,
+> then **one** shell block: `analyze --no-pub`, mojibake signature grep, shader
+> compile if applicable, commit.
+>
+> **If this feels like it is costing correctness, report a blocked item and wait.**
+> Full text: `.blueprints/RULES.md` §1A.0.
+>
+> Machine-enforced: agent frontmatter `bash:` blocks `deny` the read/search/edit
+> commands. A denial is a refused call, not a warning.
 
 ## Commands
 
+> ⛔ **None of these may be run during a plan.** They are the end-of-plan batch.
+> See the shell gate above.
+
 ```powershell
 C:\android\flutter\bin\flutter.bat pub get    # SDK lives in C:\android\flutter — NOT C:\src. Bare `flutter` may not resolve; always use this path. Everything maxed except file_picker 9 / wakelock_plus 1.5.2 (win32 pair) and permission_handler 12 (compileSdk 37)
-C:\android\flutter\bin\flutter.bat analyze --no-pub  # expect "No issues found!"
+C:\android\flutter\bin\flutter.bat analyze --no-pub  # expect "No issues found!" — END OF PLAN ONLY
 # flutter build apk --release  — DO NOT RUN HERE. Device-dependent, Android Studio does Moto G install.
 ```
 
-- Project slash commands (`.opencode/commands/*.md`): `/analyze` (filtered analyze gate), `/probe <path>` (python line-count preview, no full read), `/smoke` (device matrix checklist, asks before build).
-- Filter all terminal output; pipe for failures only. Do not ingest raw JSON / full logs.
-- Probe large files with a short Python script, not `cat`/`read` of the whole file.
+- Project slash commands (`.opencode/commands/*.md`): `/analyze` (filtered analyze gate), `/probe <path>` (python line-count preview, no full read), `/smoke` (device matrix checklist, asks before build). **All three are end-of-plan tools.**
+- Filter all terminal output; ingest failures only. Do not ingest raw JSON / full logs.
+- Probe large files with a short **read-only** Python script, never `cat`/`read` of the whole file.
 
 ## Architecture (not obvious from filenames)
 
