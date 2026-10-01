@@ -49,9 +49,6 @@ permission:
     "adb*uninstall*": deny
     "adb*root*": deny
     "adb*push*": deny
-    "git*add*-A*": deny
-    "git*add*--all*": deny
-    "git*push*--force*": deny
     # End-of-plan ONLY. TIMING is governed by §1A.0 — once per phase, never
     # after an individual edit, and never "just to check".
     "*flutter.bat analyze*": allow
@@ -65,6 +62,16 @@ permission:
     "git add *": ask
     "git commit*": ask
     "git push*": ask
+    # ⛔ NARROW DENIES MUST BE LAST — the engine is LAST-MATCH-WINS. These three
+    # used to sit up in the build-boundary block, where the broad "git add *" /
+    # "git push*" asks below re-matched them and silently downgraded deny to a
+    # prompt: `git add -A` and `git push --force` were ASKED, never blocked.
+    # Ordering IS the mechanism — being last is what makes them bind.
+    "git add .*": deny
+    "git add *-A*": deny
+    "git add *--all*": deny
+    "git push*--force*": deny
+    "git push -f*": deny
 ---
 
 # Sovereign Deps Agent
@@ -101,6 +108,7 @@ Almost everything is at latest. **Two walls remain, both verified by the resolve
 - No `just_audio_background` (Beta unresolvable on this mirror) — `audio_service` handler is already wired.
 
 ## Verification
+Steps 1–2 are the shell and are **END OF PLAN ONLY** (§1A.0) — one run per phase, never after an individual edit, never "just to check". Fix everything you can see with `read`/`grep`/`edit` first, then gate once.
 1. `C:\android\flutter\bin\flutter.bat pub get` → resolved, no version-solving failure
 2. `C:\android\flutter\bin\flutter.bat analyze --no-pub` → "No issues found!"
 3. Grep every touched call site by name, confirm migrated semantics

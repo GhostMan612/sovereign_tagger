@@ -20,24 +20,33 @@ Executable files (`pubspec.yaml`, `android/app/build.gradle`) beat prose. Never 
 
 ## Verification
 
-- The gate: `flutter analyze --no-pub` must print `No issues found!`.
+> ⛔ **THE SHELL GATE (RULES.md §1A.0).** During a plan, the shell is not called at
+> all — not once, not "just to check it compiles". Use `read`/`grep`/`glob`/
+> `edit`/`write`. Verification is an **end-of-plan** activity: fix everything you
+> can see first, then run the gate once. If a plan cannot be completed without
+> mid-flight verification, report the blocked item and wait.
+> Full text: `.blueprints/RULES.md` §1A.0.
+
+- The end-of-plan gate: `flutter analyze --no-pub` must print `No issues found!`.
   ```bash
   flutter analyze --no-pub 2>&1 | tail -3
   flutter analyze --no-pub 2>&1 | grep -E "error •|warning •" | head -20
   ```
+  Once per phase. There is no "targeted check while developing" — §1A.0 explains
+  why the analyzer catches none of the bugs this repo actually ships.
 - There is no `test/` suite and no test runner script. Don't invent one.
 - Never run `flutter build apk` here. The operator builds and installs on their device through Android Studio. Anything that needs a device goes on the smoke list under "Next actions" in SESSION_HANDOFF.
 
 ## Editing
 
-- **PowerShell mojibake ban (RULES §3.1):** never edit source through PowerShell text pipelines (`Get-Content`/`-replace`/`Set-Content`, `Out-File`, `Add-Content`). PS 5.1 double-encodes UTF-8 (`—` → `â€"`) and silently swaps letters (`setState` → `setYtate`). Use the Read/Edit/Write tools. If a bulk transform is unavoidable, script it in Python with `encoding='utf-8'` on both read and write. Then run analyze and grep the changed files for `â€|Ã|Â`.
+- **PowerShell mojibake ban (RULES §3.1):** never edit source through PowerShell text pipelines (`Get-Content`/`-replace`/`Set-Content`, `Out-File`, `Add-Content`). PS 5.1 double-encodes UTF-8 (`—` → `â€"`) and silently swaps letters (`setState` → `setYtate`). Use the Read/Edit/Write tools. If a bulk transform is unavoidable, script it in Python with `encoding='utf-8'` on both read and write. At the end of the phase, run analyze once and grep the changed files for `â€|Ã|Â`.
 - **No code comments** except the Genesis header that core files already carry (RULES §2).
 - Obey the technical laws in RULES §3 and the `AGENTS.md` laws table: async FFmpeg only, tag writes through jaudiotagger, a `mounted` check after every `await`, and queue changes only through the `AudioService` mutators.
 
 ## Context discipline
 
 - Filter CLI output down to failures. Never read passing noise, full logs or raw JSON into context.
-- Run targeted checks on what you changed, and save the full gate for when a change is ready to commit.
+- There are no mid-plan checks. Resolve everything visible with `read`/`grep`/`edit`, then run the one gate at the end of the phase (§1A.0).
 - Probe large files with short scripts or filtered searches. Don't read them whole.
 
 ## Session end
