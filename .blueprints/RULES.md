@@ -25,7 +25,12 @@ C:\sovereign_mantle
 ### 1.3 Git discipline
 - **Stage by explicit path only.** `git add -A` / `git add .` are FORBIDDEN — they pull in unrelated tagger work.
 - Commits happen as part of an approved session workflow; never force-push or delete branches unless explicitly asked.
-- `.blueprints\` is intentionally untracked/local-only — do not "fix" this unless asked.
+- `.blueprints\` **IS tracked in git** (7 files: RULES, SESSION_HANDOFF, CURRENT_STATE,
+  ROADMAP, ARCHITECTURE, BLUEPRINTS). This line previously said "intentionally
+  untracked — do not fix this unless asked", which was **false**: the files were
+  committed, and the false note told every future session (and every auditor) to
+  leave the contradiction standing. It is now documented accurately. Treat these as
+  committed working docs and stage them by explicit path like any other file.
 
 ### 1.4 Nothing outside the project without approval
 Do not install software, modify system settings, or write outside `C:\sovereign_tagger` / approved tool homes without asking first.
@@ -34,11 +39,80 @@ Do not install software, modify system settings, or write outside `C:\sovereign_
 
 ## 1A. CONTEXT & OUTPUT DISCIPLINE
 
-- Filter all terminal output; pipe for failures only (`| Select-String "error|fail"`), never ingest passing noise.
-- No massive file reads — probe large files/logs/data with short scripts or filtered searches instead.
-- Targeted verification during development (`flutter analyze --no-pub` filtered); full builds reserved for staged-phase verification.
-- Spawn subagents for deep exploration when available; return summaries, not raw dumps.
+### 1A.0 — ⛔ THE SHELL GATE. Read before you touch anything.
+
+Added 2026-09-30 after a full audit found this repo had **no shell-discipline rule
+at all**, and — worse — that §1A.4 below was *instructing* the agent to run
+`flutter analyze` **during development**. The problem was never discipline. It was
+that the documentation said the wrong thing, so an agent following it faithfully
+shelled out mid-plan every few minutes.
+
+**The rule, and it is a hard gate:**
+
+> **During a plan, the shell must not be called at all.** Not once. Not "just to
+> check one thing". The plan is not finished, so there is nothing to verify *for*.
+> Verification is an **end-of-plan** activity. Calling it early does not make the
+> work safer — it makes it slower, and it produces **stale signal** that you then
+> have to re-derive when the plan actually ends.
+
+**Route every intent to a tool. There is no judgment call here:**
+
+| You want to… | Use | NEVER |
+|---|---|---|
+| See a file, a block, line numbers, a value | `read` | `type`, `cat`, `Get-Content`, `head` |
+| Find where a symbol is defined or used | `grep` | `Select-String`, `rg`, `grep` |
+| Find a file by name | `glob` | `Get-ChildItem`, `ls`, `dir` |
+| Change text in a file | `edit` | `Set-Content`, `sed -i`, `Out-File`, `>>` |
+| Create a file | `write` | `New-Item`, heredoc |
+| Audit the repo for a pattern | `grep` + subagents | shell loops |
+| Check whether a path exists | `glob` / just `read` it | `Test-Path` |
+| **Does it compile?** | **NOTHING — queue it** | the shell |
+| **Do tests pass?** | **NOTHING — queue it** | the shell |
+| **`git status` / `diff` / `commit`** | **NOTHING — queue it** | the shell |
+| **Device / smoke / screenshot** | **NOTHING — queue it** | the shell |
+
+**The three traps, named — because all three happened here:**
+
+1. **"Let me just check it compiles."** `flutter analyze` costs 20–90s every time
+   and is blind to every bug class this repo actually has. Every law in §3 below
+   (FFmpeg map arguments, audio-queue locking, tab-wrapper identity) is invisible
+   to the analyzer, and each has already shipped a bug. It has caught none of them.
+2. **"One quick `git status`."** Does not change the next edit. Batch it.
+3. **"One probe to see what's going on."** Every probe is verification. Queue it.
+
+**Batching is the entire point.** A correct plan here is:
+`read → edit → read → edit … for the whole phase`, then **one** shell block:
+`analyze --no-pub`, the mojibake signature grep, the shader compile if shaders
+changed, then the commit. That is the entire allowed shell surface.
+
+**The escape hatch, so the rule can never deadlock you:**
+> If this feels like it is costing correctness — a plan that genuinely cannot be
+> completed without mid-flight verification — **that is the signal to report a
+> blocked item and wait, not to run the command.**
+
+**Machine-enforced, not just prose:** the `.opencode/agents/*.md` frontmatter
+`permission.bash` rules `deny` the read/search/write commands above and `ask`
+on anything unclassified. A denial is a *refused call*, not a warning that
+scrolls past. Prose without a deny is a suggestion.
+
+> **Schema trap (G34).** Pattern rules live under **`permission:`**, never under
+> `tools:`. `tools` is booleans-only (`additionalProperties: {type: boolean}`)
+> and marked `@deprecated Use 'permission' field instead`. Putting
+> `{pattern: deny}` under `tools.bash` is malformed — it does not deny anything,
+> it silently fails to configure. **Within a `permission` object, insertion
+> order decides: the LAST matching rule wins**, so broad rules go first
+> (`"*": ask`) and narrow ones last.
+
+### 1A.4 — Output discipline (CHANGED 2026-09-30)
+
+- Filter all terminal output; ingest failures only, never passing noise.
+- No massive file reads — probe large files with a short **read-only** script.
+- Spawn subagents for deep exploration; return summaries, not raw dumps.
 - Proactively compact context after each verified phase.
+- ~~Targeted verification during development~~ — **REMOVED, it was the cause of
+  the mid-plan shell traffic.** Verification now happens **once, at the end of a
+  phase**, per §1A.0. There is no "quick check while developing" and there never
+  should have been.
 
 ---
 
