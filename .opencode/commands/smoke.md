@@ -11,6 +11,6 @@ Run the Sovereign Tagger smoke gate (Phase 9) as a checklist, not an automatic l
    - Pipeline: batch cancel + per-item FAILED retry
    - Workbench: loudnorm two-pass + fades/mono/silence round-trips, sample-rate/bit-depth
    - Player: sleep timer, speed, LRC lyrics auto-scroll, queue persist after restart, double-tap ±10s
-   - Splash: matrix rain perf (60fps) + AmbientBackdrop not janking on tab swipe
+   - Splash: matrix rain perf (60fps) + `CyberBackdrop` shader not janking on tab swipe (and the `AmbientBackdrop` fallback path still looks right on a device that can't load the shader)
 3. Only if the user explicitly confirms, run `flutter build apk --release` and tail the last 20 lines. Otherwise stop after the checklist.
 4. Never run the build without explicit user go-ahead — it is device-dependent and slow.

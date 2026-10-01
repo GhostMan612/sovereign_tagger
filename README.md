@@ -64,7 +64,8 @@ This application operates completely outside the walled gardens of standard app 
 
 ### 10. **Visuals** — Code-Drawn Cyberpunk
 - `MatrixRain` splash (code-drawn katakana/hex, single `TextPainter` reuse)
-- Per-tab `AmbientBackdrop` pulsing grid (`BackdropVariant` grabber vertical, forge slow, pipeline horizontal, workbench mixed) + electric arcs + traveling pulse comets
+- Per-tab GPU `CyberBackdrop` (`shaders/backdrop.frag`, 30 fps, paused in background) — accent nebula + synthwave grid floor, with a per-tab layer: Grabber data streams, Forge embers, Batch scan bands, Workbench waveform. Falls back to the `AmbientBackdrop` painter (pulsing grid + electric arcs + traveling pulse comets) if a device can't load the shader
+- `AnimatedTabStack` (fade/slide, tab state + typed text preserved, hidden tabs' tickers paused), `CyberNavBar` (spring pill, icon pop, whoosh), `CyberPageTransitionsBuilder` on every route, Hero cover-art mini-player → player
 - **Reduce Motion (Global)**: Disables all glitch/wobble/scanlines when enabled
 
 ### 11. **Cyberpunk Tap Feedback** — Audio + Visual
@@ -108,7 +109,7 @@ Click **"WRITE TO KERNEL"**. Use **Export** button to generate a `.bin` backup (
 ## 🎨 Assets & Animation
 
 - **Assets are compile-time:** declared in `pubspec.yaml:34` `assets: - assets/` (`splash-screen-bg.png`, `ShareTechMono`/`VT323`). No runtime `File('assets/...')` writes — generated media goes via `getTempDirectory` + `MediaStore`.
-- **Size:** `ffmpeg_kit full+gpl` is ~40MB/ABI (`arm64-v8a,x86_64` only). Prefer code-drawn (`CustomPainter`/`Shader`/`Lottie` ~20KB `json`) over raster video — `MatrixRain` + `AmbientBackdrop` are code-drawn.
+- **Size:** `ffmpeg_kit full+gpl` is ~40MB/ABI (`arm64-v8a,x86_64` only). Prefer code-drawn (`CustomPainter`/`Shader`/`Lottie` ~20KB `json`) over raster video — `MatrixRain`, `AmbientBackdrop` and the `backdrop.frag` shader are all code-drawn (the shader is a few KB of GLSL, no texture).
 - **Tap sounds:** No sound assets — `lib/core/sfx_synth.dart` synthesizes the bank at first launch (~0.2 s) and caches the WAVs.
 - **Per-tab dramatics:** `CyberBackdrop` runs `shaders/backdrop.frag` on the GPU (30 fps, own `RepaintBoundary`, paused in background): accent nebula + synthwave grid floor, plus a per-tab layer — Grabber data streams, Forge embers, Batch scan bands, Workbench waveform. Falls back to the old `AmbientBackdrop` painter if a device can't load the shader.
 - **Motion:** `AnimatedTabStack` slides/fades tabs (state kept, hidden tabs' tickers paused), `CyberNavBar` springs a glowing pill between tabs (whoosh SFX), `CyberPageTransitionsBuilder` rises pages in behind an accent scanline sweep, and cover art flies from the mini-player into the full player (Hero).
@@ -167,36 +168,58 @@ Click **"WRITE TO KERNEL"**. Use **Export** button to generate a `.bin` backup (
 ## 📦 Project Structure
 
 ```
-lib/                                # ~10.3k LOC, 23 files
+lib/                                # 44 files (LOC intentionally not asserted — it drifts; see CURRENT_STATE.md)
 ├── main.dart                      # Entry: accent_color → Splash → MainShell
 ├── core/
-│   ├── audio_handler.dart         # SovereignAudioHandler (audio_service)
-│   ├── cyber_tap_feedback.dart    # CyberTapFeedback (haptic + particle + ring)
-│   ├── ffmpeg_executor.dart       # Serialized FFmpegExecutor queue
-│   ├── ghost_settings.dart        # GhostSettings ValueNotifiers (prefs)
-│   ├── media_probe.dart           # probeStreams/probeDurationMs (FFprobeKit)
-│   ├── pcm_recorder.dart          # PcmRecorder MethodChannel wrapper
-│   └── tap_feedback.dart          # TapFeedback (haptic + base64 tick/boop)
+│   ├── audio_handler.dart          # SovereignAudioHandler (audio_service lockscreen)
+│   ├── cyber_tap_feedback.dart     # CyberTapFeedback (particle burst + ring + press-scale)
+│   ├── eq_mapper.dart              # 15→N-band gain mapping, ReplayGain volume/boost
+│   ├── ffmpeg_executor.dart        # Serialized FFmpegExecutor queue
+│   ├── feedback_settings.dart      # FeedbackSettings burst/ring/pulse/sound/haptics (prefs)
+│   ├── forge_request.dart          # ForgeRequest (cross-tab handoff, user-initiated)
+│   ├── ghost_settings.dart         # GhostSettings ValueNotifiers (prefs, first-launch v2)
+│   ├── lrc.dart                    # LRC parse/format/active-index + offset
+│   ├── media_probe.dart            # probeStreams/probeDurationMs (FFprobeKit)
+│   ├── metadata_sources.dart       # Spider/ACR channels → MetaCandidate + lyrics + artwork
+│   ├── pcm_recorder.dart           # PcmRecorder MethodChannel + pcm_events amplitudes
+│   ├── playback_fx.dart            # PlaybackFx pipeline (AndroidEqualizer/loudness, EQ state)
+│   ├── playlists.dart              # Playlists/favorites/recent, debounced persist
+│   ├── sfx.dart                    # Sfx/SfxId — SoundPool bank, volume+jitter, 60ms dedupe
+│   ├── sfx_synth.dart              # 13-sound 48kHz bank synthesized in Dart
+│   ├── storage_client.dart         # MediaStore query/write/overwriteOriginal/loadArtwork
+│   ├── tag_io.dart                 # TagIO write→read-back verify + DASH-moof flatten
+│   ├── tap_feedback.dart           # TapFeedback — haptic + Sfx.play only (no just_audio)
+│   ├── title_cleaner.dart          # Messy-title normalization
+│   └── whisper_model.dart          # First-use Whisper ggml model extraction to cache
 ├── screens/
-│   ├── main_shell.dart            # 1091L: AudioService, GhostChatOverlay, tabs, mini-player
-│   ├── settings_screen.dart       # 772L: KERNEL/SYSTEM — keys, accent, maintenance, ghost, backup
-│   ├── playback_engine_screen.dart# 182L: Crossfade/Gapless/Audit (Player AppBar entry)
-│   ├── eq_presets_screen.dart     # 171L: 15-band presets (Workbench tune-icon entry)
-│   └── lyric_sync_screen.dart     # Karaoke isolated player
+│   ├── main_shell.dart             # AudioService, GhostChatOverlay, CyberBackdrop, AnimatedTabStack, CyberNavBar
+│   ├── settings_screen.dart        # KERNEL/SYSTEM — keys, accent, maintenance, ghost, backup
+│   ├── playback_engine_screen.dart # Crossfade/Gapless/Audit (Player AppBar entry)
+│   ├── eq_presets_screen.dart      # 15-band presets (Player tune-icon entry)
+│   └── lyric_sync_screen.dart      # Karaoke isolated player
 ├── tabs/
-│   ├── tab_grabber.dart           # 866L: Search/format/download/merge
-│   ├── tab_forge.dart             # 632L: ID3 editor, karaoke, export
-│   ├── tab_pipeline.dart          # 560L: Batch buckets, ACR/Genius/LRCLIB
-│   ├── tab_workbench.dart         # 1445L: DSP, Whisper, ReplayGain, live EQ editor
-│   ├── tab_player.dart            # 1091L: Theater, mini-player, queue
-│   └── tab_library.dart           # 332L: MediaStore browse
+│   ├── tab_grabber.dart            # Search/format/download/merge
+│   ├── tab_forge.dart              # ID3 editor, karaoke, export
+│   ├── tab_pipeline.dart           # Batch buckets, ACR/Genius/LRCLIB
+│   ├── tab_workbench.dart          # DSP, Whisper, ReplayGain, live EQ editor
+│   ├── tab_player.dart             # Theater, mini-player, queue
+│   └── tab_library.dart            # MediaStore browse
 ├── widgets/
-│   ├── ghost_avatar.dart          # 660L: Code-drawn ghost, glitch, laugh
-│   ├── ghost_chat_overlay.dart    # 595L: Chat UI, first-launch, tutorials
-│   └── matrix_rain.dart           # 308L: MatrixRain + AmbientBackdrop
+│   ├── animated_tab_stack.dart     # AnimatedTabStack (uniform wrapper chain, G32)
+│   ├── cyber_backdrop.dart         # CyberBackdrop — GPU shader, AmbientBackdrop fallback
+│   ├── cyber_ink.dart              # CyberInk theme splash factory
+│   ├── cyber_nav_bar.dart          # CyberNavBar — spring pill, icon pop, whoosh
+│   ├── cyber_page_transitions.dart # CyberPageTransitionsBuilder
+│   ├── ghost_avatar.dart           # GhostAvatar — ticker-driven living ghost + moods
+│   ├── ghost_chat_overlay.dart     # Glass chat panel, chips, bubbles, first-launch
+│   ├── machine_rain.dart           # MatrixRain + AmbientBackdrop (painter fallback)
+│   ├── metadata_review_sheet.dart  # current vs proposed metadata review
+│   ├── playlist_picker.dart        # Playlist selection sheet
+│   ├── tap_fx_layer.dart           # TapFxLayer — global tap FX for every tappable
+│   └── waveform_studio.dart        # Waveform peaks/select/zoom
 └── services/
-    ├── ghost_brain.dart           # Pure-Dart NLU + commands + knowledge base
-    └── ghost_world.dart           # GhostWorld bridge to AudioService/SovereignState
+    ├── ghost_brain.dart            # GhostBrain — offline BM25 commands + knowledge base
+    └── ghost_world.dart            # AppGhostWorld bridge to AudioService/SovereignState
 
 android/
 ├── app/src/main/kotlin/com/sovereigntagger/

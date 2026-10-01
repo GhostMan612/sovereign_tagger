@@ -1,6 +1,6 @@
 ---
 name: sovereign-visual
-description: "Cyberpunk visuals: MatrixRain splash, AmbientBackdrop per-tab pulsing grid, electric arcs, traveling comets, lifecycle pause, TextPainter reuse, accent-color reactivity."
+description: "Cyberpunk visuals: MatrixRain splash, CyberBackdrop GPU shader backdrop (AmbientBackdrop painter fallback), electric arcs, traveling comets, AnimatedTabStack, CyberNavBar, page transitions, lifecycle pause, TextPainter reuse, accent-color reactivity."
 tools:
   read: true
   write: true
@@ -77,21 +77,28 @@ permission:
 # Sovereign Visual Agent
 
 ## Domain
-`lib/widgets/matrix_rain.dart` — `MatrixRain` (splash) + `AmbientBackdrop` (per-tab animated backdrop)
+`lib/widgets/machine_rain.dart` — `MatrixRain` (splash) + `AmbientBackdrop` (painter fallback) · `lib/widgets/cyber_backdrop.dart` — `CyberBackdrop` (the primary per-tab GPU backdrop) · `animated_tab_stack.dart`, `cyber_nav_bar.dart`, `cyber_ink.dart`, `cyber_page_transitions.dart`, `tap_fx_layer.dart`
 
 ## Core Rules (from RULES.md)
 - **Cyberpunk aesthetic**: black, monospace (`ShareTechMono`, `VT323`), accent-color reactive (`SovereignState.accentColor`)
 - **Code-drawn only**: No raster assets — `CustomPainter`, `Shader`, `Lottie`/`Rive` JSON only if added to `pubspec.yaml`
 - **Asset limits**: `pubspec.yaml:34` declares `assets/`; new assets need rebuild. Current: `assets/splash-screen-bg.png` + fonts only
 - **Performance**: Single `TextPainter` reuse (was 400 allocs/frame), cols capped 36, GC pressure ↓60%
-- **Lifecycle**: `AmbientBackdrop` pauses on app pause/hidden (lifecycle observer) — kills background GPU spam
+- **Lifecycle**: `CyberBackdrop` AND its `AmbientBackdrop` fallback both pause on app pause/hidden (lifecycle observer) — kills background GPU spam and battery drain
 
 ## MatrixRain (Splash)
 - `MatrixRainPainter` — single `TextPainter` reused, 36 columns, char len 7–14
 - Overlay on `SplashScreen` with `assets/splash-screen-bg.png` at 22% opacity
 - Accent-color reactive via `ValueListenableBuilder<SovereignState.accentColor>`
 
-## AmbientBackdrop (MainShell behind IndexedStack)
+## CyberBackdrop (MainShell — primary, GPU)
+- `shaders/backdrop.frag` via `FragmentProgram.fromAsset`, 30 fps, own `RepaintBoundary`
+- Accent nebula + synthwave grid floor + per-tab layer: **Grabber** data streams, **Forge** embers, **Batch** scan bands, **Workbench** waveform
+- Uniforms fed with `setFloat` in **declaration order** (a `vec2` takes 2 slots, `vec4` takes 4)
+- Compile-check before shipping: `impellerc --runtime-stage-gles` / `--runtime-stage-vulkan` / `--sksl`
+- **Fallback**: if the shader fails to load, it returns `AmbientBackdrop` instead — never a blank screen
+
+## AmbientBackdrop (painter fallback, also still the no-shader path)
 - `BackdropVariant` per tab:
   - **Grabber**: vertical drops (2 arcs, 2 travelers)
   - **Forge**: slow pulse (1 arc, 1 traveler)
@@ -103,7 +110,9 @@ permission:
 - Zero new deps, zero assets, no rebuild needed
 
 ## MainShell Integration
-- `Stack` → `AmbientBackdrop` (variant via `ValueListenableBuilder<SovereignState.currentTab>`) + `IndexedStack` + mini-player + `BottomNavigationBar`
+- `Stack` → `CyberBackdrop` (variant via `ValueListenableBuilder<SovereignState.currentTab>`) + `AnimatedTabStack` + mini-player + `CyberNavBar`; `GhostChatOverlay` is the LAST `Stack` child (GH9 — earlier and the opaque tab `Scaffold`s bury it)
+- Tab switching goes through `AnimatedTabStack`, never by swapping its wrapper types (G32); page transitions come from `CyberPageTransitionsBuilder` in the theme, so plain `MaterialPageRoute`s animate automatically
+- Every tappable gets FX for free from `TapFxLayer` (a `MaterialApp.builder`); do NOT hand-roll per-button bursts
 
 ## Rive/Lottie Path (if needed later)
 - Add `assets/animations/<tab>.json` + `pubspec.yaml: assets: - assets/animations/` → rebuild

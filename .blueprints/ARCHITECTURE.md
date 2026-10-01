@@ -7,7 +7,7 @@ main() ──▶ SharedPreferences(accent_color) ──▶ MaterialApp(dark, see
         └─▶ SplashScreen._bootSequence()
               ├─ FFmpegKitExtended.initialize()
               ├─ storage/autoImportConfig (XOR 0x53 .bin keys → prefs)
-              └─ pushReplacement ▶ MainShell (Stack → AmbientBackdrop variant per tab → IndexedStack → mini-player)
+              └─ pushReplacement ▶ MainShell (Stack → CyberBackdrop shader variant per tab → AnimatedTabStack → mini-player → CyberNavBar)
 ```
 
 ## Global state
@@ -65,4 +65,4 @@ Forge/pipeline metadata map keys: `TITLE ARTIST ALBUM ALBUM_ARTIST YEAR GENRE DI
 - **Recorder:** default lossless PCM `PcmRecorder` 48k/16-bit WAV (toggle `LOSSLESS PCM`); fallback `RecorderController` `aac 48k/256k` 50ms wave.
 - **Haptics + sound:** `TapFeedback` → `Sfx` → `com.sovereign.tagger/sfx` channel → `SfxEngine.kt` (`SoundPool`, `USAGE_GAME`, 8 streams, no audio focus). The 13-sound bank (`SfxId`) is synthesized in pure Dart by `SfxSynth` (48 kHz WAV) in an isolate on first launch and cached under app support `sfx_v1/`.
 - **Tap FX:** `TapFxLayer` wraps every route via `MaterialApp.builder`; on pointer-down it hit-tests for a tappable and draws a pulse outline, on tap-up a shockwave ring + spark burst + tap sound (own `Ticker`, runs only while effects live, `RepaintBoundary`). `CyberInk` is the theme splash factory; `CyberTapFeedback` is a press-scale wrapper.
-- **Backdrops:** `MatrixRain` splash (single `TextPainter` reuse, 36 cols) + `AmbientBackdrop` `BackdropVariant` per tab pulsing grid (`grabber` vertical, `forge` slow, `pipeline` horizontal, `workbench` mixed) `alpha 0.035/0.18` + blur, 4s `AnimationController`.
+- **Backdrops:** `MatrixRain` splash (single `TextPainter` reuse, 36 cols) + `CyberBackdrop` running `shaders/backdrop.frag` on the GPU at 30 fps in its own `RepaintBoundary` (accent nebula + synthwave grid floor, per-tab layer: Grabber data streams / Forge embers / Batch scan bands / Workbench waveform), `WidgetBindingObserver`-paused in background, **falling back to the `AmbientBackdrop` `BackdropVariant` painter** (`grabber` vertical, `forge` slow, `pipeline` horizontal, `workbench` mixed, `alpha 0.035/0.18` + blur, 4s `AnimationController`) when `FragmentProgram.fromAsset` fails.

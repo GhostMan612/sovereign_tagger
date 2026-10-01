@@ -13,7 +13,7 @@ Executable files (`pubspec.yaml`, `android/app/build.gradle`) beat prose. Never 
 
 ## Branches & git
 
-- `main` is the single canonical branch. Do new work on `main` or on a short-lived branch off it. `master` is legacy (fully merged into `main`), so don't build on it.
+- `main` is the single canonical branch and the only branch that exists, local or remote. `master`, `backup-before-main-sync` and both `claude/*` branches were merged into `main` and then deleted (2026-10-01) — do not reference or rebuild them.
 - Stage by explicit path only (`git add lib/tabs/tab_forge.dart`). Never use `git add .` or `git add -A`.
 - Wait for explicit approval before `git commit` / `git push`, unless you are executing an already-approved plan. Never force-push or delete branches unless asked.
 - Never commit secrets such as Genius/ACRCloud keys, keystores or `local.properties` (RULES §1.2). Fixtures use synthetic data only.

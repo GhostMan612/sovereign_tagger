@@ -1,5 +1,5 @@
 # SESSION_HANDOFF.md — Sovereign Tagger v2
-> Read this FIRST every session. Updated Phase 27 complete 2026-09-25.
+> Read this FIRST every session. Updated Phase 28 complete + tooling hardening 2026-10-01.
 
 ## DOCUMENT MAP — cold-start hooks (read top-to-bottom)
 
@@ -8,8 +8,8 @@
 | 0 | `AGENTS.md` (root) | Auto-injected into every session by opencode — the true guaranteed entry point; compact ramping guide + laws table | automatic |
 | 1 | `.blueprints/RULES.md` | **CANONICAL** operating law: read-only paths, git discipline, §3 technical laws incl. **§3.1 POWERSHELL MOJIBAKE BAN** | EVERY session, before any edit |
 | 2 | THIS FILE | Latest session deltas ("What shipped"), Next actions queue, Open decisions, toolchain notes | EVERY session |
-| 3 | `.blueprints/CURRENT_STATE.md` | Verified per-file architecture map (~10.3k LOC), known-issue registry (`K/A/V/GH/CS/EQ/PW` rows — check before touching grabber/pipeline/workbench/player/ghost/settings), frozen-ceiling toolchain notes | before writing code |
-| 4 | `.blueprints/ROADMAP.md` | Phase tracker (Phases 0–26+, `[x]/[~]/[ ]/[-]`) with per-phase verification gates | when planning/phases |
+| 3 | `.blueprints/CURRENT_STATE.md` | Verified per-file architecture map (44 Dart files), known-issue registry (`K/A/V/GH/CS/EQ/PW/AR/FX/UI` rows — check before touching grabber/pipeline/workbench/player/ghost/settings), frozen-ceiling toolchain notes | before writing code |
+| 4 | `.blueprints/ROADMAP.md` | Phase tracker (Phases 0–28, `[x]/[~]/[ ]/[-]`) with per-phase verification gates | when planning/phases |
 | 5 | `.blueprints/BLUEPRINTS.md` | Design specs + **append-only GOTCHA REGISTRY** (SPEC-S* ids) | before novel features |
 | 6 | `.blueprints/ARCHITECTURE.md` | Boot flow + data-flow reference diagrams | structural changes |
 | — | `README.md` (root) | Operator-facing capabilities/API-keys/maintenance docs (kept synced with reality) | release/closeout/doc work |
@@ -20,9 +20,24 @@ Session-end law: update rows 2–4 every session (+ row 5 when a new gotcha is l
 
 ## Where we are
 
-**Date:** 2026-09-25
-**Phase:** 0–27 COMPLETE (27 = de-pipeline sweep, cloud session). `flutter analyze --no-pub` → `No issues found!` (Flutter 3.47.5). Device smoke of Phase 27 still pending on the Moto G — see Next actions.
-**Branch:** `main` is the single canonical branch (2026-09-25: `master` history + the Claude Phase 27 branch were merged into it). `master` and `claude/elegant-franklin-j99jl0` are fully contained in `main` — do new work on `main` (or short-lived branches off it), not on `master`.
+**Date:** 2026-10-01
+**Phase:** 0–28 COMPLETE. `flutter analyze --no-pub` → `No issues found!` (Flutter 3.47.5). **No planned implementation work remains** — every ROADMAP phase 0–28 is `[x]` and every registry row is FIXED/IMPLEMENTED. The open items are device-gated: smoke 1, 1b–1h plus the first-APK Kotlin build check. See Next actions.
+**Branch:** `main` is the single canonical branch and the only local or remote branch. 2026-10-01: `master`, `backup-before-main-sync` (local) and `claude/strange-lewin-97ba5a` / `claude/elegant-franklin-j99jl0` (remote) were **deleted** after verifying every one of them was fully merged into `main`. They no longer exist — do not reference them. Work on `main` (or a short-lived branch off it).
+
+## What shipped — tooling + doc alignment (2026-10-01)
+
+No app code changed. Two classes of real defect fixed, both in the rulebook rather than the app:
+
+- **`.opencode/` was entirely untracked** — the 11-agent workflow, 3 slash commands and the `package.json` plugin pin had no version control, so no clone ever received them, and a clean-slate reset **deleted the whole rulebook** (proved by `f062e01`). All are tracked now, and `package-lock.json` is tracked too so the toolchain is reproducible.
+- **Every agent's deny map was under `tools:`, not `permission:`** — `AgentConfig.tools` is `additionalProperties: {type: boolean}` and `@deprecated`, so a `{pattern: deny}` map there is malformed and enforces nothing. The fleet *looked* hardened and denied nothing. All 11 moved to `permission.bash` (45 rules, 33 denies).
+- **Last-match-wins ordering bug** — the narrow denies sat *above* the broad `"git add *": ask` / `"git push*": ask` rules, which re-matched and downgraded them. `git add -A` and `git push --force` were **asked, not refused**, in all 11 agents. Narrow denies moved last. Verified by resolving 23 real commands through each parsed map (fnmatch, keep-last) — not by reading YAML. Recorded as **G34**.
+- **5 of 11 agents had invalid YAML** — unquoted `description:` containing a colon, which can stop an agent loading entirely. Quoted; all 11 now parse.
+- **Per-edit verification taught in 4 places** — AGENTS.md "then analyze + signature-grep", BLUEPRINTS G23 "re-run analyze after every scripted patch", SESSION_HANDOFF tooling law, and CLAUDE.md "run targeted checks on what you changed". All reworded to end-of-phase. `ROADMAP` "gate per slice" deliberately KEPT — a slice is a staged phase, not a per-edit check.
+- **CLAUDE.md had no shell gate at all**; now carries the §1A.0 block.
+- **Doc/code drift corrected** (docs described Phase ≤27 while the code was Phase 28): `matrix_rain.dart` → `machine_rain.dart` rename; `ghost_classifier.dart` deleted in favour of `ghost_brain.dart` + `ghost_world.dart`; `IndexedStack`/`BottomNavigationBar`/`AmbientBackdrop` → `AnimatedTabStack`/`CyberNavBar`/`CyberBackdrop`; `tap_feedback.dart` no longer plays `just_audio` data-URI wavs (it delegates to the native `SoundPool` `Sfx` bank); EQ presets entry is the **Player** AppBar tune icon, not Workbench (CS4); 44 Dart files, not 23. Historical ROADMAP/SESSION_HANDOFF phase entries were left as a changelog but now carry a note.
+- Repairs: `20260803_110842.mp4` (9.5MB) was untracked **and** unignored; now ignored with `*.mov/*.apk/*.aab/keystores/screenshots` + `/.claude/worktrees/`.
+
+Gate: `flutter analyze --no-pub` → `No issues found!`. Device smoke unchanged and still pending.
 
 ## What shipped — Phase 27 (2026-09-25)
 
