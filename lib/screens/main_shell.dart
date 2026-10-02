@@ -62,7 +62,19 @@ class TrackInfo {
 }
 
 class AudioService {
-  static final AudioPlayer player = AudioPlayer(audioPipeline: PlaybackFx.createPipeline());
+  static final AudioPlayer player = _createPlayer();
+
+  static AudioPlayer _createPlayer() {
+    try {
+      return AudioPlayer(audioPipeline: PlaybackFx.createPipeline());
+    } catch (e) {
+      debugPrint('SOVEREIGN PLAYBACK: effects pipeline rejected ($e) - falling back to default sink');
+      return AudioPlayer();
+    }
+  }
+
+  static void dbg(String msg) => debugPrint('SOVEREIGN PLAYBACK: $msg');
+
   static final ValueNotifier<VideoPlayerController?> videoController = ValueNotifier<VideoPlayerController?>(null);
 
   static final ValueNotifier<String> currentTitle = ValueNotifier<String>("NO AUDIO LOADED");
@@ -178,6 +190,12 @@ class AudioService {
 
   static Future<void> initializeGlobalListener() async {
     await PlaybackFx.init(player);
+
+    player.errorStream.listen((e) => dbg('PLAYER ERROR STREAM: $e'));
+
+    player.processingStateStream.listen((s) {
+      dbg('processingState -> $s (idx=${player.currentIndex} playing=${player.playing} volume=${player.volume})');
+    });
 
     player.sequenceStateStream.listen((sequenceState) {
       final seqEmpty = sequenceState.sequence.isEmpty;
@@ -327,7 +345,7 @@ class AudioService {
       final old = videoController.value;
       videoController.value = null;
       await old?.dispose();
-      if (_wantPlaying && !player.playing) player.play();
+      if (_wantPlaying && !player.playing) _firePlay();
       await _readTags(path, token);
     }
     _persistPosition();
@@ -360,7 +378,10 @@ class AudioService {
         ),
       );
       await _syncHandlerQueue();
-    } catch (_) {}
+      dbg('audio handler ready');
+    } catch (e) {
+      dbg('audio handler INIT FAILED (lockscreen/widget control will be dead): $e');
+    }
   }
 
   static Future<void> _syncHandlerQueue() async {
@@ -398,7 +419,10 @@ class AudioService {
   static Future<void> _loadSources(List<AudioSource> sources, int index, Duration position) async {
     try {
       await player.setAudioSources(sources, initialIndex: index, initialPosition: position);
-    } catch (_) {}
+      dbg('setAudioSources OK: ${sources.length} source(s), start=$index pos=${position.inMilliseconds}ms state=${player.processingState}');
+    } catch (e) {
+      dbg('setAudioSources FAILED: $e');
+    }
   }
 
   static Future<void> replacePlaylist(List<File> files, {int startIndex = 0, Duration startPosition = Duration.zero, bool autoplay = false}) async {
@@ -411,7 +435,7 @@ class AudioService {
         _loadedKey = "";
         await _loadSources(sources, idx, startPosition);
         await _ensureLoaded(idx);
-        if (autoplay && !_isVideoPath(files[idx].path)) player.play();
+        if (autoplay && !_isVideoPath(files[idx].path)) _firePlay();
       } else {
         await player.clearAudioSources();
         currentIndex.value = -1;
@@ -643,7 +667,7 @@ class AudioService {
       } else if (wasCurrent) {
         final next = index < currentList.length ? index : index - 1;
         await player.seek(Duration.zero, index: next);
-        if (_wantPlaying && !_isVideoPath(currentList[next].path)) player.play();
+        if (_wantPlaying && !_isVideoPath(currentList[next].path)) _firePlay();
       } else if (currentIndex.value > index) {
         currentIndex.value -= 1;
       }
@@ -696,8 +720,19 @@ class AudioService {
         return;
       }
       await player.seek(Duration.zero, index: index);
-      if (!targetIsVideo) player.play();
-    } catch (_) {}
+      if (!targetIsVideo) _firePlay();
+      dbg('playIndex ok: idx=$index video=$targetIsVideo processing=${player.processingState} volume=${player.volume}');
+    } catch (e) {
+      dbg('playIndex FAILED: $e');
+    }
+  }
+
+  static void _firePlay() {
+    unawaited(player.play().then((_) {
+      dbg('play() future completed (track ended or stopped), playing=${player.playing}');
+    }).catchError((Object e) {
+      dbg('play() REJECTED: $e');
+    }));
   }
 
   static Future<void> resume() async {
@@ -715,7 +750,8 @@ class AudioService {
         return;
       }
     }
-    player.play();
+    dbg('resume(): firing play, processing=${player.processingState} volume=${player.volume}');
+    _firePlay();
   }
 
   static Future<void> pause() async {

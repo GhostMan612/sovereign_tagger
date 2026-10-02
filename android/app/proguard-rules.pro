@@ -55,3 +55,36 @@
 # reflection at build time.
 -keep class io.flutter.** { *; }
 -keep class io.flutter.plugins.** { *; }
+
+# ── Audio playback stack ──────────────────────────────────────────────────────
+# Audio was silent in the first release-mode install (2026-10-02) and the fix was
+# the R8 keeps below. NOTE: the exact culprit inside this stack was NOT proven —
+# the device that exhibited the fault went over wireless-adb idle timeout before
+# the instrumented build could be read, and audio played correctly by the time the
+# user retested. So treat these rules as sound-by-construction defence (debug
+# builds never ran R8 at all, so the release stack genuinely had zero coverage),
+# not as a confirmed diagnosis. See CURRENT_STATE AN2.
+#
+# Debug builds were never a useful control here — R8 does not run on debug at
+# all — so the whole audio stack needs explicit protection once release mode is
+# the only thing we ship. These plugins build their Android side through
+# platform channels and reflection-assisted lookups (media3 audio-effect
+# processors, audio_service's MediaSession/notification wiring, just_audio's
+# pipeline handlers). R8 cannot see those edges and is free to rename or strip
+# them, which fails at RUNTIME as silence, never at build time.
+#
+# Size cost is irrelevant next to a 488MB APK dominated by FFmpeg + Python +
+# Whisper. Keep the entire playback stack intact.
+-keep class com.ryanheise.audioservice.** { *; }
+-keep class com.ryanheise.just_audio.** { *; }
+-keep class androidx.media.** { *; }
+-keep class androidx.media3.** { *; }
+-dontwarn com.ryanheise.audioservice.**
+-dontwarn com.ryanheise.just_audio.**
+-dontwarn androidx.media.**
+
+# just_audio's Android implementation is written against Guava's
+# ListenableFuture and a couple of other compile-only deps.
+-dontwarn com.google.common.util.concurrent.**
+-dontwarn com.google.errorprone.annotations.**
+-dontwarn javax.annotation.**

@@ -42,13 +42,16 @@ class PlaybackFx {
       replayGainMode.value = prefs.getString('rg_mode') ?? 'track';
       replayGainPreamp.value = prefs.getDouble('rg_preamp') ?? 0.0;
       fadeSeconds.value = prefs.getDouble('crossfade_duration') ?? 0.0;
-    } catch (_) {}
+      debugPrint('SOVEREIGN FX: prefs eqEnabled=${eqEnabled.value} crossfade=${fadeSeconds.value} rgMode=${replayGainMode.value}');
+    } catch (e) {
+      debugPrint('SOVEREIGN FX: prefs load failed ($e) - using defaults');
+    }
 
     player.positionStream.listen(_onPosition);
     player.currentIndexStream.listen((index) {
       if (index != _lastIndex) {
         _lastIndex = index;
-        _fadeFactor = fadeSeconds.value > 0 ? 0.0 : 1.0;
+        _fadeFactor = fadeSeconds.value > 0 ? 0.05 : 1.0;
         _pushVolume();
       }
     });
@@ -59,8 +62,11 @@ class PlaybackFx {
     try {
       _params = await equalizer.parameters;
       deviceBands.value = _params!.bands.map((b) => b.centerFrequency).toList();
+      debugPrint('SOVEREIGN FX: device EQ has ${_params!.bands.length} bands');
       await applyEq();
-    } catch (_) {}
+    } catch (e) {
+      debugPrint('SOVEREIGN FX: device EQ UNAVAILABLE ($e) - EQ stays off, playback must not be muted');
+    }
   }
 
   static Future<void> applyEq() async {
@@ -74,7 +80,9 @@ class PlaybackFx {
       for (var i = 0; i < params.bands.length; i++) {
         await params.bands[i].setGain(mapped[i]);
       }
-    } catch (_) {}
+    } catch (e) {
+      debugPrint('SOVEREIGN FX: applyEq FAILED ($e)');
+    }
   }
 
   static Future<void> setEqGains(List<double> gains, {bool persist = false}) async {
@@ -146,7 +154,9 @@ class PlaybackFx {
       } else {
         await loudness.setEnabled(false);
       }
-    } catch (_) {}
+    } catch (e) {
+      debugPrint('SOVEREIGN FX: replaygain boost FAILED ($e)');
+    }
   }
 
   static void setSleepFactor(double factor) {
@@ -181,6 +191,7 @@ class PlaybackFx {
     final v = (_rgVolume * _fadeFactor * _sleepFactor).clamp(0.0, 1.0);
     if ((v - _lastVolume).abs() < 0.01 && v != 0 && v != 1) return;
     if (v == _lastVolume) return;
+    if (v == 0.0) debugPrint('SOVEREIGN FX: volume driven to ZERO (rg=$_rgVolume fade=$_fadeFactor sleep=$_sleepFactor) - this is the mute signature');
     _lastVolume = v;
     player.setVolume(v);
   }
