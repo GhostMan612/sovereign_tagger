@@ -58,10 +58,11 @@
 ```powershell
 C:\android\flutter\bin\flutter.bat pub get    # SDK lives in C:\android\flutter — NOT C:\src. Bare `flutter` may not resolve; always use this path. Everything maxed except file_picker 9 / wakelock_plus 1.5.2 (win32 pair) and permission_handler 12 (compileSdk 37)
 C:\android\flutter\bin\flutter.bat analyze --no-pub  # expect "No issues found!" — END OF PLAN ONLY
-# flutter build apk --release  — DO NOT RUN HERE. Device-dependent, Android Studio does Moto G install.
+C:\android\flutter\bin\flutter.bat build apk --release  # ALLOWED per RULES §1.5 (operator override 2026-10-01). END-OF-PLAN ONLY — it is minutes, not seconds. Release signing falls back to the DEBUG keystore unless SOVEREIGN_KEYSTORE is set, so a release APK is NOT Play-ready.
 ```
 
 - Project slash commands (`.opencode/commands/*.md`): `/analyze` (filtered analyze gate), `/probe <path>` (python line-count preview, no full read), `/smoke` (device matrix checklist, asks before build). **All three are end-of-plan tools.**
+- **Builds vs device (RULES §1.5):** `flutter build apk` runs here now. It proves the app **compiles**; only installing on the Moto G via Android Studio proves it **works**. Do not present a green build as a green device run.
 - Filter all terminal output; ingest failures only. Do not ingest raw JSON / full logs.
 - Probe large files with a short **read-only** Python script, never `cat`/`read` of the whole file.
 

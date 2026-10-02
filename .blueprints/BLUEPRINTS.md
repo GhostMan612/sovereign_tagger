@@ -37,6 +37,12 @@
 - `android/app/src/main/python/sovereign_yt/doctor.py`: explicit knowledge base `PATCH_REGISTRY` (youtube_android_blocked / impersonate_removed / 403 throttle / genius 429 / outdated extractor) with signatures, files/lines, and hotfixes. Exposes `diagnose(error_log)` and `get_registry()` — inventories `*.py` payload, probes `yt_dlp` version, snapshots `extractor_args` from `bridge.py`. Surfaced in Settings via `com.sovereign.tagger/ytdlp` channel methods `runDoctor`/`getDoctorRegistry`/`updateFullStack`.
 - Zero-bloat: `doctor.py` is ~4KB, no deps beyond stdlib; it never shells to pip on its own. Hot-patching extractor_args remains manual (edit `bridge.py` via the patch hint) until a future byte-patch writer is added — intentional to avoid self-modifying-code risk on locked Android.
 
+## SPEC-S5: Sovereign SDK edition — dual-flavour proposal (PARKED, spec only)
+- **Status: PARKED by operator 2026-10-01.** Not authorised to implement. Full write-up — benefits, costs, risks, reversibility, open questions — lives in `.blueprints/SDK-EDITION-SPEC.md`. Slices are `ROADMAP.md` "Phase S0–S4", all `[-]`.
+- The proposal: split into Gradle flavours `full` (today: chaquopy + Grabber + python/) and `sdk` (no Python, no Grabber), so the `sdk` build is publishable and the `full` build keeps the ripper for personal use.
+- **The counter-argument that must not be skipped:** removing Python unblocks the toolchain ceiling for the `sdk` flavour ONLY. `full` keeps chaquopy, keeps `AGP <= 9.2`, keeps `compileOptions 1.8`. Every future Flutter/Android bump must then be applied twice or the flavours drift. You do not get an unlocked ceiling — you get two ceilings, one still locked, plus a permanent dual-maintenance obligation.
+- Recommendation recorded in the spec: if this is ever unparked, do **S0 (read-only audit) then S1 (Dart spider port) only**. Both are independently useful and low-regret. Hold S2/S3/S4 — they are the expensive, partly-irreversible ones.
+
 ## GOTCHA REGISTRY (append-only; G# referenced from RULES §3)
 - G1: `ffmpeg_kit_extended_flutter` fork exposes both execute() (SYNC, blocks platform thread) and executeAsync(). Never ship sync in UI paths.
 - G2: yt-dlp split downloads return two files under requested_downloads[0].filepath each; composite `"a+b"` ids must be split Python-side BEFORE ydl runs (bridge.py:140) — Flutter merge assumes exactly two payloads.

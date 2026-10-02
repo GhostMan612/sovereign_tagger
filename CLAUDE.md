@@ -35,7 +35,7 @@ Executable files (`pubspec.yaml`, `android/app/build.gradle`) beat prose. Never 
   Once per phase. There is no "targeted check while developing" — §1A.0 explains
   why the analyzer catches none of the bugs this repo actually ships.
 - There is no `test/` suite and no test runner script. Don't invent one.
-- Never run `flutter build apk` here. The operator builds and installs on their device through Android Studio. Anything that needs a device goes on the smoke list under "Next actions" in SESSION_HANDOFF.
+- `flutter build apk` **is allowed** (RULES §1.5, operator override 2026-10-01) but is still an end-of-plan action, never a mid-plan probe. Release signing falls back to the debug keystore unless `SOVEREIGN_KEYSTORE` is set, so a release APK is not Play-ready. Installing and running on the Moto G remains the operator's step via Android Studio — a host build proves it compiles, only a device run proves it works. Anything device-dependent goes on the smoke list under "Next actions" in SESSION_HANDOFF.
 
 ## Editing
 

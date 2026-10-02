@@ -35,6 +35,15 @@ C:\sovereign_mantle
 ### 1.4 Nothing outside the project without approval
 Do not install software, modify system settings, or write outside `C:\sovereign_tagger` / approved tool homes without asking first.
 
+### 1.5 Builds (CHANGED 2026-10-01 — operator override)
+`flutter build apk` is **allowed** on this host. The old blanket ban existed because a build was treated as device-dependent and slow; the operator has overridden that. Builds are still governed by §1A.0: they are an **end-of-plan** activity, never a mid-plan "let me check" probe — a single release build is minutes, not seconds.
+
+- Use the full SDK path: `C:\android\flutter\bin\flutter.bat build apk --release`.
+- **Release signing falls back to the debug keystore** unless `SOVEREIGN_KEYSTORE` is set (env or `local.properties`, `android/app/build.gradle:62`). A release APK is therefore **not Play-ready** until a real keystore exists — say so when reporting a release build.
+- `flutter build appbundle` and direct `:app:assembleRelease` / `:app:bundleRelease` stay `ask` — store packaging and signing are deliberate operator calls.
+- Installing and running on the Moto G is still the operator's step via Android Studio. A host build proves it *compiles*; only a device run proves it *works*.
+- Artifacts land in `build/` and are git-ignored (`*.apk`, `*.aab`). Never stage a build output.
+
 ---
 
 ## 1A. CONTEXT & OUTPUT DISCIPLINE

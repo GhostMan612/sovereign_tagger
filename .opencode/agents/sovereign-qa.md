@@ -40,11 +40,9 @@ permission:
     "sed*": deny
     "write*": deny
     "echo*>*": deny
-    # Build boundary — the human builds and installs (AGENTS.md / RULES.md §1.6).
-    "*build apk*": deny
-    "*build appbundle*": deny
-    "*assembleRelease*": deny
-    "*bundleRelease*": deny
+    # Build boundary — `flutter build apk` is ALLOWED per RULES.md §1.5 (operator
+    # override 2026-10-01). appbundle/gradle release stay `ask`: signing and
+    # store packaging are deliberate operator calls.
     "adb*install*": deny
     "adb*uninstall*": deny
     "adb*root*": deny
@@ -53,6 +51,13 @@ permission:
     # after an individual edit, and never "just to check".
     "*flutter.bat analyze*": allow
     "*flutter.bat pub get*": allow
+    # RULES.md 1.5 - builds allowed (operator override 2026-10-01). Still
+    # END-OF-PLAN: a release build is minutes, never a mid-plan probe.
+    "*flutter.bat build apk*": allow
+    "*build apk*": allow
+    "*build appbundle*": ask
+    "*assembleRelease*": ask
+    "*bundleRelease*": ask
     "adb*logcat*": allow
     "adb*shell*": allow
     "adb*devices*": allow
@@ -95,7 +100,7 @@ The analyzer passes on code that is 100% broken at runtime. This agent exists be
 **Never claim a device-verified behavior from source reading.** Say "present in code, device-pending" instead. That exact failure produced one bad handoff note already.
 
 ## Rules
-- **Never build on the host.** `flutter build apk --release` is forbidden here; Android Studio + device is the only build path. Debug APK is staged only to warm Gradle caches.
+- **Builds are allowed on the host** (`flutter build apk`, RULES §1.5 override 2026-10-01) but a green build is **not** a green device run — it proves compilation only. Never mark a smoke item passed on a build. Release builds fall back to the debug keystore unless `SOVEREIGN_KEYSTORE` is set, so they are not Play-ready.
 - **Kotlin changed → full rebuild, never hot reload.** Native edits are invisible to hot reload.
 - Judge smoothness on **profile/release**; debug builds always stutter and that is not a bug.
 - Debug-log noise that is NOT a defect: `mali_gralloc`, `BLASTBufferQueue`, `Choreographer` skipped frames.

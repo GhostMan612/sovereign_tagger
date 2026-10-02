@@ -40,11 +40,9 @@ permission:
     "sed*": deny
     "write*": deny
     "echo*>*": deny
-    # Build boundary — the human builds and installs (AGENTS.md / RULES.md §1.6).
-    "*build apk*": deny
-    "*build appbundle*": deny
-    "*assembleRelease*": deny
-    "*bundleRelease*": deny
+    # Build boundary — `flutter build apk` is ALLOWED per RULES.md §1.5 (operator
+    # override 2026-10-01). appbundle/gradle release stay `ask`: signing and
+    # store packaging are deliberate operator calls.
     "adb*install*": deny
     "adb*uninstall*": deny
     "adb*root*": deny
@@ -53,6 +51,13 @@ permission:
     # after an individual edit, and never "just to check".
     "*flutter.bat analyze*": allow
     "*flutter.bat pub get*": allow
+    # RULES.md 1.5 - builds allowed (operator override 2026-10-01). Still
+    # END-OF-PLAN: a release build is minutes, never a mid-plan probe.
+    "*flutter.bat build apk*": allow
+    "*build apk*": allow
+    "*build appbundle*": ask
+    "*assembleRelease*": ask
+    "*bundleRelease*": ask
     "adb*logcat*": allow
     "adb*shell*": allow
     "adb*devices*": allow

@@ -80,6 +80,10 @@ android {
             } else {
                 signingConfig = signingConfigs.debug
             }
+            // R8 runs on release (it does NOT run on debug), so without these rules
+            // `flutter build apk --release` fails on jaudiotagger's desktop-Java
+            // references. See android/app/proguard-rules.pro for the full story.
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
         }
     }
 

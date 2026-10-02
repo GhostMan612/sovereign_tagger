@@ -253,8 +253,10 @@ flutter analyze --no-pub
 # Get dependencies
 flutter pub get
 
-# Build APK (device-dependent - use Android Studio on Moto G)
-# flutter build apk --release  # DO NOT RUN HERE
+# Build APK — allowed on this host (RULES §1.5). End-of-plan only; it takes minutes.
+flutter build apk --release
+# Release signing falls back to the DEBUG keystore unless SOVEREIGN_KEYSTORE is set,
+# so the output is NOT Play-ready. Install/run on the Moto G via Android Studio.
 ```
 
 ---

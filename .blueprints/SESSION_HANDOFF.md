@@ -24,6 +24,19 @@ Session-end law: update rows 2–4 every session (+ row 5 when a new gotcha is l
 **Phase:** 0–28 COMPLETE. `flutter analyze --no-pub` → `No issues found!` (Flutter 3.47.5). **No planned implementation work remains** — every ROADMAP phase 0–28 is `[x]` and every registry row is FIXED/IMPLEMENTED. The open items are device-gated: smoke 1, 1b–1h plus the first-APK Kotlin build check. See Next actions.
 **Branch:** `main` is the single canonical branch and the only local or remote branch. 2026-10-01: `master`, `backup-before-main-sync` (local) and `claude/strange-lewin-97ba5a` / `claude/elegant-franklin-j99jl0` (remote) were **deleted** after verifying every one of them was fully merged into `main`. They no longer exist — do not reference them. Work on `main` (or a short-lived branch off it).
 
+## What shipped — release build unblocked + a real build fix (2026-10-01)
+
+- **Operator override: `flutter build apk` is now allowed on this host** (`RULES.md` §1.5). `*build apk*` moved from `deny` to `allow` in all 11 agent permission maps; `build appbundle` / `:app:assembleRelease` / `:app:bundleRelease` stay `ask` (signing + store packaging are operator calls). All 11 agents re-verified: 46 rules, 29 denies, 28/28 command resolutions correct. Builds remain END-OF-PLAN per §1A.0.
+- **Every agent cited a rule that does not exist.** All 11 permission maps said "Build boundary … (RULES.md §1.6)" — RULES.md only ever had §1.1–§1.4, §1A.0–§1A.4, §2–§4. The build boundary lived solely in AGENTS.md/CLAUDE.md/README prose. Added a real `RULES.md §1.5 Builds`, so the citation now resolves.
+- **`flutter build apk --release` was completely broken and nobody knew.** Only the debug build had ever been built here, and debug skips R8. Release failed `:app:minifyReleaseWithR8`:
+  - Layer 1 — `Missing class java.awt.image.BufferedImage`, `javax.imageio.ImageIO`, `javax.imageio.stream.ImageInputStream`. jaudiotagger (the `id3` backend) references desktop-Java artwork helpers. There was **no `proguard-rules.pro` in the repo at all** and the `release` buildType had no `proguardFiles` wiring.
+  - Layer 2 — after fixing layer 1, R8 then failed on Flutter's Play Core deferred-component references (`SplitInstallManager` etc.). Play Core is not a dependency; Flutter's embedding still references it.
+  - Fix: new `android/app/proguard-rules.pro` (verbatim R8-generated `-dontwarn`s, broad AWT/ImageIO guard, `-keep class org.jaudiotagger.**` because jaudiotagger resolves tag readers reflectively and would otherwise fail at *runtime* not build time, `-keep class com.sovereigntagger.**`, `-dontwarn com.google.android.play.core.**`) wired in via `proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'`.
+  - **VERIFIED-STATIC: `√ Built build\app\outputs\flutter-apk\app-release.apk` — 487.1MB, zero R8 errors.** NOT device-tested. Registry row `BLD1`.
+- **Gotcha for next time:** R8 reports missing classes ONE LAYER AT A TIME, so a release build can need several fix-build cycles. `build/app/outputs/mapping/release/missing_rules.txt` contains the exact rules R8 wants — read it instead of guessing.
+- **S0–S4 SDK edition PARKED** (operator decision): spec written to `.blueprints/SDK-EDITION-SPEC.md`, `ROADMAP.md` slices all `[-]`, `BLUEPRINTS.md` SPEC-S5 added. Headline counter-argument recorded: removing Python unlocks the ceiling for the `sdk` flavour only — `full` keeps chaquopy, so you get two ceilings and a dual-maintenance obligation, not one unlocked ceiling.
+- **ZERO test suite CONFIRMED** (operator decision): `ROADMAP.md` Phase 13 `[-]` PARKED. Was previously marked `[~]` in-progress, which contradicted the zero-bloat doctrine.
+
 ## What shipped — tooling + doc alignment (2026-10-01)
 
 No app code changed. Two classes of real defect fixed, both in the rulebook rather than the app:
@@ -67,7 +80,7 @@ Gate: `flutter analyze --no-pub` → `No issues found!`. Device smoke unchanged 
 1c. Album-art smoke (27.9): play a Library song with embedded art → art in player, mini-player and lock screen; Grabber default M4A → SAVE TO MUSIC succeeds with thumbnail art and correct duration; Forge art on an MP3 and a FLAC saves without hanging; an opus/webm file shows art; a folder with cover.jpg shows art (Android ≤12, or 13+ only if Photos access was granted — the app doesn't request it).
 1d. Art-fix verification 2026-09-25 (Muse Spark, fetch+diff+gate): `5a50412` confirmed — Android mode set (`isAndroid=true`), `catch Throwable`, raw-byte FLAC/OGG picture blocks, APIC type-front-cover path, `moof`/`mvex` fragmentation pre-scan + `_flattenMp4` + write retry in `TagIO.write`, Grabber always-remuxes-m4a, player falls back to `StorageClient.loadArtwork` (MediaMetadataRetriever). CORRECTION (cloud session): the third tier IS in code — `AudioService._folderArt` (`lib/screens/main_shell.dart`, names built from `_folderArtNames` × `_folderArtExts`, so a literal `cover.jpg` grep misses it), called last in `_resolveArtwork`; chain is 3-tier (tags → retriever → folder image). Caveat: on Android 13+ the app only requests `Permission.audio`, so folder images are invisible unless Photos access is granted — tier 3 is effectively ≤ Android 12 today. `flutter analyze --no-pub` clean on real SDK; device run still the gate.
 1b. Dependency-upgrade smoke (27.8): EQ preset and ReplayGain boost sound right (not 10× hot/weak — just_audio 0.10 gains are real dB); Workbench ops + Grabber MP3/remux on FFmpeg 9.0.1; Workbench REC (AAC via `RecorderSettings`); queue restores on relaunch and resumes at the saved position.
-2. Build check: first `flutter build apk` after Phase 27 compiles new Kotlin (StorageBridge/MainActivity/Widget) — not compiled in the cloud session.
+2. Build check: first `flutter build apk --release` compiles the new Kotlin (StorageBridge/MainActivity/Widget) — now POSSIBLE on this host (`RULES.md` §1.5 override 2026-10-01); was not compiled in the cloud session. Output is debug-keystore-signed unless `SOVEREIGN_KEYSTORE` is set, so it is not Play-ready.
 3. Optional: true overlapping crossfade (dual player) and a custom 15-band DSP (device EQ is typically 5 bands) — Phase 28 candidates.
 
 ## Where we were (Phase 25 snapshot)
@@ -167,7 +180,9 @@ Gate: `flutter analyze --no-pub` → `No issues found!`. Device smoke unchanged 
 
 ## Open decisions (deferred-zero-bloat)
 
-- `test/` suite — keep absent unless operator opts in; `flutter_test` declared but unused.
+- **`test/` suite — DECIDED 2026-10-01: ZERO, until every feature is built out.** Not the old "deferred unless you opt in"; a standing operator decision. `ROADMAP.md` Phase 13 is `[-]` PARKED. Do not create `test/`.
+- **Phase S0–S4 SDK edition — PARKED 2026-10-01, spec only.** Operator is researching pros/cons and tradeoffs. See `.blueprints/SDK-EDITION-SPEC.md`. Do not begin it as a side effect of another task.
+- **`flutter build apk` — ALLOWED 2026-10-01** (`RULES.md` §1.5). Supersedes the old host-build ban. Still end-of-plan; still not a substitute for a device run; release builds are debug-keystore-signed unless `SOVEREIGN_KEYSTORE` is set.
 - `file_picker` / `wakelock_plus` / `permission_handler 13` — stay pinned until dedicated session (everything else already at latest).
 - Java `1.8→17` — stay shimmed until dedicated Java session.
 - **SDK EDITION track approved (spec only)**: ROADMAP "Phase S0–S4" — dual-flavor future (full = personal w/ yt-dlp; sdk = publishable, Python ripped). Prerequisite order matters: S1 Dart spider port BEFORE S2 flavor split BEFORE S3 ceiling raise. win32/file_picker cap documented as orthogonal to Python removal.

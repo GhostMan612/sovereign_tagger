@@ -92,8 +92,8 @@
 - [x] `lib/widgets/matrix_rain.dart` reused single `TextPainter` (was 400 allocs/frame) + cols capped 36, len 7-14, GC pressure down ~60%
 - Gate: `No issues found!`; 60fps spot-check still device-dependent.
 
-## Phase 13 — Tests [~] deferred for zero-bloat
-- [ ] Minimal `test/` (probeStreams/mock, LRC parse, loudnorm JSON, filename sanitizer) — creator intentionally deferred: no suite in repo, verification is `flutter analyze` + device smoke. Add only if operator opts in; 1 file ~50 LOC, not bloating APK.
+## Phase 13 — Tests [-] PARKED by operator 2026-10-01 (ZERO test suite)
+- [-] Minimal `test/` (probeStreams/mock, LRC parse, loudnorm JSON, filename sanitizer) — **OPERATOR DECISION 2026-10-01: zero test suite until every feature is built out.** This is a standing decision, not the old "deferred unless you opt in". Do NOT create `test/` or add `flutter_test` runners. Verification remains `flutter analyze --no-pub` + device smoke. Revisit only once feature work is genuinely finished — and ask first.
 
 ## Phase 14 — lib/integrations/ zero-bloat spec [x]
 - [x] Deleted empty `lib/integrations/genius|itunes|musicbrainz|ollama/` (0 bytes in APK, but cluttered ownership)
@@ -246,15 +246,22 @@
 - [x] **28.4 Shaders + transitions** — GPU backdrop per tab, animated tab switches, page transitions, animated nav, perf pass
 - Gate per slice: `flutter analyze --no-pub` clean + scratch widget tests (flutter_tester) + shader compile (impellerc) where relevant; device smoke in SESSION_HANDOFF
 
-## Phase S0–S4 — SOVEREIGN SDK EDITION (future track, operator-approved spec)
+## Phase S0–S4 — SOVEREIGN SDK EDITION [-] PARKED 2026-10-01 — spec only, do not start
 
-> Rationale: yt-dlp/chaquopy is what blocks store distribution AND pins the toolchain ceiling (chaquopy 17.0.0 maxes AGP at 9.2, drags Python 3.14 wheel scarcity, ~120-150MB on-device Python tax, Built-in-Kotlin migration blocked). An SDK/core edition strips Python entirely → publishable build + unlocked ceiling + feature headroom. Full edition keeps living side-by-side for personal use.
+> **OPERATOR DECISION 2026-10-01: PARKED.** The operator needs to research the
+> pros/cons and tradeoffs before committing. Nothing below is authorised to be
+> implemented. The full write-up — benefits, costs, risks, reversibility, open
+> questions — lives in **`.blueprints/SDK-EDITION-SPEC.md`**. Read that first.
+> This track is large, mostly irreversible, and would replace the working `full`
+> flavour, so it must not begin as a side effect of an unrelated task.
+>
+> Rationale (unchanged): yt-dlp/chaquopy is what blocks store distribution AND pins the toolchain ceiling (chaquopy 17.0.0 maxes AGP at 9.2, drags Python 3.14 wheel scarcity, ~120-150MB on-device Python tax, Built-in-Kotlin migration blocked). An SDK/core edition strips Python entirely → publishable build + unlocked ceiling + feature headroom. Full edition keeps living side-by-side for personal use.
 
-- [ ] **S0 — Python dependency audit**: inventory every touchpoint before cutting — `bridge.py` (Grabber search/download/merge), `spider.py` (Genius→LRCLIB→SoundCloud→iTunes→MusicBrainz enrichment), `updater.py`/`doctor.py` (self-heal). Everything else is already native/Dart: ACRCloud = Kotlin bridge ✓, ID3 = jaudiotagger ✓, Whisper = FFmpeg filter ✓, ghost brain = pure-Dart TF-IDF ✓, PCM = AudioRecord ✓.
-- [ ] **S1 — Dart spider port** (the last real Python dependency): reimplement `spider.py` cascade as pure-Dart HTTPS calls (all five sources are plain REST APIs — `dart:io` HttpClient, zero new deps). Lives beside the Kotlin ACR bridge so Pipeline enrichment survives Python removal. Add unit-check against known tracks.
-- [ ] **S2 — Gradle flavors**: `full` (current: chaquopy + Grabber + python/) vs `sdk` (no python source set, no Grabber tab, no updater/doctor channels). Conditional tab registration in MainShell via flavor. Self-heal story for sdk edition: doctor/updater features hidden; yt-dlp maintenance N/A.
-- [ ] **S3 — Ceiling raise (sdk flavor only, dedicated session)**: after chaquopyectomy — migrate to **Built-in Kotlin** (kills the recurring KGP warning), AGP past 9.2 when Flutter demands, Gradle/KGP current, `compileOptions 1.8→17`, compileSdk/NDK bumps as Flutter requires. NOTE (honest scope): the `win32 5.9.0 ↔ file_picker ^9 ↔ wakelock` cap is a WINDOWS-desktop-plugin conflict, NOT Python-related — it lifts separately via its own `--major-versions` session. Post-raise feature unlocks: modern ML (TFLite successor becomes viable — JVM 17), url_launcher-class plugins safe, newer audio packages.
-- [ ] **S4 — SDK packaging**: flat `SovereignTagger-SDK.apk` via existing outputFileName pattern; distribution targets = GitHub Releases / F-Droid-style repo / direct APK (Play becomes *possible* for sdk flavor since no ripper inside — operator call). Version-of-record docs split: README gets an EDITIONS table.
+- [-] **S0 — Python dependency audit**: inventory every touchpoint before cutting — `bridge.py` (Grabber search/download/merge), `spider.py` (Genius→LRCLIB→SoundCloud→iTunes→MusicBrainz enrichment), `updater.py`/`doctor.py` (self-heal). Everything else is already native/Dart: ACRCloud = Kotlin bridge ✓, ID3 = jaudiotagger ✓, Whisper = FFmpeg filter ✓, ghost brain = pure-Dart BM25 ✓, PCM = AudioRecord ✓.
+- [-] **S1 — Dart spider port** (the last real Python dependency): reimplement `spider.py` cascade as pure-Dart HTTPS calls (all five sources are plain REST APIs — `dart:io` HttpClient, zero new deps). Lives beside the Kotlin ACR bridge so Pipeline enrichment survives Python removal. Verify against known tracks.
+- [-] **S2 — Gradle flavors**: `full` (current: chaquopy + Grabber + python/) vs `sdk` (no python source set, no Grabber tab, no updater/doctor channels). Conditional tab registration in MainShell via flavor. Self-heal story for sdk edition: doctor/updater features hidden; yt-dlp maintenance N/A.
+- [-] **S3 — Ceiling raise (sdk flavor only, dedicated session)**: after chaquopyectomy — migrate to **Built-in Kotlin** (kills the recurring KGP warning), AGP past 9.2 when Flutter demands, Gradle/KGP current, `compileOptions 1.8→17`, compileSdk/NDK bumps as Flutter requires. NOTE (honest scope): the `win32 5.9.0 ↔ file_picker ^9 ↔ wakelock` cap is a WINDOWS-desktop-plugin conflict, NOT Python-related — it lifts separately via its own `--major-versions` session. Post-raise feature unlocks: modern ML (TFLite successor becomes viable — JVM 17), url_launcher-class plugins safe, newer audio packages.
+- [-] **S4 — SDK packaging**: flat `SovereignTagger-SDK.apk` via existing outputFileName pattern; distribution targets = GitHub Releases / F-Droid-style repo / direct APK (Play becomes *possible* for sdk flavor since no ripper inside — operator call). Version-of-record docs split: README gets an EDITIONS table.
 - Gate per slice: analyze clean + Moto G smoke; S3 additionally needs full release-build regression on both flavors.
 
 ## Phase 28+ (future)
