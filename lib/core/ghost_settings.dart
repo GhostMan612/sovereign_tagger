@@ -3,6 +3,8 @@
 // The Future Dictates the Past and the Past is Always Present.
 // ============================================================
 
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -11,6 +13,11 @@ class GhostSettings {
   static const String _visibleKey = 'ghost_visible';
   static const String _autoExpandKey = 'ghost_auto_expand';
   static const String _firstLaunchKey = 'ghost_first_launch_complete_v2';
+
+  static final Completer<void> _ready = Completer<void>();
+
+  static bool get isReady => _ready.isCompleted;
+  static Future<void> ready() => _ready.future;
 
   static final ValueNotifier<bool> _reduceMotion = ValueNotifier<bool>(false);
   static final ValueNotifier<bool> _visible = ValueNotifier<bool>(true);
@@ -27,6 +34,7 @@ class GhostSettings {
     _visible.value = prefs.getBool(_visibleKey) ?? true;
     _autoExpand.value = prefs.getBool(_autoExpandKey) ?? true;
     _firstLaunchComplete.value = prefs.getBool(_firstLaunchKey) ?? false;
+    if (!_ready.isCompleted) _ready.complete();
   }
 
   static Future<void> setReduceMotion(bool value) async {

@@ -963,8 +963,9 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
       SovereignState.pendingGrabberUrl.value = url;
       SovereignState.currentTab.value = 0;
     }, onError: (_) {});
-    SharedPreferences.getInstance().then((prefs) {
-      GhostSettings.load(prefs);
+    SharedPreferences.getInstance().then((prefs) async {
+      await GhostSettings.load(prefs);
+      if (!mounted) return;
       if (!GhostSettings.firstLaunchComplete.value && GhostSettings.visible.value) {
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (mounted) _ghostController.materialize();

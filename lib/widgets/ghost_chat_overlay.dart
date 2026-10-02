@@ -107,6 +107,8 @@ class _GhostChatOverlayState extends State<GhostChatOverlay> with TickerProvider
   }
 
   Future<void> _checkFirstLaunch() async {
+    if (!GhostSettings.isReady) await GhostSettings.ready();
+    if (!mounted) return;
     if (!GhostSettings.firstLaunchComplete.value && GhostSettings.autoExpand.value && GhostSettings.visible.value) {
       setState(() {
         _chatState = GhostChatState.expanded;
@@ -118,24 +120,32 @@ class _GhostChatOverlayState extends State<GhostChatOverlay> with TickerProvider
 
   Future<void> _runFirstLaunchSequence() async {
     for (int i = 0; i < _launchSequence.length; i++) {
+      if (!mounted) return;
       final step = _launchSequence[i];
       await _typewriterSay(step.text, isGhost: true);
+      if (!mounted) return;
       if (step.isLaugh) {
         await widget.ghostController.glitchLaugh();
       }
+      if (!mounted) return;
       await Future.delayed(Duration(milliseconds: step.pauseAfter));
     }
+    if (!mounted) return;
     await GhostSettings.setFirstLaunchComplete();
+    if (!mounted) return;
     await _startContextualTutorial();
   }
 
   Future<void> _startContextualTutorial() async {
+    if (!mounted) return;
     final tab = SovereignState.currentTab.value;
     final tutorial = _tutorials[tab] ?? _tutorials[0]!;
     for (final line in tutorial) {
+      if (!mounted) return;
       await _typewriterSay(line, isGhost: true);
       await Future.delayed(const Duration(milliseconds: 800));
     }
+    if (!mounted) return;
     _addSuggestionsForTab(SovereignState.currentTab.value);
     Future.delayed(const Duration(seconds: 12), () {
       if (mounted && !_userInteracted && _chatState == GhostChatState.expanded) {
@@ -145,6 +155,7 @@ class _GhostChatOverlayState extends State<GhostChatOverlay> with TickerProvider
   }
 
   Future<void> _typewriterSay(String text, {bool isGhost = true}) async {
+    if (!mounted) return;
     final message = _ChatMessage(text: '', isGhost: isGhost, isTyping: true);
     setState(() {
       _messages.add(message);
@@ -263,6 +274,7 @@ void _scrollToBottom() {
       setState(() => _chatState = GhostChatState.expanded);
       await _controller.forward();
       await Future.delayed(const Duration(milliseconds: 300));
+      if (!mounted) return;
       _inputFocus.requestFocus();
     }
   }

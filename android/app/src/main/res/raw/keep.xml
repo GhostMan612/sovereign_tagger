@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Resource-shrinker keep list.
+
+  The audio_service plugin builds its lockscreen / notification CustomActions
+  from icons it resolves BY NAME at runtime:
+
+    AudioService.java:419  getResources().getIdentifier(resourceName, type, pkg)
+    AudioService.java:451  createCustomAction(MediaControl control) -> new Builder(name, label, iconId)
+
+  A name-based lookup is invisible to the resource shrinker, which is free to
+  delete anything it cannot see referenced. With shrinking active the release
+  APK lost all seven icons and every MediaSession update threw:
+
+    java.lang.IllegalArgumentException: You must specify an icon resource id
+    to build a CustomAction
+
+  (Found by installing the release APK on the Moto G, 2026-10-01. These were
+  present in the debug APK and absent from the release APK.)
+
+  `shrinkResources false` in build.gradle is the primary fix; this file is
+  defence in depth so the icons survive if shrinking is ever re-enabled.
+
+  Verified after the fix with:
+    aapt2 dump resources app-release.apk | findstr audio_service
+-->
+<resources xmlns:tools="http://schemas.android.com/tools"
+    tools:keep="@drawable/audio_service_play_arrow,@drawable/audio_service_pause,@drawable/audio_service_skip_next,@drawable/audio_service_skip_previous,@drawable/audio_service_stop,@drawable/audio_service_fast_forward,@drawable/audio_service_fast_rewind" />

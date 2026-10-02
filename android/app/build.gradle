@@ -84,6 +84,19 @@ android {
             // `flutter build apk --release` fails on jaudiotagger's desktop-Java
             // references. See android/app/proguard-rules.pro for the full story.
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+            // Resource shrinking is OFF deliberately. audio_service resolves its
+            // notification icons by NAME at runtime (AudioService.java:419 ->
+            // Resources.getIdentifier), which the resource shrinker cannot see as a
+            // reference. Shrinking therefore DELETED audio_service_play_arrow /
+            // _pause / _skip_next / _skip_previous / _stop / _fast_forward /
+            // _fast_rewind, and every MediaSession update then threw
+            //   IllegalArgumentException: You must specify an icon resource id
+            //   to build a CustomAction
+            // which broke the lockscreen notification buttons. See
+            // res/raw/keep.xml for the belt-and-braces keep list. Cost of leaving
+            // shrinking off is negligible here (the APK is ~487MB, dominated by
+            // FFmpeg + Python + the 141MB Whisper model, not by resources).
+            shrinkResources false
         }
     }
 
