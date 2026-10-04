@@ -24,6 +24,23 @@ Session-end law: update rows 2–4 every session (+ row 5 when a new gotcha is l
 **Phase:** 0–28 COMPLETE. `flutter analyze --no-pub` → `No issues found!` (Flutter 3.47.5). **No planned implementation work remains** — every ROADMAP phase 0–28 is `[x]`, and as of the 2026-10-02 audit pass every registry row is FIXED/IMPLEMENTED. The open items are device-gated: smoke 1, 1b–1h. See Next actions.
 **Branch:** `main` is the single canonical branch and the only local or remote branch. 2026-10-01: `master`, `backup-before-main-sync` (local) and `claude/strange-lewin-97ba5a` / `claude/elegant-franklin-j99jl0` (remote) were **deleted** after verifying every one of them was fully merged into `main`. They no longer exist — do not reference them. Work on `main` (or a short-lived branch off it).
 
+## Device verification of the audited build — Moto G, 2026-10-02
+
+`5594935` installed on the Moto G (Android 16). Boot is clean: **0 `E/flutter`, 0 `FATAL`, 0 `Unhandled Exception`.**
+
+The two things that were previously "should work, unproven" are now **proven**:
+- **DG1** — `BOOT: FFmpeg armed: 534 filters registered (full+gpl)` and `BOOT: WHISPER SURFACE: DETECTED in registered filters` both print. Those lines were previously unreachable behind a dead `catch (_) {}`.
+- **AN2** — `dumpsys audio` shows a live **`AudioTrack usage=USAGE_MEDIA content=CONTENT_TYPE_MUSIC`** for uid 10735 with audio focus **held, `loss: none`**. That is objective proof audio is routed, not just that state changed. `volume=1.0` on every logged state and `volume driven to ZERO` never appeared.
+
+Also confirmed on-device: the shader loads (no `BACKDROP:` failure), the EQ pipeline constructs (`device EQ has 5 bands`, no fallback), and the new `_firePlay()` instrumentation reports **0** `REJECTED` / `0** `PLAYER ERROR`.
+
+**Three device gotchas, recorded so nobody repeats them:**
+1. **The keyguard silently eats media commands.** `cmd media_session dispatch play` and `KEYCODE_MEDIA_PLAY` both succeed and do nothing while the lock screen is up. Wake + swipe + `wm dismiss-keyguard` first, then confirm `topResumedActivity`.
+2. **logcat rotation ate the boot lines.** A 35 s capture made 1.2 MB and the splash diagnostics were already gone; `adb logcat -G 32M` fixed it. Raise the buffer before launching and dump within ~15 s.
+3. **`uiautomator dump` cannot see Flutter semantics** (362-char dump), so the UI-only paths are not host-automatable.
+
+**Still needs operator fingers** (no host path exists): Forge `SAVE & FIX ORIGINAL` end-to-end (FG2/FG3/FG4 — the reorder), and the Ghost command smoke (GH15–GH21), especially that **RESET FIRST LAUNCH now actually resets**. Also set crossfade > 0 to exercise the mute-floor fix at runtime — this boot ran with `crossfade=0.0`, so that specific change is read-verified only.
+
 ## What shipped — source audit of every remaining unverified area, 25 defects (2026-10-02)
 
 The operator rejected "needs a device" as a stopping point, so the four still-unverified smoke areas were audited by reading source instead of waiting: **Forge save-back, boot diagnostics, Ghost commands, and visuals/shader/lifecycle.** **25 defects found; all critical/high ones fixed.** Full table in `CURRENT_STATE.md` under "Audit pass 2026-10-02". The four that mattered most, all of the same species — **the UI told the user a lie**:

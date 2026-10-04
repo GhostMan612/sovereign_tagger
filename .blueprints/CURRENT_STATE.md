@@ -141,6 +141,26 @@ The operator refused to accept "needs a device" as the end state, so all four un
 | VS6 | animated_tab_stack | **Tapping two tabs within 280 ms hard-cut the intermediate tab instead of fading it** — `whenCompleteOrCancel` fires its callback on *cancel* too, so the first transition cleared `_previous` and the leaving tab hit `Offstage` immediately. | MED | **FIXED** monotonic `_gen` token gates the clear. |
 | DG1 | main.dart `_bootSequence` | **Both `WHISPER SURFACE` and the filter-count line were unreachable.** They sit after `await FFmpegKitExtended.initialize()` inside `try { … } catch (_) {}`; the plugin genuinely rethrows, so one throw killed both lines at once. The "filter count" also mislabelled a *String length* as a filter count. Secondary blindness: the plugin reports its own failure via `dart:developer log()`, which never reaches logcat in release AOT, and the repo had **zero** fallback loggers. | HIGH | **FIXED** both catches now log with `BOOT:` prefixes and name the consequence ("DSP is dead, every FFmpeg op will fail"); filter count is a real word count. **Correction to the handoff:** the Settings-screen `WHISPER SURFACE` verdict and the "N filters" card are *user-triggered UI strings*, never logcat — their absence on a boot-only smoke test was expected, not a defect. Only the two `main.dart` lines were genuinely dead. |
 
+### Device verification of `5594935` — Moto G, 2026-10-02 (what is now PROVEN, not inferred)
+
+Installed the audited release build (488.6 MB) on `moto_g___2025` / `kansas`, Android 16 / SDK 36, serial `adb-ZT4222BMWN-ux3EQE._adb-tls-connect._tcp`.
+
+| Check | Result |
+|-------|--------|
+| Boot | **0** `E/flutter`, **0** `FATAL EXCEPTION`, **0** `Unhandled Exception` |
+| DG1 boot diagnostics | **`BOOT: FFmpeg armed: 534 filters registered (full+gpl)`** and **`BOOT: WHISPER SURFACE: DETECTED in registered filters`** both printed. These two lines were structurally unreachable before (dead `catch (_) {}` after an `await` that genuinely rethrows). **DG1 is now PROVEN fixed, not just "should log".** |
+| Shader (VS1) | **No `BACKDROP:` failure line** → `FragmentProgram.fromAsset` + `fragmentShader()` both succeeded on-device; the GPU path is live and the memoized-null retry path was not needed |
+| EQ pipeline | **`SOVEREIGN FX: device EQ has 5 bands`** → `_activateEq` succeeded, so the audio-effects pipeline constructed without falling back |
+| AN2 mute floor | **`volume=1.0` on every logged state; `volume driven to ZERO` never logged.** **CAVEAT: `crossfade=0.0` on this boot, so the `0.0 → 0.05` floor change was NOT runtime-exercised** — it is verified by reading only. Set crossfade > 0 to exercise it. |
+| Playback path | `setAudioSources OK: 2541 source(s), start=34 pos=42170ms` → `resume(): firing play` (the new `_firePlay()` instrumentation) with **0** `REJECTED`, **0** `PLAYER ERROR`, **0** `FAILED` |
+| Real audio output | `dumpsys audio`: fresh **`AudioTrack usage=USAGE_MEDIA content=CONTENT_TYPE_MUSIC`** for uid 10735, and audio focus **held** with `loss: none`. App was `topResumedActivity`. This is the objective evidence that audio is genuinely routed, not merely that state changed. |
+| MediaSession | Registered and `active=true`; no `CustomAction` icon errors (AN1 still clean) |
+
+**Device gotchas that cost real time — record these:**
+- **The keyguard silently eats media commands.** With the screen on the lock screen, `cmd media_session dispatch play` and `KEYCODE_MEDIA_PLAY` both return cleanly and do nothing. Always `input keyevent KEYCODE_WAKEUP` + `input swipe 540 1900 540 500` + `wm dismiss-keyguard` first, and confirm with `dumpsys activity activities | findstr topResumedActivity`.
+- **logcat rotation eats the earliest lines, and this device is loud.** A 35 s capture produced 1.2 MB and the splash's boot lines were already gone; the same lines were present after `adb logcat -G 32M`. **Raise the buffer before any launch, and dump within ~15 s.** This also retroactively explains part of the first run's "diagnostics printed nothing".
+- **`uiautomator dump` cannot see Flutter semantics** — a foreground dump is 362 chars of lock-screen/window chrome. Taps, Forge save-back and Ghost commands therefore **cannot** be automated from the host and need operator fingers.
+
 ### Known-issues deliberately NOT changed (parser/regression risk without a device)
 
 Recorded rather than fixed, because each needs a behaviour change in code I cannot execute. All are cosmetic-to-moderate; none risk data.
