@@ -24,6 +24,26 @@ Session-end law: update rows 2–4 every session (+ row 5 when a new gotcha is l
 **Phase:** 0–28 COMPLETE. `flutter analyze --no-pub` → `No issues found!` (Flutter 3.47.5). **No planned implementation work remains** — every ROADMAP phase 0–28 is `[x]`, and as of the 2026-10-02 audit pass every registry row is FIXED/IMPLEMENTED. The open items are device-gated: smoke 1, 1b–1h. See Next actions.
 **Branch:** `main` is the single canonical branch and the only local or remote branch. 2026-10-01: `master`, `backup-before-main-sync` (local) and `claude/strange-lewin-97ba5a` / `claude/elegant-franklin-j99jl0` (remote) were **deleted** after verifying every one of them was fully merged into `main`. They no longer exist — do not reference them. Work on `main` (or a short-lived branch off it).
 
+## GH29 closed by measurement — WAV/AIFF tagging is provably lossless (2026-10-02)
+
+Answering "can you actually close the last one?" — **yes**, without UI taps and without a test suite. The trick: run **the app's exact shipping jar** off-device. `android/app/build.gradle:116` pins `net.jthink:jaudiotagger:3.0.1` and it is the only version in the Gradle cache, so a JVM probe exercises literally the same code that ships.
+
+Method: build 44.1 kHz / 16-bit / stereo WAV + AIFF carrying a deterministic multi-harmonic signal, record the audio-payload SHA-256, then run `AudioFileIO.read → getTagOrCreateAndSetDefault → setField → commit()` with `TagOptionSingleton.setAndroid(true)` — the identical sequence to `Id3Tagger.writeTags` — and re-hash.
+
+| Format | Commit | Bytes | Payload SHA-256 before → after | Verdict |
+|--------|--------|-------|------------------------------|---------|
+| wav | OK | 352844 → 352970 | `ab1952f6…` → `ab1952f6…` **identical** | **LOSSLESS, proven** |
+| aiff | OK | 352854 → 352968 | `ab1952f6…` → `ab1952f6…` **identical** | **LOSSLESS, proven** |
+| dsf | not byte-compared | — | — | metadata-only by construction |
+
+On commit, jaudiotagger **appends** metadata chunks and rewrites nothing: in WAV, `fmt` stays at offset 12 and `data` at offset 36 with an identical size, with a `LIST` chunk added at the end; in AIFF an `ID3 ` chunk is appended. Channels/rate/bits/frames identical before and after. Same class of change as an mp3 ID3 commit — a metadata edit, never a re-encode. `dsf` is closed on structure (`DsfFileWriter.convert` only serialises the tag; audio lives in `DsdChunk`, a pure parse) and is labelled as such rather than claimed as measured.
+
+**Two method traps worth remembering (both bit me):** the first AIFF run failed with `CannotReadException…Size:0` and it was **my generator's bug** (SSND size omitted its 8-byte `soundOffset`+`blockSize`), not a jaudiotagger limitation — validate the fixture before trusting a failure. And the probe wouldn't compile against the very jar the app uses, which looked like a version skew; it was Kotlin's synthetic property access (`.tagOrCreateAndSetDefault` → `getTagOrCreateAndSetDefault()`). **A single failing probe is not evidence.**
+
+No code change was needed, and none was made. The probe stayed in `%TEMP%\opencode` — no framework, no committed fixtures, per the zero-test-suite directive; the recipe is recorded in `CURRENT_STATE.md` so it can be re-run.
+
+**The known-issue registry now has zero open defects.**
+
 ## Operator feedback round 3 — the six deferred Ghost items, now closed (2026-10-02)
 
 Operator confirmed the Ghost settings toggles **flip when tapped** (GH22 verified), completing the round-2 fix. Forge round-trip verification also confirmed on device.

@@ -177,11 +177,24 @@ With the device live, the six items previously left unfixed were revisited rathe
 | GH27 | A just-downloaded song reported "No match" for up to 2 minutes because the MediaStore cache was never invalidated; and a `queryAudio` failure was indistinguishable from an empty library, so the Ghost gave the wrong "open the LIBRARY once" advice | **FIXED** cache now tracks a generation counter bumped by `StorageClient.libraryRevision` (which `bumpLibrary()` fires on every download/export/overwrite), so a download invalidates it immediately. Query failures now log whether a stale cache is being served. Generation counter rather than a per-instance listener, so recreating the overlay cannot leak listeners |
 | GH28 | *Audit false positive.* "more" past the last detail "repeats one line forever and never returns the chips" | **NOT A BUG — audit error.** `_continueEntry` **does** return chips on the terminal path: `chips: entry.chips.isEmpty ? suggestionsFor(world.currentTab) : entry.chips`. The audit quoted that line with the chips omitted. Corrected rather than "fixed"; no code changed |
 
-**Still open — genuinely cannot be closed without a device byte-compare:**
+**GH29 — RESOLVED by measurement, no code change needed.** The concern was that jaudiotagger regenerates WAV/AIFF/DSF headers on `commit()`, which would break the lossless guarantee. **It does not.** Verified by running the app's exact shipping jar (`net.jthink:jaudiotagger:3.0.1`, confirmed as the only version in the Gradle cache and the version declared at `android/app/build.gradle:116`) against purpose-built 44.1 kHz / 16-bit / stereo files, calling the same `AudioFileIO.read → getTagOrCreateAndSetDefault → setField → commit()` sequence as `Id3Tagger.writeTags`, with `TagOptionSingleton.setAndroid(true)` set exactly as `Id3Tagger`'s init does.
 
-| ID | Item | Assessment |
-|----|------|-----------|
-| GH29 | `TagIO.writableExtensions` includes `wav`, `aif`, `aiff`, `dsf`, but jaudiotagger regenerates those headers on `commit()`. The repo's lossless law is "never **transcode** the audio stream" — and a header/RIFF-chunk rewrite does not transcode PCM, and is exactly what jaudiotagger already does for mp3/m4a/flac ID3 commits. So this is very likely compliant | **UNVERIFIED, low risk.** Requires a sample: tag a WAV in Forge, then byte-compare the `data` chunk before/after and confirm `probeStreams` still reports identical codec/rate/channels. Deliberately NOT "fixed" by deleting the extensions — that would remove working functionality on a guess. Needs operator fingers or a byte-compare tool |
+| Format | Commit | File bytes | Audio payload SHA-256 before → after | Verdict |
+|--------|--------|-----------|----------------------------------------|---------|
+| `wav` | `COMMIT_OK` | 352844 → 352970 | `ab1952f6…b1b4bc` → `ab1952f6…b1b4bc` **identical** | **LOSSLESS, proven** |
+| `aiff` | `COMMIT_OK` | 352854 → 352968 | `ab1952f6…b1b4bc` → `ab1952f6…b1b4bc` **identical** | **LOSSLESS, proven** |
+| `dsf` | not byte-compared | — | — | **Metadata-only by construction** (below) |
+
+What actually happens on commit: **metadata chunks are APPENDED, nothing is rewritten.** For WAV, `fmt` stays at offset 12 and `data` stays at offset 36 with an identical `sizeIncHeader:352808`; a `LIST` chunk is added at the end. For AIFF, `channels/rate/bits/frames` are unchanged and an `ID3 ` chunk is appended. Channel count, sample rate, bit depth and frame count are identical before and after in both cases. That is exactly the same class of container change jaudiotagger already makes for mp3/m4a/flac ID3 commits — a metadata edit, never a re-encode.
+
+`dsf` is closed on structural evidence rather than measurement, and is labelled as such: `DsfFileWriter.convert(AbstractID3v2Tag)` only serialises the tag, and `DsfChunk` handling is split into `ID3Chunk` (metadata), `FmtChunk` and `DsdChunk` (the audio), with `DsdChunk.readChunk(ByteBuffer)` a pure parse that exposes no resampling surface. A byte-compare needs a genuine DSD stream, which cannot be synthesised; DSD is a niche source format and the writer path is metadata-only by construction.
+
+**Method caveats, so this is not over-trusted:**
+- The first AIFF probe reported `CannotReadException: Not a valid header…Size:0` and it was **my generator's bug, not jaudiotagger's** — the SSND chunk size omitted its 8-byte `soundOffset`+`blockSize` header. A single failing probe is not evidence; the file was validated chunk-by-chunk before drawing any conclusion.
+- Kotlin's `.tagOrCreateAndSetDefault` / `.isAndroid =` are **synthetic property access** onto `getTagOrCreateAndSetDefault()` / `setAndroid(boolean)`. The Java probe initially failed to compile against the same jar the app uses, which briefly looked like a version mismatch. It was not — `build.gradle` pins 3.0.1 and that is the only jar present.
+- No test framework and no committed fixtures: the probe lived in `%TEMP%\opencode` and is not added to the repo, per the zero-test-suite directive. The recipe is recorded here so it can be re-run on demand.
+
+**Net: the lossless law holds for every format in `writableExtensions`. No code change was required, and none was made.** The registry has no open defects.
 
 ## Toolchain notes (dependency ceiling: win32 pair + compileSdk 37)
 
