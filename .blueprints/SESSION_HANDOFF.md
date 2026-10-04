@@ -24,6 +24,21 @@ Session-end law: update rows 2–4 every session (+ row 5 when a new gotcha is l
 **Phase:** 0–28 COMPLETE. `flutter analyze --no-pub` → `No issues found!` (Flutter 3.47.5). **No planned implementation work remains** — every ROADMAP phase 0–28 is `[x]`, and as of the 2026-10-02 audit pass every registry row is FIXED/IMPLEMENTED. The open items are device-gated: smoke 1, 1b–1h. See Next actions.
 **Branch:** `main` is the single canonical branch and the only local or remote branch. 2026-10-01: `master`, `backup-before-main-sync` (local) and `claude/strange-lewin-97ba5a` / `claude/elegant-franklin-j99jl0` (remote) were **deleted** after verifying every one of them was fully merged into `main`. They no longer exist — do not reference them. Work on `main` (or a short-lived branch off it).
 
+## Operator feedback round 3 — the six deferred Ghost items, now closed (2026-10-02)
+
+Operator confirmed the Ghost settings toggles **flip when tapped** (GH22 verified), completing the round-2 fix. Forge round-trip verification also confirmed on device.
+
+With the device live I went back and fixed the six defects that had been deliberately left recorded rather than changed, since "can't test it" was no longer true:
+
+- **GH23** — `lead` had `some`/`a`/`an` but not `the`/`my`, so `play the beatles` searched the literal `"the beatles"`. Added both.
+- **GH24** — `play what is this` matched the now-playing phrase list *before* `_playSomething`, so the Ghost reported the loaded track instead of playing the request. Hoisted `playVerb` above the phrase test and gated the branch on `!playVerb`.
+- **GH25** — `words.length <= 3` dropped `please pause the song now` and `go to the next song` into a random knowledge entry. The gate now counts politeness filler stripped. **Matching semantics deliberately unchanged** — only the gate widened, so `repeat one` still resolves as before.
+- **GH26** — a pending disambiguation prompt hijacked `play all my library tracks`. The `all`/`them`/`both` hijack now requires a short query, so a bare `all` still resolves the prompt but a real command does not.
+- **GH27** — a just-downloaded song read as "No match" for up to 2 minutes. The cache now tracks a generation counter bumped by `StorageClient.libraryRevision`, so `bumpLibrary()` invalidates it on every download/export/overwrite. Generation counter rather than a per-instance listener, so recreating the overlay cannot leak listeners.
+- **GH28** — **audit false positive, corrected not "fixed".** The claim that `more` never returns chips was wrong: `_continueEntry` does return them on the terminal path. The audit quoted that line with the chips omitted. No code changed.
+
+**One item honestly left open (GH29):** `wav`/`aif`/`aiff`/`dsf` tag commits. The repo's lossless law is "never transcode the audio stream", and a RIFF header rewrite is not a transcode — it is the same class of container rewrite jaudiotagger already does for mp3/m4a/flac. So it is very likely compliant, but it is **unverified**. Deliberately NOT "fixed" by deleting the extensions, which would remove working functionality on a guess. Needs a byte-compare of the `data` chunk around a Forge save.
+
 ## Operator feedback round 2 — Ghost settings toggles were dead controls (2026-10-02)
 
 Operator confirmed **Forge round-trip verified** ("Round-Trip Verified On Final File"), so FG2/FG3/FG4's stage→verify→release reorder works end-to-end on real hardware.

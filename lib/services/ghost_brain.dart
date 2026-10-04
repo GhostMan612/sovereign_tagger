@@ -368,7 +368,7 @@ class GhostBrain {
         }
       }
     }
-    if (words.contains('all') || words.contains('them') || words.contains('both')) {
+    if (words.length <= 3 && (words.contains('all') || words.contains('them') || words.contains('both'))) {
       _choices = const [];
       return _performTracks(verb, choices, 'all ${choices.length}');
     }
@@ -455,8 +455,9 @@ class GhostBrain {
     final set = q.set;
     final text = q.rawText;
     final isQuestion = text.contains(' how ') || text.contains(' why ') || set.contains('help') || text.contains(' explain ') || text.contains(' where ');
+    final playVerb = q.rawSet.intersection(const {'play', 'put', 'listen', 'queue', 'add', 'shuffle', 'blast', 'spin'}).isNotEmpty;
 
-    if (!isQuestion && (text.contains(' what is playing ') || text.contains(' whats playing ') || text.contains(' now playing ') || text.contains(' what song ') || text.contains(' what track ') || text.contains(' who is this ') || text.contains(' who sings ') || text.contains(' current song ') || text.contains(' what is this song ') || text.contains(' what is this '))) {
+    if (!isQuestion && !playVerb && (text.contains(' what is playing ') || text.contains(' whats playing ') || text.contains(' now playing ') || text.contains(' what song ') || text.contains(' what track ') || text.contains(' who is this ') || text.contains(' who sings ') || text.contains(' current song ') || text.contains(' what is this song ') || text.contains(' what is this '))) {
       if (!world.hasMedia) return const GhostReply("Nothing's loaded. Try 'shuffle everything' or 'play <artist>'.", chips: ['Shuffle everything']);
       final artist = world.nowArtist.trim();
       final state = world.isPlaying ? 'Playing' : 'Paused on';
@@ -515,13 +516,14 @@ class GhostBrain {
       return GhostReply(on ? 'Shuffle ON. Chaos engaged.' : 'Shuffle OFF. Order restored.', tone: GhostTone.happy);
     }
 
-    final playVerb = q.rawSet.intersection(const {'play', 'put', 'listen', 'queue', 'add', 'shuffle', 'blast', 'spin'}).isNotEmpty;
     if (playVerb && q.rawWords.length > 1) {
       final result = await _playSomething(q);
       if (result != null) return result;
     }
 
-    if (words.length <= 3) {
+    const gateFiller = {'please', 'now', 'ok', 'okay', 'just', 'right', 'again', 'for', 'me', 'go', 'to', 'the', 'a', 'an', 'um', 'uh', 'my', 'your', 'can', 'you', 'could', 'would'};
+    final cmdWords = words.where((w) => !gateFiller.contains(w)).toList();
+    if (cmdWords.length <= 3) {
       if (set.contains('pause')) {
         if (!world.hasMedia) return const GhostReply("Nothing's playing.");
         await world.pause();
@@ -609,7 +611,7 @@ class GhostBrain {
     if (rawSet.contains('queue') || rawSet.contains('add')) verb = _Verb.queue;
     if (text.contains(' play next ') || text.contains(' up next ') || text.contains(' next in the queue ') || (verb == _Verb.play && raw.length > 2 && raw.last == 'next')) verb = _Verb.next;
 
-    const lead = {'can', 'you', 'could', 'would', 'please', 'i', 'want', 'wanna', 'to', 'lets', 'let', 'us', 'me', 'just', 'now', 'go', 'ahead', 'and', 'play', 'put', 'on', 'listen', 'queue', 'add', 'shuffle', 'blast', 'spin', 'some', 'a', 'an', 'up'};
+    const lead = {'can', 'you', 'could', 'would', 'please', 'i', 'want', 'wanna', 'to', 'lets', 'let', 'us', 'me', 'just', 'now', 'go', 'ahead', 'and', 'play', 'put', 'on', 'listen', 'queue', 'add', 'shuffle', 'blast', 'spin', 'some', 'a', 'an', 'up', 'the', 'my'};
     const trail = {'please', 'now', 'next', 'for', 'me', 'up', 'on', 'shuffle', 'queue', 'to', 'the', 'in', 'my'};
     var start = 0;
     while (start < raw.length && lead.contains(raw[start])) {

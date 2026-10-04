@@ -20,11 +20,18 @@ import 'ghost_brain.dart';
 class AppGhostWorld implements GhostWorld {
   static const Duration _cacheLife = Duration(minutes: 2);
 
+  static int _generation = 0;
+  static bool _hooked = false;
+  int _seenGeneration = 0;
+
   final BuildContext Function() _context;
   List<GhostTrack>? _cache;
   DateTime _cachedAt = DateTime.fromMillisecondsSinceEpoch(0);
 
-  AppGhostWorld(this._context);
+  AppGhostWorld(this._context) {
+    _ensureHook();
+    _seenGeneration = _generation;
+  }
 
   String? get _currentPath {
     final index = AudioService.currentIndex.value;
@@ -69,6 +76,10 @@ class AppGhostWorld implements GhostWorld {
 
   @override
   Future<List<GhostTrack>> library() async {
+    if (_seenGeneration != _generation) {
+      _invalidate();
+      _seenGeneration = _generation;
+    }
     final cached = _cache;
     if (cached != null && cached.isNotEmpty && DateTime.now().difference(_cachedAt) < _cacheLife) return cached;
     try {
@@ -81,9 +92,21 @@ class AppGhostWorld implements GhostWorld {
       _cache = tracks;
       _cachedAt = DateTime.now();
       return tracks;
-    } catch (_) {
+    } catch (e) {
+      debugPrint('GHOST: library query failed (${_cache == null ? 'no cache yet' : 'serving ${_cachedAt.difference(DateTime.now()).inMinutes}m-old cache'}): $e');
       return cached ?? const [];
     }
+  }
+
+  void _invalidate() {
+    _cache = null;
+    _cachedAt = DateTime.fromMillisecondsSinceEpoch(0);
+  }
+
+  static void _ensureHook() {
+    if (_hooked) return;
+    _hooked = true;
+    StorageClient.libraryRevision.addListener(() => _generation++);
   }
 
   void _register(List<GhostTrack> tracks) {
