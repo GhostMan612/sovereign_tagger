@@ -416,36 +416,40 @@ class AudioService {
 
   static AudioSource _taggedSource(File f) => AudioSource.uri(Uri.file(f.path), tag: f.path);
 
-  static Future<void> _loadSources(List<AudioSource> sources, int index, Duration position) async {
+  static Future<bool> _loadSources(List<AudioSource> sources, int index, Duration position) async {
     try {
       await player.setAudioSources(sources, initialIndex: index, initialPosition: position);
       dbg('setAudioSources OK: ${sources.length} source(s), start=$index pos=${position.inMilliseconds}ms state=${player.processingState}');
+      return true;
     } catch (e) {
       dbg('setAudioSources FAILED: $e');
+      return false;
     }
   }
 
-  static Future<void> replacePlaylist(List<File> files, {int startIndex = 0, Duration startPosition = Duration.zero, bool autoplay = false}) async {
+  static Future<bool> replacePlaylist(List<File> files, {int startIndex = 0, Duration startPosition = Duration.zero, bool autoplay = false}) async {
     return _withQueueLock(() async {
       _wantPlaying = autoplay;
       playlist.value = files;
       final sources = files.map(_taggedSource).toList();
+      var loaded = true;
       if (files.isNotEmpty) {
         final idx = startIndex.clamp(0, files.length - 1);
         _loadedKey = "";
-        await _loadSources(sources, idx, startPosition);
-        await _ensureLoaded(idx);
-        if (autoplay && !_isVideoPath(files[idx].path)) _firePlay();
+        loaded = await _loadSources(sources, idx, startPosition);
+        if (loaded) await _ensureLoaded(idx);
+        if (loaded && autoplay && !_isVideoPath(files[idx].path)) _firePlay();
       } else {
         await player.clearAudioSources();
         currentIndex.value = -1;
       }
-      _persistQueue();
+      if (loaded) _persistQueue();
       await _syncHandlerQueue();
+      return loaded;
     });
   }
 
-  static Future<void> playFiles(List<File> files, {int startIndex = 0}) => replacePlaylist(files, startIndex: startIndex, autoplay: true);
+  static Future<bool> playFiles(List<File> files, {int startIndex = 0}) => replacePlaylist(files, startIndex: startIndex, autoplay: true);
 
   static Future<void> playNext(File file) async {
     return _withQueueLock(() async {

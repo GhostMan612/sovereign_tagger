@@ -121,8 +121,12 @@ class AppGhostWorld implements GhostWorld {
     if (tracks.isEmpty) return;
     final ordered = List<GhostTrack>.of(tracks);
     if (shuffle) ordered.shuffle();
+    final ok = await AudioService.playFiles(ordered.map((t) => File(t.path)).toList());
+    if (!ok) {
+      _register(ordered);
+      throw StateError('The player rejected ${ordered.length} source(s) — nothing loaded.');
+    }
     _register(ordered);
-    await AudioService.playFiles(ordered.map((t) => File(t.path)).toList());
   }
 
   @override

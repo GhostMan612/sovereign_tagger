@@ -87,10 +87,13 @@ class _SplashScreenState extends State<SplashScreen> {
     try {
       await FFmpegKitExtended.initialize();
       final filters = FFmpegKitExtended.getRegisteredFilters();
-      debugPrint("FFmpeg armed: ${filters.length} chars of filters registered (full+gpl)");
+      final filterCount = RegExp(r'\S+').allMatches(filters).length;
+      debugPrint("BOOT: FFmpeg armed: $filterCount filters registered (full+gpl)");
       final hasWhisper = filters.toLowerCase().contains("whisper");
-      debugPrint("WHISPER SURFACE: ${hasWhisper ? "DETECTED in registered filters — wire transcribe op" : "NOT exposed as filter — Phase D needs plugin route"}");
-    } catch (_) {}
+      debugPrint("BOOT: WHISPER SURFACE: ${hasWhisper ? "DETECTED in registered filters — wire transcribe op" : "NOT exposed as filter — Phase D needs plugin route"}");
+    } catch (e) {
+      debugPrint("BOOT: FFmpeg init FAILED — DSP is dead, every FFmpeg op will fail: $e");
+    }
 
     await Future.delayed(const Duration(milliseconds: 500));
 
@@ -123,7 +126,9 @@ class _SplashScreenState extends State<SplashScreen> {
         if (config["acr_key"] != null) await prefs.setString('acr_key', config["acr_key"]);
         if (config["acr_secret"] != null) await prefs.setString('acr_secret', config["acr_secret"]);
       }
-    } catch (_) {}
+    } catch (e) {
+      debugPrint("BOOT: storage vault decrypt FAILED — running on stored prefs: $e");
+    }
 
     await Future.delayed(const Duration(milliseconds: 400));
 
@@ -167,7 +172,7 @@ class _SplashScreenState extends State<SplashScreen> {
                   ),
                 ),
               ),
-              Positioned.fill(child: MachineRain(accentColor: themeColor, opacity: 0.22)),
+              Positioned.fill(child: RepaintBoundary(child: MachineRain(accentColor: themeColor, opacity: 0.22))),
               Center(
               child: Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 48.0),

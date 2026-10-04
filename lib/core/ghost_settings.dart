@@ -60,4 +60,10 @@ class GhostSettings {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool(_firstLaunchKey, true);
   }
+
+  static Future<void> clearFirstLaunchComplete() async {
+    _firstLaunchComplete.value = false;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_firstLaunchKey, false);
+  }
 }

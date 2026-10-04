@@ -15,18 +15,29 @@ class MachineRain extends StatefulWidget {
   State<MachineRain> createState() => _MachineRainState();
 }
 
-class _MachineRainState extends State<MachineRain> with SingleTickerProviderStateMixin {
+class _MachineRainState extends State<MachineRain> with SingleTickerProviderStateMixin, WidgetsBindingObserver {
   late AnimationController _controller;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _controller = AnimationController(vsync: this, duration: const Duration(seconds: 1))
       ..repeat();
   }
 
   @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.paused || state == AppLifecycleState.hidden) {
+      _controller.stop();
+    } else if (state == AppLifecycleState.resumed) {
+      _controller.repeat();
+    }
+  }
+
+  @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _controller.dispose();
     super.dispose();
   }
@@ -51,6 +62,7 @@ class _MachineRainPainter extends CustomPainter {
   final double tick;
   final Color accentColor;
   final double opacity;
+  final TextPainter tp = TextPainter(textDirection: TextDirection.ltr);
 
   _MachineRainPainter({required this.tick, required this.accentColor, required this.opacity});
 
@@ -60,21 +72,21 @@ class _MachineRainPainter extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     final cols = (size.width / 18).ceil().clamp(12, 36);
     final colW = size.width / cols;
-    final rng = Random(42);
-    final tp = TextPainter(textDirection: TextDirection.ltr);
 
     for (int c = 0; c < cols; c++) {
+      final rng = Random(1000 + c * 7);
       final speed = 0.8 + rng.nextDouble() * 1.6;
       final offset = (tick * speed * 400 + rng.nextDouble() * 200) % (size.height + 200);
       final len = 7 + rng.nextInt(8);
       final headX = c * colW + colW * 0.3;
+      final columnGlyphs = List<String>.generate(24, (_) => _glyphs[rng.nextInt(_glyphs.length)]);
 
       for (int i = 0; i < len; i++) {
         final y = offset - i * 18;
         if (y < -20 || y > size.height + 20) continue;
         final fade = (1 - i / len) * opacity;
         if (fade < 0.02) continue;
-        final glyph = _glyphs[rng.nextInt(_glyphs.length)];
+        final glyph = columnGlyphs[i % columnGlyphs.length];
         final isHead = i == 0;
         tp.text = TextSpan(
           text: glyph,
@@ -92,7 +104,7 @@ class _MachineRainPainter extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(covariant _MachineRainPainter oldDelegate) => oldDelegate.tick != tick || oldDelegate.accentColor != accentColor;
+  bool shouldRepaint(covariant _MachineRainPainter oldDelegate) => oldDelegate.tick != tick || oldDelegate.accentColor != accentColor || oldDelegate.opacity != opacity;
 }
 
 enum BackdropVariant { grabber, forge, pipeline, workbench, generic }
@@ -131,24 +143,18 @@ class _AmbientBackdropState extends State<AmbientBackdrop> with SingleTickerProv
   @override
   Widget build(BuildContext context) {
     return IgnorePointer(
-      child: AnimatedBuilder(
-        animation: _ctrl,
-        builder: (context, child) {
-          final quantized = (_ctrl.value * 30).floorToDouble() / 30;
-          return Container(
-            decoration: BoxDecoration(
-              gradient: RadialGradient(
-                center: Alignment.topCenter,
-                radius: 1.2,
-                colors: [widget.accentColor.withValues(alpha: 0.06), Colors.transparent],
-              ),
-            ),
-            child: CustomPaint(
-              painter: _PulsingGridPainter(color: widget.accentColor.withValues(alpha: 0.035), tick: quantized, variant: widget.variant),
-              size: Size.infinite,
-            ),
-          );
-        },
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          gradient: RadialGradient(
+            center: Alignment.topCenter,
+            radius: 1.2,
+            colors: [widget.accentColor.withValues(alpha: 0.06), Colors.transparent],
+          ),
+        ),
+        child: CustomPaint(
+          painter: _PulsingGridPainter(color: widget.accentColor.withValues(alpha: 0.035), controller: _ctrl, variant: widget.variant),
+          size: Size.infinite,
+        ),
       ),
     );
   }
@@ -156,13 +162,32 @@ class _AmbientBackdropState extends State<AmbientBackdrop> with SingleTickerProv
 
 class _PulsingGridPainter extends CustomPainter {
   final Color color;
-  final double tick;
+  final Animation<double> controller;
   final BackdropVariant variant;
-  _PulsingGridPainter({required this.color, required this.tick, required this.variant});
+  _PulsingGridPainter({required this.color, required this.controller, required this.variant}) : super(repaint: controller);
+
+  final Paint _grid = Paint()..strokeWidth = 0.5;
+  final Paint _spark = Paint()
+    ..strokeWidth = 1.2
+    ..strokeCap = StrokeCap.round
+    ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 2);
+  final Paint _dot = Paint()..maskFilter = const MaskFilter.blur(BlurStyle.normal, 3);
+  final Paint _arc = Paint()
+    ..style = PaintingStyle.stroke
+    ..strokeWidth = 1.4
+    ..strokeCap = StrokeCap.round
+    ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 3);
+  final Paint _glow = Paint()
+    ..strokeWidth = 2.0
+    ..strokeCap = StrokeCap.round
+    ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 4);
+  final Paint _big = Paint()..maskFilter = const MaskFilter.blur(BlurStyle.normal, 5);
 
   @override
   void paint(Canvas canvas, Size size) {
-    final p = Paint()..color = color..strokeWidth = 0.5;
+    final tick = (controller.value * 30).floorToDouble() / 30;
+    _grid.color = color;
+    final p = _grid;
     const step = 32.0;
     for (double x = 0; x < size.width; x += step) {
       canvas.drawLine(Offset(x, 0), Offset(x, size.height), p);
@@ -171,11 +196,7 @@ class _PulsingGridPainter extends CustomPainter {
       canvas.drawLine(Offset(0, y), Offset(size.width, y), p);
     }
 
-    final sparkPaint = Paint()
-      ..color = color.withValues(alpha: 0.18)
-      ..strokeWidth = 1.2
-      ..strokeCap = StrokeCap.round
-      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 2);
+    final sparkPaint = _spark..color = color.withValues(alpha: 0.18);
 
     final rng = Random(variant.index * 99);
     final sparkCount = switch (variant) {
@@ -197,22 +218,22 @@ class _PulsingGridPainter extends CustomPainter {
         final y = progress * size.height;
         final len = 18 + seed * 28;
         canvas.drawLine(Offset(col, y), Offset(col, (y + len).clamp(0, size.height)), sparkPaint);
-        canvas.drawCircle(Offset(col, y), 1.8, Paint()..color = Colors.white.withValues(alpha: 0.22)..maskFilter = const MaskFilter.blur(BlurStyle.normal, 3));
+        canvas.drawCircle(Offset(col, y), 1.8, _dot..color = Colors.white.withValues(alpha: 0.22));
       } else {
         final row = (seed * (size.height / step)).floor() * step;
         final progress = (tick + seed * 1.3) % 1.0;
         final x = progress * size.width;
         final len = 20 + seed * 30;
         canvas.drawLine(Offset(x, row), Offset((x + len).clamp(0, size.width), row), sparkPaint);
-        canvas.drawCircle(Offset(x, row), 1.8, Paint()..color = Colors.white.withValues(alpha: 0.22)..maskFilter = const MaskFilter.blur(BlurStyle.normal, 3));
+        canvas.drawCircle(Offset(x, row), 1.8, _dot..color = Colors.white.withValues(alpha: 0.22));
       }
     }
 
-    _paintArcs(canvas, size, rng, step);
-    _paintTravelers(canvas, size, rng, step);
+    _paintArcs(canvas, size, rng, step, tick);
+    _paintTravelers(canvas, size, rng, step, tick);
   }
 
-  void _paintArcs(Canvas canvas, Size size, Random rng, double step) {
+  void _paintArcs(Canvas canvas, Size size, Random rng, double step, double tick) {
     final arcCount = switch (variant) {
       BackdropVariant.grabber => 2,
       BackdropVariant.forge => 1,
@@ -255,19 +276,14 @@ class _PulsingGridPainter extends CustomPainter {
         }
       }
 
-      final arcPaint = Paint()
-        ..color = color.withValues(alpha: 0.30 * fade)
-        ..strokeWidth = 1.4
-        ..style = PaintingStyle.stroke
-        ..strokeCap = StrokeCap.round
-        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 3);
+      final arcPaint = _arc..color = color.withValues(alpha: 0.30 * fade);
       canvas.drawPath(path, arcPaint);
 
-      canvas.drawCircle(prev, 2.2, Paint()..color = Colors.white.withValues(alpha: 0.45 * fade)..maskFilter = const MaskFilter.blur(BlurStyle.normal, 5));
+      canvas.drawCircle(prev, 2.2, _big..color = Colors.white.withValues(alpha: 0.45 * fade));
     }
   }
 
-  void _paintTravelers(Canvas canvas, Size size, Random rng, double step) {
+  void _paintTravelers(Canvas canvas, Size size, Random rng, double step, double tick) {
     final count = switch (variant) {
       BackdropVariant.grabber => 2,
       BackdropVariant.forge => 1,
@@ -284,10 +300,7 @@ class _PulsingGridPainter extends CustomPainter {
       const tail = 0.10;
 
       final linePos = ((seed * 7.31) % 1.0) * (vertical ? size.width : size.height);
-      final glow = Paint()
-        ..strokeWidth = 2.0
-        ..strokeCap = StrokeCap.round
-        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 4);
+      final glow = _glow;
 
       for (double k = 0; k <= 1.0; k += 0.125) {
         final p = (progress - k * tail) % 1.0;
@@ -299,10 +312,10 @@ class _PulsingGridPainter extends CustomPainter {
       }
 
       final head = vertical ? Offset(linePos, progress * size.height) : Offset(progress * size.width, linePos);
-      canvas.drawCircle(head, 1.6, Paint()..color = Colors.white.withValues(alpha: 0.35)..maskFilter = const MaskFilter.blur(BlurStyle.normal, 4));
+      canvas.drawCircle(head, 1.6, _glow..color = Colors.white.withValues(alpha: 0.35));
     }
   }
 
   @override
-  bool shouldRepaint(covariant _PulsingGridPainter oldDelegate) => oldDelegate.tick != tick || oldDelegate.color != color || oldDelegate.variant != variant;
+  bool shouldRepaint(covariant _PulsingGridPainter oldDelegate) => oldDelegate.color != color || oldDelegate.variant != variant || oldDelegate.controller != controller;
 }

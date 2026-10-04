@@ -14,6 +14,7 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.provider.MediaStore
+import android.util.Log
 import com.ryanheise.audioservice.AudioServiceActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.EventChannel
@@ -91,8 +92,9 @@ class MainActivity: AudioServiceActivity() {
             try {
                 val value = block()
                 mainHandler.post { result.success(value) }
-            } catch (e: Exception) {
-                mainHandler.post { result.error(code, e.message, null) }
+            } catch (e: Throwable) {
+                Log.e("MainActivity", "$code failed", e)
+                mainHandler.post { result.error(code, e.toString(), null) }
             }
         }.start()
     }

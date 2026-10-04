@@ -34,7 +34,11 @@ class _CyberBackdropState extends State<CyberBackdrop> with SingleTickerProvider
     return _loading ??= ui.FragmentProgram.fromAsset('shaders/backdrop.frag').then<ui.FragmentProgram?>((p) {
       _program = p;
       return p;
-    }).catchError((Object _) => null);
+    }).catchError((Object e) {
+      debugPrint('BACKDROP: shader load FAILED, falling back to the painted backdrop: $e');
+      _loading = null;
+      return null;
+    });
   }
 
   @override
@@ -43,14 +47,25 @@ class _CyberBackdropState extends State<CyberBackdrop> with SingleTickerProvider
     WidgetsBinding.instance.addObserver(this);
     _ticker = createTicker(_onTick);
     if (_program != null) {
-      _shader = _program!.fragmentShader();
-      _ticker.start();
+      if (_tryBindShader()) _ticker.start();
     } else {
       _load().then((program) {
         if (!mounted || program == null) return;
-        setState(() => _shader = program.fragmentShader());
-        _ticker.start();
+        if (SchedulerBinding.instance.lifecycleState != AppLifecycleState.resumed) return;
+        setState(() {});
+        if (_tryBindShader()) _ticker.start();
       });
+    }
+  }
+
+  bool _tryBindShader() {
+    try {
+      _shader = _program!.fragmentShader();
+      return true;
+    } catch (e) {
+      debugPrint('BACKDROP: fragmentShader() FAILED, falling back to the painted backdrop: $e');
+      _shader = null;
+      return false;
     }
   }
 
@@ -87,7 +102,7 @@ class _CyberBackdropState extends State<CyberBackdrop> with SingleTickerProvider
   @override
   Widget build(BuildContext context) {
     final shader = _shader;
-    if (shader == null) return AmbientBackdrop(accentColor: widget.accentColor, variant: widget.variant);
+    if (shader == null) return RepaintBoundary(child: AmbientBackdrop(accentColor: widget.accentColor, variant: widget.variant));
     return IgnorePointer(
       child: RepaintBoundary(
         child: CustomPaint(

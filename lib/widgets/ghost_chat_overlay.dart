@@ -47,6 +47,7 @@ class _GhostChatOverlayState extends State<GhostChatOverlay> with TickerProvider
   late final GhostBrain _brain = GhostBrain(AppGhostWorld(() => context));
   Offset _dragOffset = Offset.zero;
   bool _userInteracted = false;
+  bool _inFlight = false;
 
   final List<_LaunchStep> _launchSequence = [
     _LaunchStep(text: "Welcome to...", pauseAfter: 800),
@@ -119,21 +120,23 @@ class _GhostChatOverlayState extends State<GhostChatOverlay> with TickerProvider
   }
 
   Future<void> _runFirstLaunchSequence() async {
-    for (int i = 0; i < _launchSequence.length; i++) {
-      if (!mounted) return;
-      final step = _launchSequence[i];
-      await _typewriterSay(step.text, isGhost: true);
-      if (!mounted) return;
-      if (step.isLaugh) {
-        await widget.ghostController.glitchLaugh();
+    try {
+      for (int i = 0; i < _launchSequence.length; i++) {
+        if (!mounted) return;
+        final step = _launchSequence[i];
+        await _typewriterSay(step.text, isGhost: true);
+        if (!mounted) return;
+        if (step.isLaugh) {
+          await widget.ghostController.glitchLaugh();
+        }
+        if (!mounted) return;
+        await Future.delayed(Duration(milliseconds: step.pauseAfter));
       }
       if (!mounted) return;
-      await Future.delayed(Duration(milliseconds: step.pauseAfter));
+      await _startContextualTutorial();
+    } finally {
+      await GhostSettings.setFirstLaunchComplete();
     }
-    if (!mounted) return;
-    await GhostSettings.setFirstLaunchComplete();
-    if (!mounted) return;
-    await _startContextualTutorial();
   }
 
   Future<void> _startContextualTutorial() async {
@@ -195,7 +198,7 @@ class _GhostChatOverlayState extends State<GhostChatOverlay> with TickerProvider
   }
 
   void _addSuggestionsForTab(int tab) {
-    _showSuggestionChips([..._brain.suggestionsFor(tab), 'Hide ghost']);
+    _showSuggestionChips([..._brain.suggestionsFor(tab)]);
   }
 
   void _showSuggestionChips(List<String> chips) {
@@ -207,19 +210,34 @@ class _GhostChatOverlayState extends State<GhostChatOverlay> with TickerProvider
 
   Future<void> _handleUserInput(String text) async {
     if (text.trim().isEmpty) return;
-    _userInteracted = true;
-    _inputController.clear();
-    Sfx.play(SfxId.select);
-    _addMessage(_ChatMessage(text: text, isGhost: false));
-    widget.ghostController.setMood(GhostMood.thinking);
-    await Future.delayed(Duration(milliseconds: 380 + _rng.nextInt(320)));
-    if (!mounted) return;
-    widget.ghostController.setMood(GhostMood.idle);
-    await _processUserQuery(text);
+    if (_inFlight) return;
+    _inFlight = true;
+    try {
+      _userInteracted = true;
+      _inputController.clear();
+      Sfx.play(SfxId.select);
+      _addMessage(_ChatMessage(text: text, isGhost: false));
+      widget.ghostController.setMood(GhostMood.thinking);
+      await Future.delayed(Duration(milliseconds: 380 + _rng.nextInt(320)));
+      if (!mounted) return;
+      await _processUserQuery(text);
+    } catch (e) {
+      debugPrint('GHOST: command failed: $e');
+      if (mounted) await _typewriterSay('COMMAND FAILED: $e', isGhost: true);
+    } finally {
+      _inFlight = false;
+      if (mounted) widget.ghostController.setMood(GhostMood.idle);
+    }
   }
 
   Future<void> _processUserQuery(String query) async {
-    final reply = await _brain.respond(query);
+    GhostReply reply;
+    try {
+      reply = await _brain.respond(query);
+    } catch (e) {
+      debugPrint('GHOST: _brain.respond threw: $e');
+      reply = GhostReply('THE MACHINE CHOKED ON THAT ONE: $e', tone: GhostTone.sarcastic);
+    }
     if (!mounted) return;
     switch (reply.tone) {
       case GhostTone.happy:
@@ -395,12 +413,10 @@ void _scrollToBottom() {
                             tooltip: "CLOSE GHOST",
                             onPressed: () {
                               Sfx.play(SfxId.close);
-                              if (_chatState == GhostChatState.expanded) {
-                                _controller.reverse().then((_) {
-                                  if (mounted) _chatState = GhostChatState.collapsed;
-                                });
-                              }
-                              GhostSettings.setVisible(false);
+                              if (mounted) setState(() => _chatState = GhostChatState.collapsed);
+                              unawaited(GhostSettings.setVisible(false).catchError((Object e) {
+                                debugPrint('GHOST: could not persist visibility: $e');
+                              }));
                             },
                             padding: EdgeInsets.zero,
                             constraints: const BoxConstraints(minWidth: 32, minHeight: 32),

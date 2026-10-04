@@ -489,7 +489,7 @@ class GhostBrain {
       final removing = text.contains(' unfavorite ') || text.contains(' remove ') || text.contains(' unlike ') || text.contains(' unheart ');
       if (removing && !world.currentIsFavorite) return GhostReply("${world.nowTitle} isn't in Favorites.");
       if (!removing && world.currentIsFavorite) return GhostReply("${world.nowTitle} is already a favorite. Say 'unfavorite this' to remove it.");
-      world.toggleFavoriteCurrent();
+      if (!world.toggleFavoriteCurrent()) return const GhostReply("COULDN'T REACH THE PLAYER — NOTHING WAS FAVORITED.");
       return GhostReply(removing ? "Removed ${world.nowTitle} from Favorites." : "♥ ${world.nowTitle} added to Favorites.", tone: GhostTone.happy);
     }
 

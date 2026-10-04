@@ -20,12 +20,17 @@ import android.os.Environment
 import android.os.Process
 import android.provider.MediaStore
 import android.provider.OpenableColumns
+import android.util.Log
 import android.util.Size
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.util.Locale
 
 class StorageBridge(private val context: Context) {
+
+    companion object {
+        private const val TAG = "StorageBridge"
+    }
 
     fun addToMediaStore(filePath: String, title: String): Map<String, String> {
         val file = File(filePath)
@@ -233,41 +238,98 @@ class StorageBridge(private val context: Context) {
         val uri = Uri.parse(uriString)
         val src = File(srcPath)
         if (!src.exists()) throw IllegalStateException("Working copy missing: $srcPath")
+        val srcLen = src.length()
+
+        if (uri.scheme == "file" && Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            throw IllegalStateException("Raw-path originals cannot be fixed in place on Android 10+; re-import through MediaStore")
+        }
 
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q || uri.scheme == "file") {
             val originalPath = if (uri.scheme == "file") uri.path ?: "" else describe(uri)["path"] ?: ""
             if (originalPath.isEmpty()) throw IllegalStateException("Original path unresolved")
             val original = File(originalPath)
-            src.copyTo(original, overwrite = true)
-            var finalFile = original
-            if (!newDisplayName.isNullOrEmpty() && newDisplayName != original.name) {
-                val renamed = File(original.parentFile, newDisplayName)
-                if (!renamed.exists() && original.renameTo(renamed)) finalFile = renamed
+            val staged = File(original.parentFile, ".${original.name}.sov-save")
+            try {
+                src.copyTo(staged, overwrite = true)
+                if (staged.length() != srcLen) {
+                    staged.delete()
+                    throw IllegalStateException("Write-back staged only ${staged.length()} of $srcLen bytes; the original was left untouched")
+                }
+                if (!staged.renameTo(original)) {
+                    throw IllegalStateException("Could not move the staged write over the original")
+                }
+                var finalFile = original
+                if (!newDisplayName.isNullOrEmpty() && newDisplayName != original.name) {
+                    val renamed = File(original.parentFile, newDisplayName)
+                    if (renamed.exists()) throw IllegalStateException("Target filename already exists: $newDisplayName")
+                    if (!original.renameTo(renamed)) throw IllegalStateException("Rename failed: ${original.name} -> $newDisplayName")
+                    finalFile = renamed
+                }
+                scan(originalPath)
+                if (finalFile.absolutePath != originalPath) scan(finalFile.absolutePath)
+                return mapOf(
+                    "uri" to uriString,
+                    "path" to finalFile.absolutePath,
+                    "displayName" to finalFile.name,
+                    "verified" to "true",
+                    "renamed" to "true",
+                )
+            } finally {
+                try { staged.delete() } catch (_: Throwable) {}
             }
-            scan(originalPath)
-            if (finalFile.absolutePath != originalPath) scan(finalFile.absolutePath)
-            return mapOf("uri" to uriString, "path" to finalFile.absolutePath, "displayName" to finalFile.name)
         }
 
-        val stream = try {
-            context.contentResolver.openOutputStream(uri, "wt")
-        } catch (_: Exception) {
-            context.contentResolver.openOutputStream(uri, "w")
-        } ?: throw IllegalStateException("Original not writable")
-        stream.use { out -> src.inputStream().use { it.copyTo(out) } }
+        if (uri.authority != null && !uri.authority!!.contains("media")) {
+            throw IllegalStateException("Not a MediaStore item (authority=${uri.authority}); Android will not let it be fixed in place. Use LIBRARY > EDIT IN FORGE instead.")
+        }
 
+        val stream = context.contentResolver.openOutputStream(uri, "wt")
+            ?: throw IllegalStateException("Original not writable")
+        var written = 0L
+        try {
+            stream.use { out ->
+                src.inputStream().use { input ->
+                    val buf = ByteArray(64 * 1024)
+                    while (true) {
+                        val n = input.read(buf)
+                        if (n <= 0) break
+                        out.write(buf, 0, n)
+                        written += n
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            throw IllegalStateException("Write-back failed after $written of $srcLen bytes — the original may be truncated: ${e.message}")
+        }
+        if (written != srcLen) {
+            throw IllegalStateException("Write-back short: $written of $srcLen bytes landed, the original is incomplete")
+        }
+
+        var renamedOk = true
         if (!newDisplayName.isNullOrEmpty()) {
             val current = describe(uri)["displayName"]
-            if (current != newDisplayName) {
+            if (current == null) {
+                renamedOk = false
+                Log.w(TAG, "overwriteMedia: cannot resolve the current name on $uriString, rename not attempted")
+            } else if (current != newDisplayName) {
                 try {
                     val values = ContentValues().apply { put(MediaStore.MediaColumns.DISPLAY_NAME, newDisplayName) }
                     context.contentResolver.update(uri, values, null, null)
-                } catch (_: Exception) {}
+                } catch (e: Exception) {
+                    renamedOk = false
+                    Log.w(TAG, "overwriteMedia: rename to '$newDisplayName' failed on $uriString: ${e.message}")
+                }
             }
         }
         val info = describe(uri)
         info["path"]?.let { scan(it) }
-        return mapOf("uri" to uriString, "path" to (info["path"] ?: ""), "displayName" to (info["displayName"] ?: ""))
+        return mapOf(
+            "uri" to uriString,
+            "path" to (info["path"] ?: ""),
+            "displayName" to (info["displayName"] ?: ""),
+            "verified" to "true",
+            "renamed" to renamedOk.toString(),
+        )
     }
 
     fun deleteDirect(uriString: String): Boolean {

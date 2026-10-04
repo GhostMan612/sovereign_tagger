@@ -20,6 +20,7 @@ class _AnimatedTabStackState extends State<AnimatedTabStack> with SingleTickerPr
   late int _current = widget.index;
   int? _previous;
   double _direction = 1;
+  int _gen = 0;
 
   @override
   void didUpdateWidget(covariant AnimatedTabStack oldWidget) {
@@ -28,13 +29,14 @@ class _AnimatedTabStackState extends State<AnimatedTabStack> with SingleTickerPr
     _previous = _current;
     _direction = widget.index > _current ? 1 : -1;
     _current = widget.index;
+    final myGen = ++_gen;
     if (MediaQuery.maybeDisableAnimationsOf(context) ?? false) {
       _anim.value = 1;
       _previous = null;
       return;
     }
     _anim.forward(from: 0).whenCompleteOrCancel(() {
-      if (mounted) setState(() => _previous = null);
+      if (mounted && myGen == _gen) setState(() => _previous = null);
     });
   }
 

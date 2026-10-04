@@ -6,6 +6,7 @@
 package com.sovereigntagger
 
 import android.util.Base64
+import android.util.Log
 import org.jaudiotagger.audio.AudioFileIO
 import org.jaudiotagger.audio.flac.metadatablock.MetadataBlockDataPicture
 import org.jaudiotagger.tag.FieldKey
@@ -26,6 +27,8 @@ import org.jaudiotagger.tag.vorbiscomment.VorbisCommentTag
 import java.io.File
 
 object Id3Tagger {
+    private const val TAG = "Id3Tagger"
+
     init {
         TagOptionSingleton.getInstance().isAndroid = true
     }
@@ -34,6 +37,7 @@ object Id3Tagger {
         return try {
             val audioFile = AudioFileIO.read(File(filePath))
             val tag = audioFile.tagOrCreateAndSetDefault
+            val failed = mutableListOf<String>()
 
             metadata.forEach { (key, value) ->
                 try {
@@ -64,11 +68,17 @@ object Id3Tagger {
                         }
                     }
                 } catch (e: Throwable) {
+                    failed.add("$key [${e.javaClass.simpleName}]")
+                    Log.w(TAG, "writeTags: field '$key' failed on $filePath", e)
                 }
             }
             audioFile.commit()
-            true
+            if (failed.isNotEmpty()) {
+                Log.w(TAG, "writeTags: $filePath committed but ${failed.size} field(s) failed: $failed")
+            }
+            failed.isEmpty()
         } catch (e: Throwable) {
+            Log.e(TAG, "writeTags: $filePath failed outright", e)
             false
         }
     }

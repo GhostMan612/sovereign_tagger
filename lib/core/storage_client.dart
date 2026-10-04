@@ -3,6 +3,7 @@
 // The Future Dictates the Past and the Past is Always Present.
 // ============================================================
 
+import 'dart:async';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
@@ -13,13 +14,15 @@ class SaveResult {
   final String path;
   final String displayName;
   final bool overwroteOriginal;
-  const SaveResult({required this.uri, required this.path, required this.displayName, required this.overwroteOriginal});
+  final bool renamed;
+  const SaveResult({required this.uri, required this.path, required this.displayName, required this.overwroteOriginal, required this.renamed});
 
   factory SaveResult.fromMap(Map<Object?, Object?> m, {required bool overwrote}) => SaveResult(
         uri: m['uri']?.toString() ?? '',
         path: m['path']?.toString() ?? '',
         displayName: m['displayName']?.toString() ?? '',
         overwroteOriginal: overwrote,
+        renamed: m['renamed'] != 'false',
       );
 }
 
@@ -95,7 +98,12 @@ class StorageClient {
   }
 
   static Future<SaveResult> overwriteOriginal({required String uri, required String workingPath, String? displayName}) async {
-    final Map<Object?, Object?> raw = await _channel.invokeMethod('overwriteMedia', {'uri': uri, 'srcPath': workingPath, 'displayName': displayName});
+    final Map<Object?, Object?> raw = await _channel
+        .invokeMethod('overwriteMedia', {'uri': uri, 'srcPath': workingPath, 'displayName': displayName})
+        .timeout(
+          const Duration(minutes: 3),
+          onTimeout: () => throw TimeoutException('The write-back to the original did not respond in time. The original may be incomplete; check it before saving again.'),
+        );
     bumpLibrary();
     return SaveResult.fromMap(raw, overwrote: true);
   }
@@ -128,7 +136,29 @@ class StorageClient {
     if (!dir.existsSync()) dir.createSync(recursive: true);
     final name = sourcePath.split('/').last;
     final target = '${dir.path}/${prefix}_${DateTime.now().millisecondsSinceEpoch}_$name';
-    await File(sourcePath).copy(target);
+    try {
+      await File(sourcePath).copy(target);
+    } catch (e) {
+      try {
+        final partial = File(target);
+        if (partial.existsSync()) partial.deleteSync();
+      } catch (_) {}
+      rethrow;
+    }
+    _sweepStaging(dir);
     return target;
+  }
+
+  static void _sweepStaging(Directory dir) {
+    try {
+      final cutoff = DateTime.now().subtract(const Duration(hours: 6));
+      for (final entity in dir.listSync()) {
+        if (entity is File && entity.statSync().modified.isBefore(cutoff)) {
+          try {
+            entity.deleteSync();
+          } catch (_) {}
+        }
+      }
+    } catch (_) {}
   }
 }

@@ -1,6 +1,6 @@
 #include <flutter/runtime_effect.glsl>
 
-precision mediump float;
+precision highp float;
 
 uniform vec2 uSize;
 uniform float uTime;

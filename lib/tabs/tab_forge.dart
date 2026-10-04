@@ -103,6 +103,10 @@ class _TabForgeState extends State<TabForge> {
   void _onPendingRequest() {
     final req = SovereignState.pendingForge.value;
     if (req == null) return;
+    if (_isProcessing) {
+      _setStatus("BUSY: Finish Or Eject The Current File First — The Handoff Is Queued.");
+      return;
+    }
     SovereignState.pendingForge.value = null;
     _mount(req);
   }
@@ -139,9 +143,13 @@ class _TabForgeState extends State<TabForge> {
   }
 
   Future<void> _mount(ForgeRequest req) async {
-    if (_isProcessing) return;
+    if (_isProcessing) {
+      _setStatus("BUSY: Finish Or Eject The Current File First — The Handoff Is Queued.");
+      return;
+    }
     if (_dirty && _workingPath.isNotEmpty) {
       final discard = await _confirm("UNSAVED CHANGES", "The mounted file has edits that were not saved.\n\nDiscard them and mount the new file?", "DISCARD");
+      if (!mounted) return;
       if (!discard) return;
     }
     if (!File(req.path).existsSync()) {
@@ -153,7 +161,8 @@ class _TabForgeState extends State<TabForge> {
       _statusMessage = "Mounting ${req.path.split('/').last}...";
     });
     try {
-      await _discardWorkingCopy();
+      final previousWorking = _workingPath;
+      final previousOwns = _ownsWorkingCopy;
       final staging = await StorageClient.isAppStaging(req.path);
       String working;
       bool owns;
@@ -198,6 +207,12 @@ class _TabForgeState extends State<TabForge> {
         _statusMessage = "Mounted: $_originalDisplayName\n${_originLabel()} • ${TitleCleaner.extensionOf(working).toUpperCase()}${TagIO.canWrite(working) ? '' : ' • TAGS NOT SUPPORTED FOR THIS FORMAT'}";
       });
       _suppressDirty = false;
+      if (previousOwns && previousWorking.isNotEmpty && previousWorking != _workingPath) {
+        try {
+          final stale = File(previousWorking);
+          if (stale.existsSync()) stale.deleteSync();
+        } catch (_) {}
+      }
     } catch (e) {
       _suppressDirty = false;
       if (!mounted) return;
@@ -239,6 +254,9 @@ class _TabForgeState extends State<TabForge> {
       result = await FilePicker.platform.pickFiles(type: FileType.audio, allowMultiple: false);
     } on PlatformException catch (e) {
       _setStatus("ERR: File Picker Fault: ${e.message}");
+      return;
+    } catch (e) {
+      _setStatus("ERR: File Picker Fault: $e");
       return;
     }
     if (result == null || result.files.single.path == null) return;
@@ -545,7 +563,14 @@ class _TabForgeState extends State<TabForge> {
     final dir = Directory('$temp/export_${DateTime.now().microsecondsSinceEpoch}');
     dir.createSync(recursive: true);
     final target = '${dir.path}/$name';
-    await File(_workingPath).copy(target);
+    try {
+      await File(_workingPath).copy(target);
+    } catch (e) {
+      try {
+        if (dir.existsSync()) dir.deleteSync(recursive: true);
+      } catch (_) {}
+      rethrow;
+    }
     return target;
   }
 
@@ -582,7 +607,8 @@ class _TabForgeState extends State<TabForge> {
       if (!mounted) return;
       if (mismatches.isNotEmpty) {
         final go = await _confirm("READ-BACK MISMATCH", "After writing, these fields did not read back as entered: ${mismatches.join(', ')}.\n\nSave anyway?", "SAVE ANYWAY");
-        if (!go || !mounted) {
+        if (!mounted) return;
+        if (!go) {
           setState(() {
             _isProcessing = false;
             _statusMessage = "Save Aborted. Read-Back Mismatch On ${mismatches.join('/')}.";
@@ -601,7 +627,8 @@ class _TabForgeState extends State<TabForge> {
         if (!mounted) return;
         if (!granted) {
           final fallback = await _confirm("PERMISSION DENIED", "Android did not allow changing the original file.\n\nSave the fixed song as a new copy in Music instead?", "SAVE COPY");
-          if (!fallback || !mounted) {
+          if (!mounted) return;
+          if (!fallback) {
             setState(() {
               _isProcessing = false;
               _statusMessage = "Save Cancelled. Tags Are Still In The Working Copy — Nothing Lost.";
@@ -636,7 +663,11 @@ class _TabForgeState extends State<TabForge> {
         final finalBack = await TagIO.read(result.path);
         final finalMismatch = TagIO.verify(meta, finalBack);
         finalNote = finalMismatch.isEmpty ? "Round-Trip Verified On Final File." : "WARN: Final File Read-Back Differs On ${finalMismatch.join('/')}.";
+      } else {
+        finalNote = "WARN: Saved File Could Not Be Re-Read, So The Write-Back Is Unverified.";
       }
+
+      if (!mounted) return;
 
       if (result.path.isNotEmpty) {
         await AudioService.replacePathInQueue(previousWorking, result.path);
@@ -644,12 +675,6 @@ class _TabForgeState extends State<TabForge> {
           await AudioService.replacePathInQueue(previousOriginal, result.path);
         }
         await AudioService.refreshNowPlaying();
-      }
-
-      if (_ownsWorkingCopy) {
-        try {
-          File(previousWorking).deleteSync();
-        } catch (_) {}
       }
 
       String newWorking = "";
@@ -660,10 +685,18 @@ class _TabForgeState extends State<TabForge> {
           owns = true;
         } catch (_) {}
       }
+
+      if (_ownsWorkingCopy && previousWorking.isNotEmpty && previousWorking != newWorking) {
+        try {
+          File(previousWorking).deleteSync();
+        } catch (_) {}
+      }
+
       final back = newWorking.isEmpty ? <String, String>{} : await TagIO.read(newWorking);
       if (!mounted) return;
       TapFeedback.machineConfirm();
       final where = result.displayName.isNotEmpty ? result.displayName : desiredName;
+      final renameNote = result.renamed ? '' : '\nWARN: Rename Did Not Take — The File Is Still Named "$where".';
       setState(() {
         _workingPath = newWorking;
         _ownsWorkingCopy = owns;
@@ -676,7 +709,7 @@ class _TabForgeState extends State<TabForge> {
         _fileNameTouched = false;
         _dirty = false;
         _isProcessing = false;
-        _statusMessage = "${fixOriginal ? 'ORIGINAL FIXED' : 'SAVED TO MUSIC'} ✓ $where\n$finalNote${newWorking.isEmpty ? '\nFile Released From Forge.' : ''}";
+        _statusMessage = "${fixOriginal ? 'ORIGINAL FIXED' : 'SAVED TO MUSIC'} ✓ $where\n$finalNote$renameNote${newWorking.isEmpty ? '\nFile Released From Forge.' : ''}";
       });
       StorageClient.bumpLibrary();
     } catch (e) {

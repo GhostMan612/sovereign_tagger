@@ -50,7 +50,9 @@ class PlaylistStore {
       playlists.value = ((data['playlists'] as List?) ?? const []).whereType<Map>().map((m) => Playlist.fromJson(m.cast<String, dynamic>())).toList();
       favorites.value = ((data['favorites'] as List?) ?? const []).map((e) => e.toString()).toSet();
       recent.value = ((data['recent'] as List?) ?? const []).map((e) => e.toString()).toList();
-    } catch (_) {}
+    } catch (e) {
+      debugPrint('PLAYLISTS: load failed, starting empty: $e');
+    }
   }
 
   static void _scheduleSave() {
@@ -66,7 +68,9 @@ class PlaylistStore {
         final tmp = File('${f.path}.tmp');
         await tmp.writeAsString(payload, flush: true);
         await tmp.rename(f.path);
-      } catch (_) {}
+      } catch (e) {
+        debugPrint('PLAYLISTS: save failed, favorites/playlists will NOT survive a relaunch: $e');
+      }
     });
   }
 

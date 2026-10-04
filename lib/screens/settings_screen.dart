@@ -853,7 +853,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 OutlinedButton.icon(
                   onPressed: () async {
                     final messenger = ScaffoldMessenger.of(context);
-                    await GhostSettings.setFirstLaunchComplete();
+                    await GhostSettings.clearFirstLaunchComplete();
                     messenger.showSnackBar(const SnackBar(content: Text('> FIRST LAUNCH RESET. GHOST WILL RE-INTRODUCE ON NEXT START.', style: TextStyle(fontFamily: 'ShareTechMono')), backgroundColor: Colors.black, shape: RoundedRectangleBorder(side: BorderSide(color: Colors.purpleAccent))));
                   },
                   icon: const Icon(Icons.refresh, color: Colors.amberAccent),
