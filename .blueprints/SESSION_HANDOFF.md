@@ -24,6 +24,14 @@ Session-end law: update rows 2–4 every session (+ row 5 when a new gotcha is l
 **Phase:** 0–28 COMPLETE. `flutter analyze --no-pub` → `No issues found!` (Flutter 3.47.5). **No planned implementation work remains** — every ROADMAP phase 0–28 is `[x]`, and as of the 2026-10-02 audit pass every registry row is FIXED/IMPLEMENTED. The open items are device-gated: smoke 1, 1b–1h. See Next actions.
 **Branch:** `main` is the single canonical branch and the only local or remote branch. 2026-10-01: `master`, `backup-before-main-sync` (local) and `claude/strange-lewin-97ba5a` / `claude/elegant-franklin-j99jl0` (remote) were **deleted** after verifying every one of them was fully merged into `main`. They no longer exist — do not reference them. Work on `main` (or a short-lived branch off it).
 
+## Operator feedback round 2 — Ghost settings toggles were dead controls (2026-10-02)
+
+Operator confirmed **Forge round-trip verified** ("Round-Trip Verified On Final File"), so FG2/FG3/FG4's stage→verify→release reorder works end-to-end on real hardware.
+
+Then reported: **tapping the Ghost chatbot settings toggles does not flip them.** Cause: all three `SwitchListTile`s read `GhostSettings.<x>.value` **directly** in `build` with no `ValueListenableBuilder` — the tap fired, the notifier updated, the handler ran, and nothing rebuilt the tile, so the switch snapped back. Invisible to every automated check because nothing throws and nothing logs. Fixed by wrapping all three, matching the FeedbackSettings toggles in the same file. A repo-wide sweep confirmed these were the only three (Workbench switches and review-sheet checkboxes use local `setState` and are fine). Also gave `GhostSettings` one `_persist` helper that logs a failed write instead of silently reverting next launch.
+
+**Toolchain correction worth keeping (G42):** while checking this, a PowerShell text read of `tab_workbench.dart:928` displayed a clean em-dash as `�?"` — indistinguishable from real corruption. Verified with a UTF-8-safe read: the file is fine. A repo-wide scan using the **encoding-correct grep tool** over `lib/**` returns **zero** hits. **Never run the mojibake check through PowerShell** — it fabricates the very corruption signature RULES §3.1 warns about, and chasing it would mean "fixing" clean files.
+
 ## Device verification of the audited build — Moto G, 2026-10-02
 
 `5594935` installed on the Moto G (Android 16). Boot is clean: **0 `E/flutter`, 0 `FATAL`, 0 `Unhandled Exception`.**

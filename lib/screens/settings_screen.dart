@@ -819,35 +819,44 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 Row(
                   children: [
                     Expanded(
-                      child: SwitchListTile(
-                        title: const Text("GHOST VISIBLE", style: TextStyle(fontFamily: 'ShareTechMono', fontWeight: FontWeight.bold, color: Colors.white70)),
-                        subtitle: const Text("Show ghost avatar overlay", style: TextStyle(fontFamily: 'ShareTechMono', color: Colors.white38, fontSize: 11)),
-                        activeThumbColor: Colors.purpleAccent,
-                        activeTrackColor: Colors.purpleAccent.withValues(alpha: 0.3),
-                        value: GhostSettings.visible.value,
-                        onChanged: (val) => GhostSettings.setVisible(val),
+                      child: ValueListenableBuilder<bool>(
+                        valueListenable: GhostSettings.visible,
+                        builder: (context, v, _) => SwitchListTile(
+                          title: const Text("GHOST VISIBLE", style: TextStyle(fontFamily: 'ShareTechMono', fontWeight: FontWeight.bold, color: Colors.white70)),
+                          subtitle: const Text("Show ghost avatar overlay", style: TextStyle(fontFamily: 'ShareTechMono', color: Colors.white38, fontSize: 11)),
+                          activeThumbColor: Colors.purpleAccent,
+                          activeTrackColor: Colors.purpleAccent.withValues(alpha: 0.3),
+                          value: v,
+                          onChanged: (val) => GhostSettings.setVisible(val),
+                        ),
                       ),
                     ),
                     Expanded(
-                      child: SwitchListTile(
-                        title: const Text("AUTO EXPAND", style: TextStyle(fontFamily: 'ShareTechMono', fontWeight: FontWeight.bold, color: Colors.white70)),
-                        subtitle: const Text("Auto-expand on first launch", style: TextStyle(fontFamily: 'ShareTechMono', color: Colors.white38, fontSize: 11)),
-                        activeThumbColor: Colors.purpleAccent,
-                        activeTrackColor: Colors.purpleAccent.withValues(alpha: 0.3),
-                        value: GhostSettings.autoExpand.value,
-                        onChanged: (val) => GhostSettings.setAutoExpand(val),
+                      child: ValueListenableBuilder<bool>(
+                        valueListenable: GhostSettings.autoExpand,
+                        builder: (context, v, _) => SwitchListTile(
+                          title: const Text("AUTO EXPAND", style: TextStyle(fontFamily: 'ShareTechMono', fontWeight: FontWeight.bold, color: Colors.white70)),
+                          subtitle: const Text("Auto-expand on first launch", style: TextStyle(fontFamily: 'ShareTechMono', color: Colors.white38, fontSize: 11)),
+                          activeThumbColor: Colors.purpleAccent,
+                          activeTrackColor: Colors.purpleAccent.withValues(alpha: 0.3),
+                          value: v,
+                          onChanged: (val) => GhostSettings.setAutoExpand(val),
+                        ),
                       ),
                     ),
                   ],
                 ),
                 const SizedBox(height: 8),
-                SwitchListTile(
-                  title: const Text("REDUCE MOTION (GLOBAL)", style: TextStyle(fontFamily: 'ShareTechMono', fontWeight: FontWeight.bold, color: Colors.white70)),
-                  subtitle: const Text("Disables ghost glitch/wobble/scanlines — also ambient backdrop / rain effects", style: TextStyle(fontFamily: 'ShareTechMono', color: Colors.white38, fontSize: 11)),
-                  activeThumbColor: Colors.redAccent,
-                  activeTrackColor: Colors.redAccent.withValues(alpha: 0.3),
-                  value: GhostSettings.reduceMotion.value,
-                  onChanged: (val) => GhostSettings.setReduceMotion(val),
+                ValueListenableBuilder<bool>(
+                  valueListenable: GhostSettings.reduceMotion,
+                  builder: (context, v, _) => SwitchListTile(
+                    title: const Text("REDUCE MOTION (GLOBAL)", style: TextStyle(fontFamily: 'ShareTechMono', fontWeight: FontWeight.bold, color: Colors.white70)),
+                    subtitle: const Text("Disables ghost glitch/wobble/scanlines — also ambient backdrop / rain effects", style: TextStyle(fontFamily: 'ShareTechMono', color: Colors.white38, fontSize: 11)),
+                    activeThumbColor: Colors.redAccent,
+                    activeTrackColor: Colors.redAccent.withValues(alpha: 0.3),
+                    value: v,
+                    onChanged: (val) => GhostSettings.setReduceMotion(val),
+                  ),
                 ),
                 const SizedBox(height: 16),
                 OutlinedButton.icon(

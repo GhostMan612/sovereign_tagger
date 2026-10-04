@@ -37,33 +37,37 @@ class GhostSettings {
     if (!_ready.isCompleted) _ready.complete();
   }
 
+  static Future<void> _persist(String key, bool value) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool(key, value);
+    } catch (e) {
+      debugPrint('GHOST: setting "$key"=$value applied in memory but FAILED to persist, it will revert on next launch: $e');
+    }
+  }
+
   static Future<void> setReduceMotion(bool value) async {
     _reduceMotion.value = value;
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool(_reduceMotionKey, value);
+    await _persist(_reduceMotionKey, value);
   }
 
   static Future<void> setVisible(bool value) async {
     _visible.value = value;
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool(_visibleKey, value);
+    await _persist(_visibleKey, value);
   }
 
   static Future<void> setAutoExpand(bool value) async {
     _autoExpand.value = value;
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool(_autoExpandKey, value);
+    await _persist(_autoExpandKey, value);
   }
 
   static Future<void> setFirstLaunchComplete() async {
     _firstLaunchComplete.value = true;
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool(_firstLaunchKey, true);
+    await _persist(_firstLaunchKey, true);
   }
 
   static Future<void> clearFirstLaunchComplete() async {
     _firstLaunchComplete.value = false;
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool(_firstLaunchKey, false);
+    await _persist(_firstLaunchKey, false);
   }
 }
