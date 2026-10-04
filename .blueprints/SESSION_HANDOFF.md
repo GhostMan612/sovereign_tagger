@@ -22,6 +22,7 @@ Session-end law: update rows 2–4 every session (+ row 5 when a new gotcha is l
 
 **Date:** 2026-10-02
 **Phase:** 0–28 COMPLETE. `flutter analyze --no-pub` → `No issues found!` (Flutter 3.47.5). **No planned implementation work remains** — every ROADMAP phase 0–28 is `[x]`, and as of the 2026-10-02 audit pass every registry row is FIXED/IMPLEMENTED. The open items are device-gated: smoke 1, 1b–1h. See Next actions.
+**Last operator device pass (2026-10-02):** both previously-open verification items **PASS** — crossfade exercised at > 0 (fade audible and continuous, so the `0.0 → 0.05` mute-floor fix is hardware-verified, closing the last "safe by construction" caveat), and the Ghost UI behaving as expected across its surface. The Ghost pass is a *"nothing visibly broken"* result, not five per-defect confirmations; the exact repro script is in `CURRENT_STATE.md` if anyone wants the stronger claim.
 **Branch:** `main` is the single canonical branch and the only local or remote branch. 2026-10-01: `master`, `backup-before-main-sync` (local) and `claude/strange-lewin-97ba5a` / `claude/elegant-franklin-j99jl0` (remote) were **deleted** after verifying every one of them was fully merged into `main`. They no longer exist — do not reference them. Work on `main` (or a short-lived branch off it).
 
 ## GH29 closed by measurement — tag commits are provably lossless for all 11 extensions (2026-10-02)
@@ -129,7 +130,22 @@ Two things that look like findings but are not:
 
 The GPU shader is confirmed live by *absence* of a failure: `cyber_backdrop.dart` only ever logs on the error paths (`:38` load failure, `:66` `fragmentShader()` failure). Neither `BACKDROP:` marker appears, so `FragmentProgram.fromAsset('shaders/backdrop.frag')` succeeded and the GPU backdrop is painting rather than falling back.
 
-**Honest caveat carried forward:** `crossfade=0.0` on device, so the 0.05 crossfade floor from the audio fix is still **not** runtime-exercised. It is a safe-by-construction change (it can only make fades shorter than total silence) but it is unproven on hardware, and it is recorded as such rather than claimed as verified.
+**Crossfade caveat — CLOSED 2026-10-02 by operator.** This previously read: *"`crossfade=0.0` on device, so the 0.05 crossfade floor is still not runtime-exercised. It is a safe-by-construction change (it can only make fades shorter than total silence) but it is unproven on hardware."* The operator set crossfade > 0 and exercised it on the Moto G: **PASS** — fade audible and continuous, no silence gap. That was the last thing keeping the audio fix at "safe by construction"; it is now hardware-verified.
+
+**Ghost UI — operator PASS, with an honest note on its strength.** The operator exercised the Ghost on device and reported everything working "as expected". This closes the operator-only blocker on GH23–GH27, but it is worth being precise about what kind of evidence it is: the operator had **not** been given the per-defect checklist, so this is a *"nothing is visibly broken"* pass across the Ghost surface — **not** five individual confirmations against their exact repros.
+
+Both are legitimate closes, and neither involved a code change. The distinction is recorded so a future session does not read "Ghost verified" as "each of GH23–GH27 was confirmed against its repro". If anyone wants the stronger claim, the script is in `CURRENT_STATE.md` and takes about a minute:
+
+```
+GH23  play the beatles                    -> must not say "No match" for "the beatles"
+GH24  play what is this                   -> must not just report the loaded track
+GH25  please pause the song now           -> must pause, not fall through to a knowledge entry
+      go to the next song                 -> must advance
+GH26  (with a disambiguation prompt open) play all my library tracks
+                                           -> must play the library, not the pending candidates
+GH27  download a track, ask about it immediately
+                                           -> must find it at once, no 2-minute "No match"
+```
 
 ## Operator feedback round 3 — the six deferred Ghost items, now closed (2026-10-02)
 
@@ -169,7 +185,7 @@ Also confirmed on-device: the shader loads (no `BACKDROP:` failure), the EQ pipe
 2. **logcat rotation ate the boot lines.** A 35 s capture made 1.2 MB and the splash diagnostics were already gone; `adb logcat -G 32M` fixed it. Raise the buffer before launching and dump within ~15 s.
 3. **`uiautomator dump` cannot see Flutter semantics** (362-char dump), so the UI-only paths are not host-automatable.
 
-**Still needs operator fingers** (no host path exists): Forge `SAVE & FIX ORIGINAL` end-to-end (FG2/FG3/FG4 — the reorder), and the Ghost command smoke (GH15–GH21), especially that **RESET FIRST LAUNCH now actually resets**. Also set crossfade > 0 to exercise the mute-floor fix at runtime — this boot ran with `crossfade=0.0`, so that specific change is read-verified only.
+**Still needs operator fingers** (no host path exists): Forge `SAVE & FIX ORIGINAL` end-to-end (FG2/FG3/FG4 — the reorder). The Ghost command smoke (GH15–GH21) got a general "everything works as expected" pass from the operator, and the crossfade mute-floor fix is now **hardware-verified** (crossfade > 0 exercised, audible and continuous — that caveat is closed). What remains is the *scripted* per-defect confirmation: a broad pass cannot distinguish "GH23 is fixed" from "GH23 was never exercised". The repro list lives in `CURRENT_STATE.md`.
 
 ## What shipped — source audit of every remaining unverified area, 25 defects (2026-10-02)
 
