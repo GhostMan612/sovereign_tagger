@@ -34,15 +34,57 @@ Method: build 44.1 kHz / 16-bit / stereo WAV + AIFF carrying a deterministic mul
 |--------|--------|-------|------------------------------|---------|
 | wav | OK | 352844 → 352970 | `ab1952f6…` → `ab1952f6…` **identical** | **LOSSLESS, proven** |
 | aiff | OK | 352854 → 352968 | `ab1952f6…` → `ab1952f6…` **identical** | **LOSSLESS, proven** |
-| dsf | not byte-compared | — | — | metadata-only by construction |
+| dsf | OK | 705692 → 705898 | `6b187373…` → `6b187373…` **identical** | **LOSSLESS, proven** |
 
-On commit, jaudiotagger **appends** metadata chunks and rewrites nothing: in WAV, `fmt` stays at offset 12 and `data` at offset 36 with an identical size, with a `LIST` chunk added at the end; in AIFF an `ID3 ` chunk is appended. Channels/rate/bits/frames identical before and after. Same class of change as an mp3 ID3 commit — a metadata edit, never a re-encode. `dsf` is closed on structure (`DsfFileWriter.convert` only serialises the tag; audio lives in `DsdChunk`, a pure parse) and is labelled as such rather than claimed as measured.
+On commit, jaudiotagger **appends** metadata and rewrites no audio. In WAV, `fmt` stays at offset 12 and `data` at offset 36 with an identical size, with a `LIST` chunk added at the end; in AIFF an `ID3 ` chunk is appended. DSF needed a spec-valid synthesised fixture (a PCM generator cannot emit 1-bit DSD): a 28-byte `DSD ` header, a 52-byte `fmt ` chunk declaring DSD-raw / 2ch / 2822400 Hz / 1 bit, and a `data` chunk of 705600 deterministic DSD bytes. jaudiotagger read it first try and every stream number was identical afterwards. DSF stores metadata differently but equivalently harmlessly — no nested `ID3 ` chunk, instead the header's metadata pointer at `20:28` is repointed at a bare 206-byte ID3v2 tag appended *after* the DSD data, leaving `data` at offset 80 byte-identical. Channels/rate/bits/frames unchanged in all three. Same class of change as an mp3 ID3 commit: a metadata edit, never a re-encode. The lossless law holds for every format in `writableExtensions`.
 
-**Two method traps worth remembering (both bit me):** the first AIFF run failed with `CannotReadException…Size:0` and it was **my generator's bug** (SSND size omitted its 8-byte `soundOffset`+`blockSize`), not a jaudiotagger limitation — validate the fixture before trusting a failure. And the probe wouldn't compile against the very jar the app uses, which looked like a version skew; it was Kotlin's synthetic property access (`.tagOrCreateAndSetDefault` → `getTagOrCreateAndSetDefault()`). **A single failing probe is not evidence.**
+**Three method traps, all of which bit me and are recorded so they are not repeated.** (1) The first AIFF run failed with `CannotReadException…Size:0` and it was **my generator's bug** (SSND size omitted its 8-byte `soundOffset`+`blockSize`), not a jaudiotagger limitation — had I stopped there I would have reported "AIFF tagging is broken" and been wrong. (2) My chunk-walking hasher then returned a false `payload=None` on the DSF, because **DSF declares chunk sizes inclusive of the 12-byte chunk header while RIFF/IFF do not**; a parser that mis-walks is indistinguishable from one that found nothing, so the payload hash is always cross-checked against the generator's own baseline. (3) The probe wouldn't compile against the very jar the app uses, which briefly looked like version skew — actually Kotlin's synthetic property access (`.tagOrCreateAndSetDefault` → `getTagOrCreateAndSetDefault()`). **A single failing probe is not evidence.**
 
 No code change was needed, and none was made. The probe stayed in `%TEMP%\opencode` — no framework, no committed fixtures, per the zero-test-suite directive; the recipe is recorded in `CURRENT_STATE.md` so it can be re-run.
 
 **The known-issue registry now has zero open defects.**
+
+## Ghost GH23–GH27 re-verified statically (2026-10-02)
+
+The one previously "blocked" item was exact Ghost-phrase smoke, which is unreachable because `uiautomator` cannot see Flutter semantics. Rather than leave it blocked, all five fixes were re-read in source and confirmed present and correct:
+
+- **GH23** `lead` (ghost_brain.dart:614) now contains `'the'` and `'my'`, and the strip loop at :617 consumes them, so `play the beatles` reduces to `[beatles]`.
+- **GH24** `playVerb` is hoisted to :458, above the now-playing phrase test at :460, and gates it — a play/queue/shuffle verb always wins.
+- **GH25** `gateFiller` (:524) / `cmdWords` (:525) widen the gate without touching inner matching semantics.
+- **GH26** the `all`/`them`/`both` hijack at :371 requires `words.length <= 3`, so `play all my library tracks` (5 words) falls through to normal dispatch while a bare `all` still resolves the prompt.
+- **GH27** `StorageClient.libraryRevision` (storage_client.dart:36) + `bumpLibrary()` (:38) is fired from pipeline:297, forge:714 and storage_client:93/107/113, and ghost_world.dart:109 bumps the generation on change.
+
+Code + clean boot build is the honest ceiling here; no further static evidence exists without a device operator.
+
+## Full-gamut verification at HEAD (2026-10-02)
+
+Whole sweep re-run end to end, not just the changed code:
+
+1. **Mojibake signature grep** over the repo: **10 hits, all in documentation that deliberately quotes the signature** (`AGENTS.md`, `RULES.md`, `CLAUDE.md`, `BLUEPRINTS.md`, `CURRENT_STATE.md`, `SESSION_HANDOFF.md`, `.opencode/agents/sovereign-docs.md`). **Zero hits in `lib/**`, `android/**`, `shaders/**`.** Worth noting the trap this session: `rg` is **not installed** on this box, so a shell mojibake check silently produces a *false clean* — it never ran. That check must go through the encoding-correct grep tool (G42 / VS7). A "clean" result from a command that did not execute is worse than no result.
+2. **`flutter analyze --no-pub`** → `No issues found!`
+3. **`flutter build apk --release`** → success, `488.6MB`, 126.5s. Only the two known-benign warnings (three plugins applying KGP ahead of Flutter's built-in Kotlin migration; SDK XML v4 vs the older reader).
+4. **Installed to the Moto G only** (`ZT4222BMWN`). `B160V` untouched, as always.
+5. **Boot smoke, clean logcat, 32M buffer:**
+
+```
+I/flutter: BOOT: FFmpeg armed: 534 filters registered (full+gpl)
+I/flutter: BOOT: WHISPER SURFACE: DETECTED in registered filters — wire transcribe op
+I/flutter: SOVEREIGN FX: prefs eqEnabled=true crossfade=0.0 rgMode=track
+I/flutter: SOVEREIGN PLAYBACK: processingState -> ProcessingState.idle (idx=null playing=false volume=1.0)
+I/flutter: SOVEREIGN PLAYBACK: audio handler ready
+I/flutter: Using the Impeller rendering backend (Vulkan).
+```
+
+`audio_service` lockscreen session registers as `com.sovereigntagger/media-session/85` with `error=null`. **Zero** `E/flutter`, `F/flutter`, `FATAL EXCEPTION`, `Unhandled Exception` or `ANR`.
+
+Two things that look like findings but are not:
+
+- The `E/sovereigntagger` lines in the raw log (`Invalid base format! req_base_format = 0x0`, `Failed to query component interface`, `perfctl`) are **Android graphics/perfctl noise tagged with the app's PID**, not Dart errors. No Dart-side error line exists anywhere in the buffer.
+- The `AndroidRuntime` lines are **monkey's own** launcher process (`VM exiting with result code 0`), not the app.
+
+The GPU shader is confirmed live by *absence* of a failure: `cyber_backdrop.dart` only ever logs on the error paths (`:38` load failure, `:66` `fragmentShader()` failure). Neither `BACKDROP:` marker appears, so `FragmentProgram.fromAsset('shaders/backdrop.frag')` succeeded and the GPU backdrop is painting rather than falling back.
+
+**Honest caveat carried forward:** `crossfade=0.0` on device, so the 0.05 crossfade floor from the audio fix is still **not** runtime-exercised. It is a safe-by-construction change (it can only make fades shorter than total silence) but it is unproven on hardware, and it is recorded as such rather than claimed as verified.
 
 ## Operator feedback round 3 — the six deferred Ghost items, now closed (2026-10-02)
 
