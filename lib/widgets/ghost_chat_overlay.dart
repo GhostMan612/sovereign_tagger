@@ -210,7 +210,7 @@ class _GhostChatOverlayState extends State<GhostChatOverlay> with TickerProvider
     widget.ghostController.setMood(GhostMood.listening);
     Sfx.play(SfxId.select);
     _inputFocus.requestFocus();
-    if (wasListening) _typewriterSay('HEARD: $trimmed', isGhost: true);
+    if (wasListening) unawaited(_typewriterSay('HEARD: $trimmed', isGhost: true));
   }
 
   void _onFocusChange() {
@@ -331,12 +331,14 @@ void _scrollToBottom() {
 
   @override
   void dispose() {
-    unawaited(_voice.cancel());
+    // _voice.dispose() already stops the recorder and deletes the WAV. Calling
+    // cancel() here too raced two PcmRecorder.stop() invocations against a
+    // still-listening phase.
+    _voice.dispose();
     _controller.dispose();
     _inputController.dispose();
     _inputFocus.dispose();
     _scrollController.dispose();
-    _voice.dispose();
     super.dispose();
   }
 

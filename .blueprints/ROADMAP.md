@@ -246,6 +246,12 @@
 - [x] **28.4 Shaders + transitions** — GPU backdrop per tab, animated tab switches, page transitions, animated nav, perf pass
 - Gate per slice: `flutter analyze --no-pub` clean + scratch widget tests (flutter_tester) + shader compile (impellerc) where relevant; device smoke in SESSION_HANDOFF
 
+## Phase 29 — Ghost voice query + rotation lockdown [~] implementation done, device gate open
+- [x] **29.1 Voice query** — optional mic button beside SEND; 12s cap, 16 kHz mono PCM WAV, transcript fills the field and **never auto-sends** (the Ghost can delete real media). Runs offline on the Workbench's existing Whisper model → **zero APK growth, zero extra download** beyond the 141MB model already shipped behaviour. Engine swappable behind one interface (`SpeechEngine`); `WhisperFfmpegEngine` live, `WhistleEngine` registered-but-unwired (needs an NDK/CMake/JNI bridge).
+- [x] **29.2 Voice safety** — Whisper silence hallucinations rejected ("Thank you.", "Thanks for watching!", "Subtitles by the Amara.org community"); sub-1s clips rejected; recorder + WAV released on **every** exit path including dispose (PcmRecorder is a global singleton, so a leak would wedge the Workbench); mic button always live so a download can be cancelled; permanently-denied mic re-probes permission instead of dead-ending in Settings.
+- [x] **29.3 GH30 rotation lockdown** — three rounds, the first two rejected by the operator on hardware. Orientation code **deleted** (verified absent from the compiled `libapp.so`), then the real cause: with zero orientation calls the app still flipped `ACCELEROMETER_ROTATION` 0→1 **on launch** (install alone does not; reproduced 3+ times on Android 16). Cause was the activity being **rotatable** — no `screenOrientation`, i.e. `unspecified`. Fix: `android:screenOrientation="locked"` on `MainActivity`, confirmed in the merged manifest. App can no longer touch rotation by any route.
+- Gate: `flutter analyze --no-pub` → "No issues found!"; release APK builds. **Device smoke pending on both** — see SESSION_HANDOFF Next actions 0 and 0b. Do not mark 29.3 verified until `accelerometer_rotation` is still `0` after a launch.
+
 ## Phase S0–S4 — SOVEREIGN SDK EDITION [-] PARKED 2026-10-01 — spec only, do not start
 
 > **OPERATOR DECISION 2026-10-01: PARKED.** The operator needs to research the

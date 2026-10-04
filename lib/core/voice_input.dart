@@ -59,6 +59,13 @@ class VoiceInput extends ChangeNotifier {
       return null;
     }
     if (_micBlocked) {
+      // _micBlocked latches, so re-probe before bouncing the user to Settings.
+      // Otherwise granting the mic there dead-ends: every tap would re-open
+      // Settings until the app was restarted.
+      if (await PcmRecorder.hasPermission()) {
+        _micBlocked = false;
+        return _start();
+      }
       _status = 'OPENING APP SETTINGS...';
       _safeNotify();
       await openAppSettings();
@@ -85,6 +92,7 @@ class VoiceInput extends ChangeNotifier {
       if (_cancelRequested) return _abandon();
 
       if (!await _engine.isReady()) {
+        if (_cancelRequested || _disposed) return _abandon();
         final mb = (_engine.payloadBytes / 1000000).round();
         _status = 'FETCHING ${_engine.label} (${mb}MB, ONCE)...';
         _safeNotify();
