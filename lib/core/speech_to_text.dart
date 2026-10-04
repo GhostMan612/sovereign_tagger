@@ -46,7 +46,7 @@ class SpeechEngineNotWired implements SpeechEngine {
   }
 
   @override
-  Future<String> transcribe(String wavPath, {String language = 'en'}) {
+  Future<String> transcribe(String wavPath, {String language = 'en'}) async {
     throw UnsupportedError('$label is not wired yet. Needs: $wiring');
   }
 }
@@ -90,7 +90,7 @@ class WhisperFfmpegEngine implements SpeechEngine {
     try {
       final session = await FFmpegExecutor.execute(
         '-y -i "$wavPath" -vn '
-        '-af "whisper=model=${model.path}:language=$language:destination=${srt.path}:format=srt" '
+        "-af \"whisper=model='${model.path}':language=$language:destination='${srt.path}':format=srt\" "
         '-f null -',
       );
 
@@ -99,7 +99,7 @@ class WhisperFfmpegEngine implements SpeechEngine {
       }
 
       final text = srtToPlainText(await srt.readAsString());
-      if (text.trim().isEmpty) {
+      if (text.trim().isEmpty || isLikelyHallucination(text.trim())) {
         throw StateError('no speech recognised');
       }
       return text;
@@ -112,12 +112,13 @@ class WhisperFfmpegEngine implements SpeechEngine {
 }
 
 String srtToPlainText(String srt) {
+  final lines = srt.split(RegExp(r'\r?\n'));
   final out = <String>[];
-  for (final rawLine in srt.split(RegExp(r'\r?\n'))) {
-    final line = rawLine.trim();
+  for (var i = 0; i < lines.length; i++) {
+    final line = lines[i].trim();
     if (line.isEmpty) continue;
-    if (RegExp(r'^\d+$').hasMatch(line)) continue;
     if (line.contains('-->')) continue;
+    if (RegExp(r'^\d+$').hasMatch(line) && _nextIsTiming(lines, i)) continue;
     final cleaned = line
         .replaceAll(RegExp(r'<\|[^>]*\|>'), '')
         .replaceAll(RegExp(r'\[_?[A-Z0-9_ ]+\]'), '')
@@ -127,6 +128,46 @@ String srtToPlainText(String srt) {
     out.add(cleaned);
   }
   return out.join(' ');
+}
+
+bool _nextIsTiming(List<String> lines, int index) {
+  for (var j = index + 1; j < lines.length; j++) {
+    final probe = lines[j].trim();
+    if (probe.isEmpty) continue;
+    return probe.contains('-->');
+  }
+  return false;
+}
+
+const Set<String> _silencePhrases = {
+  'thank you',
+  'thanks',
+  'thank you very much',
+  'thanks for watching',
+  'thanks for watching!',
+  'please subscribe',
+  'please subscribe to my channel',
+  'subtitles by the amaraorg community',
+  'subtitles by the amaraorg community translation team',
+  'transcription by castingwords',
+  'wwwamaraorg',
+  'bye',
+  'bye bye',
+  'music',
+  'applause',
+  'silence',
+  'blank audio',
+  'inaudible',
+};
+
+bool isLikelyHallucination(String text) {
+  final normalised = text
+      .toLowerCase()
+      .replaceAll(RegExp(r'[^a-z0-9 ]'), '')
+      .replaceAll(RegExp(r'\s+'), ' ')
+      .trim();
+  if (normalised.isEmpty) return true;
+  return _silencePhrases.contains(normalised);
 }
 
 class SpeechEngines {

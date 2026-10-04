@@ -1,6 +1,6 @@
 // ============================================================
 // As Above, So Below. As Within, So Without.
-// The Future Dictates the Past and the Past is Always Present.
+// The Future Dictates The Past and The Past is Always Present.
 // ============================================================
 
 import 'dart:async';
@@ -21,7 +21,8 @@ class VoiceInput extends ChangeNotifier {
   static const MethodChannel _storage = MethodChannel('com.sovereign.tagger/storage');
   static const int sampleRate = 16000;
   static const Duration maxDuration = Duration(seconds: 12);
-  static const int minBytes = 16000;
+  static const int bytesPerSecond = sampleRate * 2;
+  static const int minBytesForOneSecond = bytesPerSecond;
 
   SpeechEngine _engine;
   VoicePhase _phase = VoicePhase.idle;
@@ -29,6 +30,9 @@ class VoiceInput extends ChangeNotifier {
   double _progress = 0.0;
   Timer? _timer;
   String? _pendingPath;
+  bool _cancelRequested = false;
+  bool _micBlocked = false;
+  bool _disposed = false;
 
   VoicePhase get phase => _phase;
   String get status => _status;
@@ -36,63 +40,88 @@ class VoiceInput extends ChangeNotifier {
   SpeechEngine get engine => _engine;
   bool get isBusy => _phase != VoicePhase.idle;
   bool get isListening => _phase == VoicePhase.listening;
+  bool get micBlocked => _micBlocked;
 
   void useEngine(String id) {
+    if (isBusy) return;
     final next = SpeechEngines.byId(id);
-    if (next == null) return;
+    if (next == null || identical(next, _engine)) return;
     _engine = next;
     _status = '';
     _progress = 0.0;
-    notifyListeners();
+    _safeNotify();
   }
 
   Future<String?> toggle() async {
     if (_phase == VoicePhase.listening) return _stopAndTranscribe();
-    if (isBusy) return null;
+    if (isBusy) {
+      await cancel();
+      return null;
+    }
+    if (_micBlocked) {
+      _status = 'OPENING APP SETTINGS...';
+      _safeNotify();
+      await openAppSettings();
+      return null;
+    }
     return _start();
   }
 
   Future<String?> _start() async {
+    _cancelRequested = false;
     _status = 'WAKING THE MIC...';
     _progress = 0.0;
     _phase = VoicePhase.preparing;
-    notifyListeners();
+    _safeNotify();
 
+    String? path;
     try {
       if (await PcmRecorder.isRecording()) {
         return _fail('THE OTHER RECORDER IS BUSY. STOP IT FIRST.');
       }
 
-      if (!await PcmRecorder.hasPermission()) {
-        final granted = await Permission.microphone.request();
-        if (!granted.isGranted) return _fail('MIC ACCESS DENIED.');
-      }
+      final ok = await _ensureMic();
+      if (!ok) return null;
+      if (_cancelRequested) return _abandon();
 
       if (!await _engine.isReady()) {
         final mb = (_engine.payloadBytes / 1000000).round();
         _status = 'FETCHING ${_engine.label} (${mb}MB, ONCE)...';
-        notifyListeners();
+        _safeNotify();
         await _engine.prepare(onProgress: (stage, p) {
+          if (_cancelRequested || _disposed) return;
           _progress = p;
           _status = '${_engine.label}: $stage ${(p * 100).toStringAsFixed(0)}%';
-          notifyListeners();
+          _safeNotify();
         });
+        if (_cancelRequested || _disposed) return _abandon();
       }
 
       final tempDir = await _storage.invokeMethod<String>('getTempDirectory');
+      if (_cancelRequested || _disposed) return _abandon();
       if (tempDir == null || tempDir.isEmpty) {
         return _fail('NO TEMP DIRECTORY.');
       }
 
-      final path = '$tempDir/ghost_voice_${DateTime.now().millisecondsSinceEpoch}.wav';
-      final ok = await PcmRecorder.start(path: path, sampleRate: sampleRate, channels: 1);
-      if (!ok) return _fail('MIC ENGINE FAILED TO ARM.');
+      path = '$tempDir/ghost_voice_${DateTime.now().millisecondsSinceEpoch}.wav';
+      final armed = await PcmRecorder.start(path: path, sampleRate: sampleRate, channels: 1);
+      if (!armed) {
+        await _deleteQuietly(path);
+        path = null;
+        return _fail('MIC ENGINE FAILED TO ARM.');
+      }
+      if (_cancelRequested || _disposed) {
+        await PcmRecorder.stop();
+        await _deleteQuietly(path);
+        path = null;
+        return _abandon();
+      }
 
       _pendingPath = path;
       _status = 'LISTENING... ${maxDuration.inSeconds}s MAX';
       _progress = 0.0;
       _phase = VoicePhase.listening;
-      notifyListeners();
+      _safeNotify();
 
       _timer?.cancel();
       _timer = Timer(maxDuration, () {
@@ -102,8 +131,27 @@ class VoiceInput extends ChangeNotifier {
       });
       return null;
     } catch (e) {
+      await _deleteQuietly(path);
+      if (_disposed) return null;
       return _fail('MIC FAULT: $e');
     }
+  }
+
+  Future<bool> _ensureMic() async {
+    if (await PcmRecorder.hasPermission()) {
+      _micBlocked = false;
+      return true;
+    }
+    final status = await Permission.microphone.request();
+    if (status.isGranted) {
+      _micBlocked = false;
+      return true;
+    }
+    _micBlocked = status.isPermanentlyDenied || status.isRestricted;
+    _fail(_micBlocked
+        ? 'MIC BLOCKED. TAP MIC AGAIN TO OPEN APP SETTINGS.'
+        : 'MIC ACCESS DENIED.');
+    return false;
   }
 
   Future<String?> _stopAndTranscribe() async {
@@ -112,36 +160,42 @@ class VoiceInput extends ChangeNotifier {
     _phase = VoicePhase.transcribing;
     _status = '${_engine.label} IS THINKING...';
     _progress = 0.0;
-    notifyListeners();
+    _safeNotify();
 
     String? path;
     try {
       path = await PcmRecorder.stop();
       final recorded = path ?? _pendingPath;
+      if (_cancelRequested || _disposed) return null;
+
       if (recorded == null || !File(recorded).existsSync()) {
         return _fail('NOTHING WAS RECORDED.');
       }
-      if (File(recorded).lengthSync() < minBytes) {
+      if (File(recorded).lengthSync() < minBytesForOneSecond) {
         return _fail('DID NOT HEAR ANYTHING.');
       }
+
       final text = await _engine.transcribe(recorded);
+      if (_cancelRequested || _disposed) return null;
+
+      final trimmed = text.trim();
+      if (trimmed.isEmpty || isLikelyHallucination(trimmed)) {
+        return _fail('DID NOT CATCH ANY WORDS. TRY AGAIN.');
+      }
       _reset();
-      return text;
+      return trimmed;
     } catch (e) {
+      if (_disposed) return null;
       return _fail(_describe(e));
     } finally {
       final victim = path ?? _pendingPath;
       _pendingPath = null;
-      if (victim != null) {
-        try {
-          final f = File(victim);
-          if (f.existsSync()) await f.delete();
-        } catch (_) {}
-      }
+      await _deleteQuietly(victim);
     }
   }
 
   Future<void> cancel() async {
+    _cancelRequested = true;
     _timer?.cancel();
     _timer = null;
     if (_phase == VoicePhase.listening) {
@@ -151,12 +205,8 @@ class VoiceInput extends ChangeNotifier {
     }
     final victim = _pendingPath;
     _pendingPath = null;
-    if (victim != null) {
-      try {
-        final f = File(victim);
-        if (f.existsSync()) await f.delete();
-      } catch (_) {}
-    }
+    await _deleteQuietly(victim);
+    if (_disposed) return;
     _reset();
   }
 
@@ -172,11 +222,20 @@ class VoiceInput extends ChangeNotifier {
     return 'VOICE FAULT: $raw';
   }
 
+  String? _abandon() {
+    _timer?.cancel();
+    _timer = null;
+    _pendingPath = null;
+    if (_disposed) return null;
+    _reset();
+    return null;
+  }
+
   String? _fail(String message) {
     _status = message;
     _phase = VoicePhase.idle;
     _progress = 0.0;
-    notifyListeners();
+    _safeNotify();
     return null;
   }
 
@@ -184,13 +243,29 @@ class VoiceInput extends ChangeNotifier {
     _phase = VoicePhase.idle;
     _status = '';
     _progress = 0.0;
+    _safeNotify();
+  }
+
+  void _safeNotify() {
+    if (_disposed) return;
     notifyListeners();
+  }
+
+  static Future<void> _deleteQuietly(String? path) async {
+    if (path == null) return;
+    try {
+      final f = File(path);
+      if (f.existsSync()) await f.delete();
+    } catch (_) {}
   }
 
   @override
   void dispose() {
+    _disposed = true;
+    _cancelRequested = true;
     _timer?.cancel();
     _timer = null;
+    unawaited(cancel());
     super.dispose();
   }
 }

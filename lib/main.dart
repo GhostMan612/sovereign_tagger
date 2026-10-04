@@ -10,7 +10,6 @@ import 'package:ffmpeg_kit_extended_flutter/ffmpeg_kit_extended_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'screens/main_shell.dart';
 import 'core/feedback_settings.dart';
-import 'core/rotation_settings.dart';
 import 'core/sfx.dart';
 import 'widgets/cyber_ink.dart';
 import 'widgets/cyber_page_transitions.dart';
@@ -26,7 +25,6 @@ void main() async {
     SovereignState.accentColor.value = Color(savedColor);
   }
 await FeedbackSettings.load(prefs);
-    await RotationSettings.load(prefs);
     Sfx.init();
 
   runApp(const SovereignApp());

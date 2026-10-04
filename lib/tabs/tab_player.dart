@@ -13,7 +13,6 @@ import '../core/forge_request.dart';
 import '../core/lrc.dart';
 import '../core/metadata_sources.dart';
 import '../core/playlists.dart';
-import '../core/rotation_settings.dart';
 import '../screens/main_shell.dart';
 import '../screens/playback_engine_screen.dart';
 import '../screens/eq_presets_screen.dart';
@@ -771,35 +770,16 @@ class FullScreenVideoScreen extends StatefulWidget {
 class _FullScreenVideoScreenState extends State<FullScreenVideoScreen> {
   bool _showControls = true;
   BoxFit _currentFit = BoxFit.contain;
-  bool _didLockRotation = false;
 
   @override
   void initState() {
     super.initState();
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
-
-    if (RotationSettings.lockFullscreenVideo.value) {
-      final portrait = widget.controller.value.aspectRatio < 1.0;
-      SystemChrome.setPreferredOrientations(
-        portrait
-            ? [DeviceOrientation.portraitUp, DeviceOrientation.portraitDown]
-            : [DeviceOrientation.landscapeLeft, DeviceOrientation.landscapeRight],
-      );
-      _didLockRotation = true;
-    }
   }
 
   @override
   void dispose() {
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
-    if (_didLockRotation) {
-      SystemChrome.setPreferredOrientations([
-        DeviceOrientation.portraitUp,
-        DeviceOrientation.portraitDown,
-        DeviceOrientation.landscapeLeft,
-        DeviceOrientation.landscapeRight,
-      ]);
-    }
     super.dispose();
   }
 

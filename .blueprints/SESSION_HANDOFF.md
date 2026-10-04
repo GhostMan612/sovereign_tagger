@@ -116,11 +116,60 @@ Cause was `tab_player.dart` `_FullScreenVideoScreenState`, and it had **two** ha
 
 Nothing in Kotlin or the manifest touches orientation; this was the only source.
 
-Fix is **opt-in, default off**: `RotationSettings.lockFullscreenVideo` (new `lib/core/rotation_settings.dart`, loaded alongside the other prefs, exposed as a switch in SETTINGS → UI PREFERENCES). With it off, `setPreferredOrientations` is **never called at all** — no code path exists that can touch the rotation preference — and `dispose()` restores only when `_didLockRotation` is true.
+### My first fix was wrong, and the operator caught it
 
-The general lesson: **an app that writes a system preference on the way out is a bug even when writing it on the way in looks reasonable.** The entry lock was defensible UX for fullscreen video; the unconditional exit write was not, and it was the half actually causing the reported symptom.
+I made it **opt-in, default off** (`RotationSettings.lockFullscreenVideo` + a settings switch), and I wrote "no code path exists that can touch the rotation preference". That claim was true of the *default* state and useless in practice: the moment the toggle is touched, the original bug is back, and the operator is explicitly someone who does not want the feature at all. The operator tested it and replied **"it still activates the 'auto-rotate' quick tile."**
 
-## Verification status at end of this stretch — read this before trusting anything
+The mistake was treating "off by default" as equivalent to "gone". For a capability the operator has refused outright, the only honest fix is to **delete the capability**, not ship it behind a switch that must never be flipped. A disabled landmine is still a landmine.
+
+The orientation code is now **removed outright**. `rotation_settings.dart` deleted, the settings switch deleted, the `main.dart` load deleted. Verified mechanically rather than by assertion — `setPreferredOrientations`, `requestedOrientation`, `setRequestedOrientation`, `screenOrientation` and `RotationSettings` all return **zero hits** across `lib/`, and `screenOrientation` returns zero hits across `android/` including the manifest and Kotlin.
+
+Fullscreen video still goes immersive (`setEnabledSystemUIMode`), which is a system-bar change and cannot touch rotation. Orientation is now governed solely by the device's own setting.
+
+### Round 3 — the actual root cause (and two wrong answers first)
+
+Opt-in was wrong, and so was deletion. Both were reported back as still-broken, correctly. Only the third attempt found it, and it was not in our Dart at all.
+
+**What I measured, in order:**
+
+1. `grep` for every orientation API across `lib/` and `android/` → after round 2, **zero** hits. `setPreferredOrientations` confirmed **absent from the compiled `libapp.so`**, so it was genuinely not shipping.
+2. Merged manifest (not the source manifest — dependencies contribute there) → **no `screenOrientation`** on the activity. It was `unspecified`, i.e. **rotatable**.
+3. Read `MainActivity.kt` end to end → no orientation, no `Settings.System` writes.
+4. Controlled experiment on the Moto G (`moto g - 2025`, Android 16 / SDK 36):
+   - app **force-stopped**, rotation forced to `0`, 20s idle → stays `0`
+   - **launch** app, 25s → **`1`**
+   - uninstall → `0`; install **without launching** → stays **`0`**; launch → **`1`**
+
+So: **install does not cause it, launching does**, and nothing in our code requests orientation. The remaining variable is that the activity was declared **rotatable**. On Android 16 that is enough to engage the auto-rotate quick tile.
+
+**Fix: `android:screenOrientation="locked"`** (`SCREEN_ORIENTATION_LOCKED`) on `MainActivity`, confirmed present in the merged manifest. The activity pins itself to whatever orientation the device is in at launch, never asks the system to rotate, and never writes `ACCELEROMETER_ROTATION`. Combined with round 2 (all orientation code deleted), the app now has **no** mechanism to touch rotation by any route.
+
+**Device confirmation is still outstanding** — adbd stopped listening partway through (`192.168.5.21` answers ICMP but refuses 5555/39313/5037), so the last install-and-measure did not run. Do not record GH30 as verified until `accelerometer_rotation` is still `0` after a launch on the `locked` build.
+
+### The lesson, twice over
+
+Round 1 I asserted "FIXED" from a code-reading argument with zero device evidence, on a device that was **reachable at that moment**. Round 2 I asserted "FIXED" again from a mechanical grep. Both were wrong, and both would have shipped as confident lies. Measuring took four experiments and found in ninety seconds what two rounds of reasoning missed — and the answer was in a file I had never opened (`AndroidManifest.xml`, then `MainActivity.kt`), not in the Dart I had been staring at. **When a symptom survives a fix, the fix is wrong; stop defending it and go measure.**
+
+## Audit of the voice feature I had written but never reviewed (2026-10-02, same session)
+
+I wrote ~450 lines of new code and then ran only the analyzer. The analyzer is blind to almost every bug class that matters here, so the "Next Move" review I had listed was still outstanding and I did it before anything else. **It was not a formality — it found real defects, including two that would have shipped as user-visible failures.**
+
+Ordered by severity:
+
+1. **The mic leaked if the Ghost was closed mid-recording.** `VoiceInput.dispose()` cancelled the timer but never stopped `PcmRecorder`. Since `PcmRecorder` is a **global singleton channel**, that left the microphone hot *and* made the Workbench's recorder fail forever after with "the other recorder is busy". Both `dispose()` and the overlay's `dispose()` now stop the recorder and delete the WAV.
+2. **`cancel()` was dead code.** The mic button was `onPressed: null` while busy, so a user watching a 141 MB first-run download had **no way out** — minutes of an uninterruptible spinner. The button is now always live: listening → stop and transcribe, preparing/transcribing → cancel. Cancel sets a flag that is re-checked after every `await`, so a late-arriving transcript is discarded instead of filling the field after the user gave up.
+3. **Silence could produce a confident hallucination.** Whisper reliably emits "Thank you." / "Thanks for watching!" / "Subtitles by the Amara.org community" on near-silence. On a surface whose commands **play and delete real media**, that is the worst possible failure mode, and a length check would not catch it. Added an exact-match blocklist (`isLikelyHallucination`), normalised for case and punctuation, applied in both the engine and the input layer → surfaced as "DID NOT CATCH ANY WORDS."
+4. **Notify-after-dispose.** In-flight async work called `notifyListeners()` with no disposed guard — a live crash class, since `dispose()` does not cancel futures. Added `_disposed` and routed every notification through `_safeNotify()`.
+5. **Temp-file leak on a failed arm.** `PcmRecorder.start()` returning false left a zero-length WAV in the cache dir forever. Now deleted.
+6. **Permanently-denied mic was a dead end.** `request()` returns `permanentlyDenied` and the old code just said "MIC ACCESS DENIED", leaving the user no route to fix it. Now detected, and tapping the mic again opens app settings.
+7. **`useEngine` could swap engines mid-transcription**, feeding a WAV captured for one engine into another. Now a no-op while busy.
+8. **My own rewrite introduced a cleanup ordering bug** — `finally` nulled `_pendingPath` *before* the `?? _pendingPath` read it, so the WAV would never be deleted. Caught on re-read. Worth recording because it is exactly the class of bug I was auditing for, introduced while fixing it.
+9. `destination=` was unquoted in the filter graph; a colon in the path is FFmpeg's option separator, so it is now single-quoted. `-i` was already quoted, which is why this hid.
+10. `srtToPlainText` dropped **every** all-digits line as a cue index — so a spoken "1984" or "2026" vanished. Now a numeric line is only skipped when the next non-empty line is a timing line.
+11. `minBytes = 16000` was 0.5s of audio (16 kHz × 16-bit mono = 32000 B/s), an unexplained magic number. Now `minBytesForOneSecond` derived from `bytesPerSecond`.
+12. `SpeechEngineNotWired` threw **synchronously** across an interface declared `Future`-returning. Harmless where it was called, a latent trap for the next caller. Both methods now `async`.
+
+Lesson: **"it analyzes clean" is not a review.** Twelve defects, none of which the analyzer, the build, or a green `diff --check` could see. Every one needed someone to read the code and ask "what happens if the user changes their mind halfway through?"
 
 - **GH29 (11/11 containers), GH23–GH27 (per-defect), crossfade: device-verified.** Analyzed, built, installed, boot-smoked, plus operator checks.
 - **Voice input + GH30 rotation: `analyze` clean, release build green (488.6MB), but NOT device-verified.** The Moto G's wireless adb pairing collapsed mid-session — the daemon restarts between commands and `adb mdns services` comes back empty, so the device never reappeared. Neither change has been on hardware.

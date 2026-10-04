@@ -194,7 +194,10 @@ class _GhostChatOverlayState extends State<GhostChatOverlay> with TickerProvider
   }
 
   Future<void> _onMicTap() async {
-    if (_voice.isBusy && !_voice.isListening) return;
+    if (_voice.isBusy && !_voice.isListening) {
+      await _voice.cancel();
+      return;
+    }
     final wasListening = _voice.isListening;
     final text = await _voice.toggle();
     if (!mounted) return;
@@ -328,6 +331,7 @@ void _scrollToBottom() {
 
   @override
   void dispose() {
+    unawaited(_voice.cancel());
     _controller.dispose();
     _inputController.dispose();
     _inputFocus.dispose();
@@ -538,7 +542,10 @@ void _scrollToBottom() {
       builder: (context, _) {
         final listening = _voice.isListening;
         final busy = _voice.isBusy && !listening;
-        final tint = listening ? Colors.redAccent : themeColor;
+        final blocked = _voice.micBlocked;
+        final tint = listening
+            ? Colors.redAccent
+            : (busy || blocked ? Colors.amberAccent : themeColor);
         return DecoratedBox(
           decoration: BoxDecoration(
             shape: BoxShape.circle,
@@ -550,14 +557,18 @@ void _scrollToBottom() {
           ),
           child: IconButton(
             icon: Icon(
-              listening ? Icons.stop : (busy ? Icons.hourglass_top : Icons.mic_none),
+              listening
+                  ? Icons.stop
+                  : (busy ? Icons.close : (blocked ? Icons.mic_off : Icons.mic_none)),
               color: tint,
               size: 18,
             ),
-            onPressed: busy ? null : _onMicTap,
+            onPressed: _onMicTap,
             padding: EdgeInsets.zero,
             constraints: const BoxConstraints(minWidth: 38, minHeight: 38),
-            tooltip: 'VOICE QUERY',
+            tooltip: blocked
+                ? 'MIC BLOCKED - OPEN APP SETTINGS'
+                : (busy ? 'CANCEL VOICE QUERY' : (listening ? 'STOP AND TRANSCRIBE' : 'VOICE QUERY')),
           ),
         );
       },

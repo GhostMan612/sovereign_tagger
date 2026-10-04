@@ -50,6 +50,9 @@ This application operates completely outside the walled gardens of standard app 
 - Frosted-glass chat panel (blurs what's behind it) with accent outline and outlined query field
 - **Brain** (`lib/services/ghost_brain.dart`, pure Dart): typo-tolerant understanding + BM25 knowledge base of every screen and fix, and real commands — `play <artist|album|song>`, `play X by Y`, `shuffle everything`, `queue X`, `play X next`, next / previous / pause, shuffle & repeat modes, `sleep in 30 min` / `stop after this song`, `what's playing`, `favorite this`, `fix this song` (Forge), `open forge|library|eq|settings`, `how many songs by X`, paste a link to grab it; "which one?" follow-ups and "more" for deeper answers
 - **First-launch sequence** + per-tab tutorial, suggestion chips, Settings: visibility, auto-expand, reduce-motion, reset first-launch
+- **Voice query (optional)**: mic button beside SEND — tap to arm, tap again or wait for the 12s cap, and the transcript fills the query field **for you to confirm**. It never auto-sends, because the Ghost can play and delete real media and a misheard command must not execute unreviewed. Runs entirely offline on the same Whisper model the Workbench already uses, so **no extra download and no APK growth**; the first use on a fresh install pulls the 141MB model once with a progress bar. Tap again mid-download or mid-transcription to cancel. Silence is rejected rather than guessed at, including Whisper's stock "Thank you." / "Thanks for watching!" hallucinations
+  - Engine is swappable behind one interface (`lib/core/speech_to_text.dart`): `WhisperFfmpegEngine` is live; `WhistleEngine` (Cactus Compute, 16.9MB on-device model) is registered but not wired, since it needs an NDK/CMake/JNI bridge the app does not have yet
+- **Rotation**: the app never requests an orientation. There is no `setPreferredOrientations` call anywhere in `lib/` and no `screenOrientation` in the manifest — the device's own rotation setting is the only thing that controls orientation, so nothing here can flip the auto-rotate quick tile
 
 ### 7. **Library Tab** — Your Music
 - Reads the phone's music library: **Songs, Albums, Artists, Folders, Playlists, New**; live search; sort
@@ -190,6 +193,8 @@ lib/                                # 44 files (LOC intentionally not asserted �
 │   ├── tag_io.dart                 # TagIO write→read-back verify + DASH-moof flatten
 │   ├── tap_feedback.dart           # TapFeedback — haptic + Sfx.play only (no just_audio)
 │   ├── title_cleaner.dart          # Messy-title normalization
+│   ├── speech_to_text.dart         # SpeechEngine interface + WhisperFfmpegEngine + WhistleEngine (unwired)
+│   ├── voice_input.dart            # VoiceInput: mic permission, capture, 12s cap, transcription, cleanup
 │   └── whisper_model.dart          # First-use Whisper ggml model extraction to cache
 ├── screens/
 │   ├── main_shell.dart             # AudioService, GhostChatOverlay, CyberBackdrop, AnimatedTabStack, CyberNavBar
