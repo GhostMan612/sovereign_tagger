@@ -24,7 +24,7 @@ Session-end law: update rows 2–4 every session (+ row 5 when a new gotcha is l
 **Phase:** 0–28 COMPLETE. `flutter analyze --no-pub` → `No issues found!` (Flutter 3.47.5). **No planned implementation work remains** — every ROADMAP phase 0–28 is `[x]`, and as of the 2026-10-02 audit pass every registry row is FIXED/IMPLEMENTED. The open items are device-gated: smoke 1, 1b–1h. See Next actions.
 **Branch:** `main` is the single canonical branch and the only local or remote branch. 2026-10-01: `master`, `backup-before-main-sync` (local) and `claude/strange-lewin-97ba5a` / `claude/elegant-franklin-j99jl0` (remote) were **deleted** after verifying every one of them was fully merged into `main`. They no longer exist — do not reference them. Work on `main` (or a short-lived branch off it).
 
-## GH29 closed by measurement — WAV/AIFF tagging is provably lossless (2026-10-02)
+## GH29 closed by measurement — tag commits are provably lossless for all 11 extensions (2026-10-02)
 
 Answering "can you actually close the last one?" — **yes**, without UI taps and without a test suite. The trick: run **the app's exact shipping jar** off-device. `android/app/build.gradle:116` pins `net.jthink:jaudiotagger:3.0.1` and it is the only version in the Gradle cache, so a JVM probe exercises literally the same code that ships.
 
@@ -42,7 +42,52 @@ On commit, jaudiotagger **appends** metadata and rewrites no audio. In WAV, `fmt
 
 No code change was needed, and none was made. The probe stayed in `%TEMP%\opencode` — no framework, no committed fixtures, per the zero-test-suite directive; the recipe is recorded in `CURRENT_STATE.md` so it can be re-run.
 
-**The known-issue registry now has zero open defects.**
+**The known-issue registry now has zero open defects.
+
+## GH29 coverage extended to ALL ELEVEN writable extensions (2026-10-02)
+
+The previous GH29 entry generalised from **three** containers to the whole app. That was a real flaw: `TagIO.writableExtensions` (`lib/core/tag_io.dart:13`) lists **eleven** extensions across **eight** jaudiotagger writer classes, and eight of them — MP3, MP4, Ogg, FLAC, ASF — had never been measured. A conclusion drawn from three samples was presented as if it covered eleven.
+
+Two facts were established before writing a single fixture:
+
+1. **The contract is sound.** Reflecting over `AudioFileIO.getDefaultAudioFileIO()` dumped the live `readers` (17) and `writers` (14) maps. Every one of the eleven declared extensions has a writer, so `canWrite()` never promises a container `write()` would refuse: `aif/aifc/aiff→AiffFileWriter`, `dsf→DsfFileWriter`, `flac→FlacFileWriter`, `m4a/m4b/m4p/mp4→Mp4FileWriter`, `mp3→MP3FileWriter`, `oga/ogg→OggFileWriter`, `wav→WavFileWriter`, `wma→AsfFileWriter`.
+2. **Two of them are the dangerous ones.** `AsfFileWriter.writeTag` takes two `RandomAccessFile`s and rebuilds the file instead of patching in place, and `Mp4FileWriter` must relocate `mdat` when `moov` grows around it. Those are exactly where a payload could shift, so they got the closest attention.
+
+No ffmpeg on this machine, so every fixture was synthesised byte-by-byte from its spec, and **each generator also emitted the exact audio bytes it embedded as a sidecar**. Verification used a *separate* re-implementation that re-walks the committed file structurally — if the writer moves boxes, that walk still finds the audio by shape. A parser that mis-walks is indistinguishable from one that finds nothing, so cross-checking two independent implementations is the only way the result means anything.
+
+Final sweep, all eleven, `COMMIT_OK`, payload byte-identical and stream fields identical in every case:
+
+```
+ext    commit      pre_len   post_len  payload  stream
+mp3    COMMIT_OK   16680     16680     SAME     SAME
+m4a    COMMIT_OK   10240     10240     SAME     SAME
+m4b    COMMIT_OK   10240     10240     SAME     SAME
+mp4    COMMIT_OK   10240     10240     SAME     SAME
+flac   COMMIT_OK   16394     16394     SAME     SAME
+ogg    COMMIT_OK   1024      1024      SAME     SAME
+wav    COMMIT_OK   352800    352800    SAME     SAME
+aif    COMMIT_OK   352800    352800    SAME     SAME
+aiff   COMMIT_OK   352800    352800    SAME     SAME
+wma    COMMIT_OK   4096      4096      SAME     SAME
+dsf    COMMIT_OK   705600    705600    SAME     SAME
+```
+
+A useful cross-check fell out of this: `wav`, `aif` and `aiff` independently reproduced `ab1952f6…b1b4bc` and `dsf` reproduced `6b187373…65f1104c` — the same payload hashes established in an earlier session by a *different* implementation. Two unrelated implementations, written days apart, agreeing byte-for-byte.
+
+### Fixtures cost real debugging — every failure below was mine, not jaudiotagger's
+
+- **FLAC STREAMINFO** packed 20/3/5/36 bits by hand and came out as `channels=3 rate=2756 bits=2`. Those fields are exactly one 64-bit word (`rate<<44 | (ch-1)<<41 | (bps-1)<<36 | total`); arithmetic shifts on bytes are not bitfields.
+- **MP4 `mp4a`** was emitted 30 bytes long. `AudioSampleEntry` is exactly 28 (6 reserved + 2 dri + 8 reserved + 2×4 + 4 samplerate). Two stray bytes desynchronised the atom walk and surfaced as the useless `Unable to find next atom because identifier is invalid  #es`.
+- **MP4 `stco`** was patched by rebuilding the box, which changed `moov`'s size and invalidated the offset it was meant to store. It now writes a placeholder and patches the value in place, with an assert on the 28-byte sample entry.
+- **Ogg pages** were missing the `OggS` magic and version byte entirely, with the CRC at offset 18 instead of 22.
+- **Ogg identification header**: "fixing" the framing bit by merging it into the blocksizes byte dropped the packet to 29 bytes, which jaudiotagger reported as `ArrayIndexOutOfBoundsException: Index 29 out of bounds for length 29`. The blocksizes byte and the framing bit are **separate** bytes; the packet is 30.
+- **ASF header** originally used a 2-byte object count. `AsfHeaderReader.createContainer` (confirmed by reading its bytecode) reads a **UINT32** count and then demands the two reserved bytes be exactly `0x01` and `0x02` — hence the otherwise baffling `IOException: No ASF`.
+- **ASF** then needed a **Header Extension Object**; `AsfFileReader` dereferences `header.getExtendedHeader()` unconditionally and NPEs without one. Every real WMA file has one.
+- **DSF extraction** assumed `fmt ` sat at offset 12. It sits at **28**, after the 28-byte DSD header, and its size field (52) is inclusive of the 12-byte chunk header — so `data` begins at 80 and its payload at 92.
+
+Two of the verifiers were also wrong before the fixtures were, which is worth recording: the drift check compared strings that still carried their `BEFORE `/`AFTER ` labels (so it reported drift on files whose fields were identical), and its regex `channels=(\S+) rate=` could not match MP3's two-word channel mode `Joint Stereo`. Both were fixed and re-run rather than explained away — a checker that cries wolf is worse than no checker.
+
+The lesson generalises past GH29: **a sample is not a surface.** Three containers agreed, which made the claim feel safe, but the untested five included the two writers most likely to move bytes. Anything phrased as "X is fine" needs the denominator attached — how many of the declared cases were actually exercised.**
 
 ## Ghost GH23–GH27 re-verified statically (2026-10-02)
 
@@ -99,7 +144,7 @@ With the device live I went back and fixed the six defects that had been deliber
 - **GH27** — a just-downloaded song read as "No match" for up to 2 minutes. The cache now tracks a generation counter bumped by `StorageClient.libraryRevision`, so `bumpLibrary()` invalidates it on every download/export/overwrite. Generation counter rather than a per-instance listener, so recreating the overlay cannot leak listeners.
 - **GH28** — **audit false positive, corrected not "fixed".** The claim that `more` never returns chips was wrong: `_continueEntry` does return them on the terminal path. The audit quoted that line with the chips omitted. No code changed.
 
-**One item honestly left open (GH29):** `wav`/`aif`/`aiff`/`dsf` tag commits. The repo's lossless law is "never transcode the audio stream", and a RIFF header rewrite is not a transcode — it is the same class of container rewrite jaudiotagger already does for mp3/m4a/flac. So it is very likely compliant, but it is **unverified**. Deliberately NOT "fixed" by deleting the extensions, which would remove working functionality on a guess. Needs a byte-compare of the `data` chunk around a Forge save.
+**GH29 — was left open here, now CLOSED BY MEASUREMENT.** This entry previously read "`wav`/`aif`/`aiff`/`dsf` … very likely compliant, but it is **unverified**". That is superseded. It was also **wrong about scope**: it named four extensions when the app declares eleven, and the untested remainder included the two writers most likely to move bytes (`AsfFileWriter` rewrites the whole file; `Mp4FileWriter` relocates `mdat`). All eleven are now measured — see "GH29 coverage extended to ALL ELEVEN writable extensions" above. Tag commits are byte-for-byte lossless across the entire declared surface, so the lossless law holds without qualification and no extension needed removing.
 
 ## Operator feedback round 2 — Ghost settings toggles were dead controls (2026-10-02)
 
@@ -137,7 +182,7 @@ The operator rejected "needs a device" as a stopping point, so the four still-un
 
 Also fixed: `setState` called *inside* an `!mounted` branch (a guaranteed post-dispose crash on rotate), a swallowed jaudiotagger field failure that let Forge clobber originals missing COMPOSER/ENCODER/LANGUAGE, an unstaged partial-file leak on the highest-frequency temp path, a missing write-back timeout that could brick Forge unrecoverably, a failed shader load memoized forever with no log and no retry, a fallback backdrop that rebuilt a full-screen gradient 60×/s *and* re-rasters the entire tab tree, `whenCompleteOrCancel` hard-cutting rapid tab switches, and `precision mediump` making the backdrop degrade the longer the app runs (a 30-second smoke test could never have caught that one).
 
-**Recorded but deliberately not changed** (behaviour changes in code that cannot be executed without a device): Ghost artist-search breaking on leading articles, the now-playing phrase list pre-empting song searches, a >3-word gate silently dropping padded transport commands, a disambiguation prompt hijacking later queries, the 2-minute MediaStore cache reading a fresh download as "no match", and the unproven lossless guarantee for `wav`/`aif`/`aiff`/`dsf` (jaudiotagger regenerates their headers on commit). Each is listed with its repro in `CURRENT_STATE.md`.
+**Recorded but deliberately not changed** (behaviour changes in code that cannot be executed without a device): Ghost artist-search breaking on leading articles, the now-playing phrase list pre-empting song searches, a >3-word gate silently dropping padded transport commands, a disambiguation prompt hijacking later queries, and the 2-minute MediaStore cache reading a fresh download as "no match". Each is listed with its repro in `CURRENT_STATE.md`. The seventh item on that list — the unproven lossless guarantee for `wav`/`aif`/`aiff`/`dsf` — is **now measured and disproved as a risk**: all eleven writable extensions commit with byte-identical audio payloads, so it no longer belongs on a "cannot verify" list.
 
 ## What shipped — first device run of the release APK, and 3 bugs it caught (2026-10-01)
 
