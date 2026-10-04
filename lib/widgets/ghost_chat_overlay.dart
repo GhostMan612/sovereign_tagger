@@ -11,6 +11,7 @@ import 'ghost_avatar.dart';
 import '../screens/main_shell.dart';
 import '../core/ghost_settings.dart';
 import '../core/sfx.dart';
+import '../core/voice_input.dart';
 import '../services/ghost_brain.dart';
 import '../services/ghost_world.dart';
 
@@ -45,6 +46,7 @@ class _GhostChatOverlayState extends State<GhostChatOverlay> with TickerProvider
 
   GhostChatState _chatState = GhostChatState.collapsed;
   late final GhostBrain _brain = GhostBrain(AppGhostWorld(() => context));
+  final VoiceInput _voice = VoiceInput();
   Offset _dragOffset = Offset.zero;
   bool _userInteracted = false;
   bool _inFlight = false;
@@ -191,6 +193,23 @@ class _GhostChatOverlayState extends State<GhostChatOverlay> with TickerProvider
     widget.ghostController.setMood(text.trim().isEmpty ? GhostMood.idle : GhostMood.listening);
   }
 
+  Future<void> _onMicTap() async {
+    if (_voice.isBusy && !_voice.isListening) return;
+    final wasListening = _voice.isListening;
+    final text = await _voice.toggle();
+    if (!mounted) return;
+    if (text == null) return;
+    final trimmed = text.trim();
+    if (trimmed.isEmpty) return;
+    final existing = _inputController.text.trim();
+    _inputController.text = existing.isEmpty ? trimmed : '$existing $trimmed';
+    _inputController.selection = TextSelection.collapsed(offset: _inputController.text.length);
+    widget.ghostController.setMood(GhostMood.listening);
+    Sfx.play(SfxId.select);
+    _inputFocus.requestFocus();
+    if (wasListening) _typewriterSay('HEARD: $trimmed', isGhost: true);
+  }
+
   void _onFocusChange() {
     if (!_inputFocus.hasFocus && _inputController.text.trim().isEmpty) {
       widget.ghostController.setMood(GhostMood.idle);
@@ -313,6 +332,7 @@ void _scrollToBottom() {
     _inputController.dispose();
     _inputFocus.dispose();
     _scrollController.dispose();
+    _voice.dispose();
     super.dispose();
   }
 
@@ -448,49 +468,57 @@ void _scrollToBottom() {
                     ),
                     Padding(
                       padding: const EdgeInsets.fromLTRB(10, 4, 10, 10),
-                      child: Row(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
                         children: [
-                          Expanded(
-                            child: TextField(
-                              controller: _inputController,
-                              focusNode: _inputFocus,
-                              onChanged: _onInputChanged,
-                              cursorColor: themeColor,
-                              style: const TextStyle(fontFamily: 'ShareTechMono', color: Colors.white, fontSize: 13),
-                              decoration: InputDecoration(
-                                hintText: "QUERY THE GHOST...",
-                                hintStyle: const TextStyle(fontFamily: 'VT323', color: Colors.white38, fontSize: 14),
-                                isDense: true,
-                                filled: true,
-                                fillColor: Colors.black.withValues(alpha: 0.35),
-                                contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                                enabledBorder: OutlineInputBorder(
-                                  borderRadius: BorderRadius.circular(10),
-                                  borderSide: BorderSide(color: themeColor.withValues(alpha: 0.45)),
-                                ),
-                                focusedBorder: OutlineInputBorder(
-                                  borderRadius: BorderRadius.circular(10),
-                                  borderSide: BorderSide(color: themeColor, width: 1.6),
+                          Row(
+                            children: [
+                              Expanded(
+                                child: TextField(
+                                  controller: _inputController,
+                                  focusNode: _inputFocus,
+                                  onChanged: _onInputChanged,
+                                  cursorColor: themeColor,
+                                  style: const TextStyle(fontFamily: 'ShareTechMono', color: Colors.white, fontSize: 13),
+                                  decoration: InputDecoration(
+                                    hintText: "QUERY THE GHOST...",
+                                    hintStyle: const TextStyle(fontFamily: 'VT323', color: Colors.white38, fontSize: 14),
+                                    isDense: true,
+                                    filled: true,
+                                    fillColor: Colors.black.withValues(alpha: 0.35),
+                                    contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                                    enabledBorder: OutlineInputBorder(
+                                      borderRadius: BorderRadius.circular(10),
+                                      borderSide: BorderSide(color: themeColor.withValues(alpha: 0.45)),
+                                    ),
+                                    focusedBorder: OutlineInputBorder(
+                                      borderRadius: BorderRadius.circular(10),
+                                      borderSide: BorderSide(color: themeColor, width: 1.6),
+                                    ),
+                                  ),
+                                  onSubmitted: _handleUserInput,
+                                  textCapitalization: TextCapitalization.sentences,
                                 ),
                               ),
-                              onSubmitted: _handleUserInput,
-                              textCapitalization: TextCapitalization.sentences,
-                            ),
+                              const SizedBox(width: 6),
+                              _buildMicButton(themeColor),
+                              const SizedBox(width: 6),
+                              DecoratedBox(
+                                decoration: BoxDecoration(
+                                  shape: BoxShape.circle,
+                                  border: Border.all(color: themeColor.withValues(alpha: 0.7)),
+                                  color: themeColor.withValues(alpha: 0.12),
+                                ),
+                                child: IconButton(
+                                  icon: Icon(Icons.send, color: themeColor, size: 18),
+                                  onPressed: () => _handleUserInput(_inputController.text),
+                                  padding: EdgeInsets.zero,
+                                  constraints: const BoxConstraints(minWidth: 38, minHeight: 38),
+                                ),
+                              ),
+                            ],
                           ),
-                          const SizedBox(width: 6),
-                          DecoratedBox(
-                            decoration: BoxDecoration(
-                              shape: BoxShape.circle,
-                              border: Border.all(color: themeColor.withValues(alpha: 0.7)),
-                              color: themeColor.withValues(alpha: 0.12),
-                            ),
-                            child: IconButton(
-                              icon: Icon(Icons.send, color: themeColor, size: 18),
-                              onPressed: () => _handleUserInput(_inputController.text),
-                              padding: EdgeInsets.zero,
-                              constraints: const BoxConstraints(minWidth: 38, minHeight: 38),
-                            ),
-                          ),
+                          _buildVoiceStatus(themeColor),
                         ],
                       ),
                     ),
@@ -501,6 +529,78 @@ void _scrollToBottom() {
           ),
         ),
       ),
+    );
+  }
+
+  Widget _buildMicButton(Color themeColor) {
+    return AnimatedBuilder(
+      animation: _voice,
+      builder: (context, _) {
+        final listening = _voice.isListening;
+        final busy = _voice.isBusy && !listening;
+        final tint = listening ? Colors.redAccent : themeColor;
+        return DecoratedBox(
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            border: Border.all(
+              color: tint.withValues(alpha: listening ? 0.95 : 0.45),
+              width: listening ? 1.8 : 1,
+            ),
+            color: listening ? Colors.redAccent.withValues(alpha: 0.16) : Colors.black.withValues(alpha: 0.25),
+          ),
+          child: IconButton(
+            icon: Icon(
+              listening ? Icons.stop : (busy ? Icons.hourglass_top : Icons.mic_none),
+              color: tint,
+              size: 18,
+            ),
+            onPressed: busy ? null : _onMicTap,
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(minWidth: 38, minHeight: 38),
+            tooltip: 'VOICE QUERY',
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildVoiceStatus(Color themeColor) {
+    return AnimatedBuilder(
+      animation: _voice,
+      builder: (context, _) {
+        final s = _voice.status;
+        if (s.isEmpty) return const SizedBox.shrink();
+        final showBar = _voice.phase == VoicePhase.preparing && _voice.progress > 0;
+        return Padding(
+          padding: const EdgeInsets.only(top: 6),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                s,
+                style: TextStyle(
+                  fontFamily: 'VT323',
+                  fontSize: 12,
+                  color: _voice.phase == VoicePhase.idle ? Colors.redAccent : themeColor,
+                ),
+              ),
+              if (showBar)
+                Padding(
+                  padding: const EdgeInsets.only(top: 4),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(3),
+                    child: LinearProgressIndicator(
+                      value: _voice.progress,
+                      minHeight: 3,
+                      backgroundColor: Colors.black.withValues(alpha: 0.4),
+                      valueColor: AlwaysStoppedAnimation<Color>(themeColor),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        );
+      },
     );
   }
 

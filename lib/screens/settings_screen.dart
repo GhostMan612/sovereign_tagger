@@ -16,6 +16,7 @@ import 'package:ffmpeg_kit_extended_flutter/ffmpeg_kit_extended_flutter.dart';
 import '../core/ffmpeg_executor.dart';
 import '../core/ghost_settings.dart';
 import '../core/feedback_settings.dart';
+import '../core/rotation_settings.dart';
 import '../screens/main_shell.dart';
 
 class SettingsScreen extends StatefulWidget {
@@ -556,6 +557,23 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     decoration: BoxDecoration(color: themeColor, shape: BoxShape.circle, border: Border.all(color: Colors.white24)),
                   ),
                   onTap: () => _pickColor(context, themeColor),
+                ),
+                ValueListenableBuilder<bool>(
+                  valueListenable: RotationSettings.lockFullscreenVideo,
+                  builder: (context, v, _) => SwitchListTile(
+                    dense: true,
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text("LOCK ROTATION IN FULLSCREEN VIDEO", style: TextStyle(fontFamily: 'ShareTechMono', fontSize: 12, color: Colors.white70)),
+                    subtitle: Text(
+                      v
+                          ? "app pins orientation while video plays"
+                          : "off - the machine never touches your rotation setting",
+                      style: const TextStyle(fontFamily: 'ShareTechMono', fontSize: 10, color: Colors.white38),
+                    ),
+                    value: v,
+                    activeThumbColor: themeColor,
+                    onChanged: (x) => RotationSettings.setLockFullscreenVideo(x),
+                  ),
                 ),
 
                 const SizedBox(height: 16),

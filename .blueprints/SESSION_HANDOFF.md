@@ -22,7 +22,7 @@ Session-end law: update rows 2–4 every session (+ row 5 when a new gotcha is l
 
 **Date:** 2026-10-02
 **Phase:** 0–28 COMPLETE. `flutter analyze --no-pub` → `No issues found!` (Flutter 3.47.5). **No planned implementation work remains** — every ROADMAP phase 0–28 is `[x]`, and as of the 2026-10-02 audit pass every registry row is FIXED/IMPLEMENTED. The open items are device-gated: smoke 1, 1b–1h. See Next actions.
-**Last operator device pass (2026-10-02):** both previously-open verification items **PASS** — crossfade exercised at > 0 (fade audible and continuous, so the `0.0 → 0.05` mute-floor fix is hardware-verified, closing the last "safe by construction" caveat), and the Ghost UI behaving as expected across its surface. The Ghost pass is a *"nothing visibly broken"* result, not five per-defect confirmations; the exact repro script is in `CURRENT_STATE.md` if anyone wants the stronger claim.
+**Last operator device pass (2026-10-02):** both previously-open verification items **PASS** — crossfade exercised at > 0 (fade audible and continuous, so the `0.0 → 0.05` mute-floor fix is hardware-verified, closing the last "safe by construction" caveat), and the Ghost UI behaving as expected. The operator then ran the **scripted per-defect checklist** and confirmed **GH23–GH27 individually**: GH23 no longer says "No match" for `"the beatles"` (it searches the library), GH24 no longer just reports the loaded track (it acts on the request), GH25 pauses, GH26 "play all my library tracks" loads and plays the full library shuffled, GH27 a fresh download is found and played immediately. That is five per-defect confirmations, not a surface-wide impression.
 **Branch:** `main` is the single canonical branch and the only local or remote branch. 2026-10-01: `master`, `backup-before-main-sync` (local) and `claude/strange-lewin-97ba5a` / `claude/elegant-franklin-j99jl0` (remote) were **deleted** after verifying every one of them was fully merged into `main`. They no longer exist — do not reference them. Work on `main` (or a short-lived branch off it).
 
 ## GH29 closed by measurement — tag commits are provably lossless for all 11 extensions (2026-10-02)
@@ -88,7 +88,45 @@ A useful cross-check fell out of this: `wav`, `aif` and `aiff` independently rep
 
 Two of the verifiers were also wrong before the fixtures were, which is worth recording: the drift check compared strings that still carried their `BEFORE `/`AFTER ` labels (so it reported drift on files whose fields were identical), and its regex `channels=(\S+) rate=` could not match MP3's two-word channel mode `Joint Stereo`. Both were fixed and re-run rather than explained away — a checker that cries wolf is worse than no checker.
 
-The lesson generalises past GH29: **a sample is not a surface.** Three containers agreed, which made the claim feel safe, but the untested five included the two writers most likely to move bytes. Anything phrased as "X is fine" needs the denominator attached — how many of the declared cases were actually exercised.**
+The lesson generalises past GH29: **a sample is not a surface.** Three containers agreed, which made the claim feel safe, but the untested five included the two writers most likely to move bytes. Anything phrased as "X is fine" needs the denominator attached — how many of the declared cases were actually exercised.
+
+## Voice input for the Ghost + Whistle reconnaissance (2026-10-02)
+
+Operator asked to look at `C:\Call-Dad` for its "uses whisper" feature and replicate it as an optional button beside a send button. Two of the three premises did not survive inspection, and finding that out early is the whole value of having read the repo:
+
+- **Call-Dad does not use Whisper.** It uses Android's built-in `createOnDeviceSpeechRecognizer` (API 31+). No whisper.cpp, no `jniLibs`, no `externalNativeBuild`, no `ndkVersion`, no `.bin`/`.tflite`/`.onnx` anywhere under `app/`. Verified in both gradle files, `gradle/libs.versions.toml`, and a file-glob.
+- **It has no mic beside Send.** The composer is `Row { OutlinedTextField(weight 1f), IconButton(Send) }` and is *deliberately* mic-free (`docs/kid-safe-ux.md`: "a 6-year-old cannot dictate at this age"). Its mic is a full-screen "Tap to Speak" circle.
+- **Its transcript goes nowhere useful.** `onResults` feeds `KeywordBot` then TTS; `lastHeard`/`lastSpoken` are write-only state (5 hits, all inside the ViewModel); `onPartialResults` is an empty no-op. There is no path from a recognized string into a text field.
+- Worth stealing: it requests `RECORD_AUDIO` **on the press**, and the grant callback starts listening, so there is no second tap. Its network-recognizer refusal is pinned by a regression test after it once uploaded a child's speech off-device.
+
+**"Whistle" is real** — Cactus Compute, released 2026-10-02. A 16.9 MB single `whistle.cact`, CPU-only, no GPU, prebuilt binaries for 17 targets including Android, word timestamps + keyword biasing, 7 languages. Roughly 9× smaller than Whisper base (145.3 MB) and ahead of it on several benchmarks. (There is an unrelated 2024 academic paper of the same name — ignore it.) Latency figures are M4 Pro vendor claims, not a mobile SLA.
+
+**Why it is registered but NOT wired:** consuming Whistle means NDK + CMake + JNI to `needle_load`/`needle_transcribe` plus a new model. This project has **zero native integration today** — a new toolchain surface on a repo with hard APK-size and dependency ceilings, for a model one day old. The operator chose *"both behind one interface"*, so `SpeechEngine` exists with two implementations and the Whisper one is live.
+
+**What actually shipped** is the feature, on the engine the app already had — `PcmRecorderBridge` + the FFmpeg `whisper` filter + `WhisperModel.ensure()`. Zero new dependencies, zero APK growth. Transcript fills the field and waits for confirmation; it does **not** auto-send, because the Ghost can play and delete real media. Capture is 16 kHz mono so a later Whistle swap needs no capture change. Full detail in `CURRENT_STATE.md` → "Voice input (Ghost)".
+
+## GH30 — the app was hijacking the device's rotation setting (2026-10-02)
+
+Operator: *"the auto-rotate quick tile always gets activated although I don't want the feature activated at all on my device."*
+
+Cause was `tab_player.dart` `_FullScreenVideoScreenState`, and it had **two** halves:
+
+1. `initState` force-locked orientation based on aspect ratio.
+2. `dispose` then called `setPreferredOrientations([all four])` — writing a *fresh* orientation preference back to the system on every exit, even when nothing had been locked. That lands as `SCREEN_ORIENTATION_FULL_USER` on Android and is what flips the auto-rotate tile on.
+
+Nothing in Kotlin or the manifest touches orientation; this was the only source.
+
+Fix is **opt-in, default off**: `RotationSettings.lockFullscreenVideo` (new `lib/core/rotation_settings.dart`, loaded alongside the other prefs, exposed as a switch in SETTINGS → UI PREFERENCES). With it off, `setPreferredOrientations` is **never called at all** — no code path exists that can touch the rotation preference — and `dispose()` restores only when `_didLockRotation` is true.
+
+The general lesson: **an app that writes a system preference on the way out is a bug even when writing it on the way in looks reasonable.** The entry lock was defensible UX for fullscreen video; the unconditional exit write was not, and it was the half actually causing the reported symptom.
+
+## Verification status at end of this stretch — read this before trusting anything
+
+- **GH29 (11/11 containers), GH23–GH27 (per-defect), crossfade: device-verified.** Analyzed, built, installed, boot-smoked, plus operator checks.
+- **Voice input + GH30 rotation: `analyze` clean, release build green (488.6MB), but NOT device-verified.** The Moto G's wireless adb pairing collapsed mid-session — the daemon restarts between commands and `adb mdns services` comes back empty, so the device never reappeared. Neither change has been on hardware.
+- Confirmed clean and worth stating: the release APK was **not** installed on `B160V` (`pm list packages` has no `com.sovereigntagger`, `pm path` empty). One install attempt failed with "device offline" while the daemon was flapping; checked explicitly afterwards because that device is off-limits.
+
+Next session, in order: (1) get the Moto G back on adb, (2) install, (3) confirm the auto-rotate tile **stays off** after using fullscreen video, (4) smoke the mic button end-to-end including the 141MB first-run model download, (5) then commit.**
 
 ## Ghost GH23–GH27 re-verified statically (2026-10-02)
 
