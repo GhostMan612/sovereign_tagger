@@ -12,6 +12,9 @@ class WhisperModel {
   static const String downloadUrl = 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin';
   static const int minBytes = 140000000;
 
+  static bool _prepareCancelled = false;
+  static HttpClient? _activeClient;
+
   static Future<File> file() async {
     final dir = Directory('${(await getApplicationSupportDirectory()).path}/whisper_model');
     if (!dir.existsSync()) dir.createSync(recursive: true);
@@ -26,6 +29,7 @@ class WhisperModel {
   static Future<File> ensure({void Function(String stage, double progress)? onProgress}) async {
     final target = await file();
     if (target.existsSync() && target.lengthSync() >= minBytes) return target;
+    _prepareCancelled = false;
 
     try {
       final data = await rootBundle.load('assets/models/$fileName');
@@ -38,6 +42,7 @@ class WhisperModel {
 
     final part = File('${target.path}.part');
     final client = HttpClient()..connectionTimeout = const Duration(seconds: 20);
+    _activeClient = client;
     try {
       final request = await client.getUrl(Uri.parse(downloadUrl));
       request.headers.set(HttpHeaders.userAgentHeader, 'SovereignTagger/2.0');
@@ -48,6 +53,7 @@ class WhisperModel {
       final sink = part.openWrite();
       try {
         await for (final chunk in response) {
+          if (_prepareCancelled) throw HttpException('Model preparation cancelled');
           sink.add(chunk);
           received += chunk.length;
           if (total > 0) onProgress?.call('Downloading model', received / total);
@@ -58,14 +64,27 @@ class WhisperModel {
       }
       if (part.lengthSync() < minBytes) throw const FileSystemException('Model download incomplete');
       await part.rename(target.path);
+      _prepareCancelled = false;
       return target;
-    } catch (_) {
+    } catch (e) {
+      if (_prepareCancelled) {
+        try {
+          if (part.existsSync()) part.deleteSync();
+        } catch (_) {}
+        throw HttpException('Model preparation cancelled');
+      }
       try {
         if (part.existsSync()) part.deleteSync();
       } catch (_) {}
       rethrow;
     } finally {
       client.close(force: true);
+      if (identical(_activeClient, client)) _activeClient = null;
     }
+  }
+
+  static Future<void> cancelPrepare() async {
+    _prepareCancelled = true;
+    _activeClient?.close(force: true);
   }
 }

@@ -19,6 +19,7 @@ abstract class SpeechEngine {
   Future<bool> isReady();
   Future<void> prepare({void Function(String stage, double progress)? onProgress});
   Future<String> transcribe(String wavPath, {String language = 'en'});
+  Future<void> cancel() async {}
 }
 
 class SpeechEngineNotWired implements SpeechEngine {
@@ -39,6 +40,9 @@ class SpeechEngineNotWired implements SpeechEngine {
 
   @override
   Future<bool> isReady() async => false;
+
+  @override
+  Future<void> cancel() async {}
 
   @override
   Future<void> prepare({void Function(String stage, double progress)? onProgress}) async {
@@ -63,7 +67,9 @@ class WhistleEngine extends SpeechEngineNotWired {
 }
 
 class WhisperFfmpegEngine implements SpeechEngine {
-  const WhisperFfmpegEngine();
+  WhisperFfmpegEngine();
+
+  String? _activeTranscriptionDescription;
 
   @override
   String get id => 'whisper';
@@ -83,15 +89,26 @@ class WhisperFfmpegEngine implements SpeechEngine {
   }
 
   @override
+  Future<void> cancel() async {
+    await WhisperModel.cancelPrepare();
+    if (_activeTranscriptionDescription != null) {
+      FFmpegExecutor.cancelCurrent(description: _activeTranscriptionDescription);
+    }
+  }
+
+  @override
   Future<String> transcribe(String wavPath, {String language = 'en'}) async {
     final model = await WhisperModel.ensure();
     final srt = File('$wavPath.srt');
+    final description = 'voice_whisper_${DateTime.now().microsecondsSinceEpoch}';
+    _activeTranscriptionDescription = description;
 
     try {
       final session = await FFmpegExecutor.execute(
         '-y -i "$wavPath" -vn '
         "-af \"whisper=model='${model.path}':language=$language:destination='${srt.path}':format=srt\" "
         '-f null -',
+        description: description,
       );
 
       if (!ReturnCode.isSuccess(session.getReturnCode()) || !srt.existsSync()) {
@@ -104,6 +121,9 @@ class WhisperFfmpegEngine implements SpeechEngine {
       }
       return text;
     } finally {
+      if (_activeTranscriptionDescription == description) {
+        _activeTranscriptionDescription = null;
+      }
       try {
         if (srt.existsSync()) await srt.delete();
       } catch (_) {}
@@ -173,9 +193,9 @@ bool isLikelyHallucination(String text) {
 class SpeechEngines {
   const SpeechEngines._();
 
-  static const List<SpeechEngine> all = [WhisperFfmpegEngine(), WhistleEngine()];
+  static final List<SpeechEngine> all = [WhisperFfmpegEngine(), WhistleEngine()];
 
-  static SpeechEngine get preferred => const WhisperFfmpegEngine();
+  static SpeechEngine get preferred => WhisperFfmpegEngine();
 
   static SpeechEngine? byId(String id) {
     for (final e in all) {

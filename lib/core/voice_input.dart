@@ -140,7 +140,7 @@ class VoiceInput extends ChangeNotifier {
       return null;
     } catch (e) {
       await _deleteQuietly(path);
-      if (_disposed) return null;
+      if (_disposed || _cancelRequested) return null;
       return _fail('MIC FAULT: $e');
     }
   }
@@ -193,7 +193,7 @@ class VoiceInput extends ChangeNotifier {
       _reset();
       return trimmed;
     } catch (e) {
-      if (_disposed) return null;
+      if (_disposed || _cancelRequested) return null;
       return _fail(_describe(e));
     } finally {
       final victim = path ?? _pendingPath;
@@ -206,6 +206,7 @@ class VoiceInput extends ChangeNotifier {
     _cancelRequested = true;
     _timer?.cancel();
     _timer = null;
+    unawaited(_engine.cancel());
     if (_phase == VoicePhase.listening) {
       try {
         await PcmRecorder.stop();
