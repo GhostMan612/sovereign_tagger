@@ -355,7 +355,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     try {
       final result = await FilePicker.platform.pickFiles(type: FileType.any);
       if (result == null || result.files.single.path == null) {
-        setState(() => _backupStatus = "Restore cancelled.");
+        setState(() => _backupStatus = "Restore canceled.");
         return;
       }
       

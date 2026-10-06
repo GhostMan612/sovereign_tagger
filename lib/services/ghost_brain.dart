@@ -109,8 +109,8 @@ class GhostBrain {
     'pipeline': 'batch', 'bulk': 'batch', 'mass': 'batch',
     'studio': 'workbench', 'dsp': 'workbench', 'mastering': 'workbench',
     'songs': 'song', 'track': 'song', 'tracks': 'song', 'tune': 'song', 'tunes': 'song', 'music': 'song',
-    'equalizer': 'eq', 'equaliser': 'eq', 'bass': 'eq', 'treble': 'eq',
-    'fav': 'favorite', 'favourite': 'favorite', 'favorites': 'favorite', 'favourites': 'favorite', 'like': 'favorite', 'love': 'favorite', 'heart': 'favorite',
+    'equalizer': 'eq', 'bass': 'eq', 'treble': 'eq',
+    'fav': 'favorite', 'favorites': 'favorite', 'like': 'favorite', 'love': 'favorite', 'heart': 'favorite',
     'loop': 'repeat', 'looping': 'repeat',
     'random': 'shuffle', 'shuffled': 'shuffle', 'shuffling': 'shuffle',
     'artwork': 'art', 'cover': 'art', 'covers': 'art', 'picture': 'art', 'image': 'art', 'thumbnail': 'art',
@@ -125,7 +125,7 @@ class GhostBrain {
     'dupes': 'duplicate', 'duplicates': 'duplicate', 'copies': 'duplicate',
     'perms': 'permission', 'permissions': 'permission', 'allow': 'permission',
     'sfx': 'sound', 'sounds': 'sound', 'haptic': 'haptics', 'vibration': 'haptics',
-    'colour': 'color', 'theme': 'color', 'accent': 'color',
+    'theme': 'color', 'accent': 'color',
   };
 
   static const Map<String, int> _tabs = {
@@ -560,7 +560,7 @@ class GhostBrain {
     if (set.contains('cancel') || text.contains(' no sleep ') || (set.contains('sleep') && set.contains('off') && !hasNumber)) {
       world.setSleepMinutes(0);
       world.setSleepAtEndOfTrack(false);
-      return const GhostReply('Sleep timer cancelled.');
+      return const GhostReply('Sleep timer canceled.');
     }
     if (afterThis) {
       world.setSleepAtEndOfTrack(true);

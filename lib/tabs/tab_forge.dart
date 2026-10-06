@@ -631,7 +631,7 @@ class _TabForgeState extends State<TabForge> {
           if (!fallback) {
             setState(() {
               _isProcessing = false;
-              _statusMessage = "Save Cancelled. Tags Are Still In The Working Copy — Nothing Lost.";
+              _statusMessage = "Save Canceled. Tags Are Still In The Working Copy — Nothing Lost.";
             });
             return;
           }

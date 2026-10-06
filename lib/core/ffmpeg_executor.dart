@@ -12,7 +12,7 @@ class FFmpegExecutor {
   static bool _busy = false;
   static FFmpegSession? _currentSession;
   static String? _currentDescription;
-  static final Set<String> _cancelledDescriptions = <String>{};
+  static final Set<String> _canceledDescriptions = <String>{};
 
   static Future<FFmpegSession> execute(
     String command, {
@@ -29,7 +29,7 @@ class FFmpegExecutor {
 
   static void cancelCurrent({String? description}) {
     if (description != null) {
-      _cancelledDescriptions.add(description);
+      _canceledDescriptions.add(description);
       if (_currentDescription == description) {
         _currentSession?.cancel();
       }
@@ -43,9 +43,9 @@ class FFmpegExecutor {
     _busy = true;
     final job = _queue.removeFirst();
     try {
-      if (job.description != null && _cancelledDescriptions.remove(job.description)) {
+      if (job.description != null && _canceledDescriptions.remove(job.description)) {
         if (!job.completer.isCompleted) {
-          job.completer.completeError(StateError('FFmpeg task cancelled'));
+          job.completer.completeError(StateError('FFmpeg task canceled'));
         }
         return;
       }
@@ -67,7 +67,7 @@ class FFmpegExecutor {
         if (!job.completer.isCompleted) job.completer.complete(result);
       } finally {
         if (job.description != null) {
-          _cancelledDescriptions.remove(job.description);
+          _canceledDescriptions.remove(job.description);
         }
         if (identical(_currentSession, session)) {
           _currentSession = null;

@@ -28,12 +28,12 @@ risks, and they are worth scoring separately rather than as one bundle.
 Store policy for *download managers* is about **circumventing a service's
 authentication or copy protection**, not about downloading media. A user
 recording their own audio, or a maintainer shipping a tool that shells to
-`yt-dlp`, sits in a grey band that differs per store:
+`yt-dlp`, sits in a gray band that differs per store:
 
 | Store | Likely posture for `full` | Likely posture for `sdk` |
 |---|---|---|
 | Google Play | High risk — media downloader + no Play-distributed `yt-dlp` | Plausible; no ripper present |
-| F-Droid | Favourable — they accept terminal-adjacent tools | Favourable |
+| F-Droid | Favorable — they accept terminal-adjacent tools | Favorable |
 | GitHub Releases | No policy; whatever you ship, you ship | Same |
 | Direct APK | No policy | Same |
 

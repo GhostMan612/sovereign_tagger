@@ -336,7 +336,7 @@ class _TabLibraryState extends State<TabLibrary> with AutomaticKeepAliveClientMi
     final uris = tracks.map((t) => t.uri).where((u) => u.isNotEmpty).toList();
     final granted = await StorageClient.requestDelete(uris);
     if (!granted) {
-      _toast("> DELETE CANCELLED.");
+      _toast("> DELETE CANCELED.");
       return;
     }
     final paths = tracks.map((t) => t.path).toSet();

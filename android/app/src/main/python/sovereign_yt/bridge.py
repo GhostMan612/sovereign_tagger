@@ -164,7 +164,7 @@ def download(url, options_json, job_id, out_dir, progress_callback):
         def create_hook(label):
             def hook(d):
                 if not active_jobs.get(job_id, False):
-                    raise Exception("CANCELLED_BY_USER")
+                    raise Exception("CANCELED_BY_USER")
                 if d["status"] == "downloading":
                     total = d.get("total_bytes") or d.get("total_bytes_estimate") or 0
                     downloaded = d.get("downloaded_bytes", 0)
@@ -257,14 +257,14 @@ def download(url, options_json, job_id, out_dir, progress_callback):
         return json.dumps({"status": "success", "jobId": job_id})
 
     except Exception as e:
-        cancelled = active_jobs.get(job_id) is False or "CANCELLED_BY_USER" in str(e)
+        canceled = active_jobs.get(job_id) is False or "CANCELED_BY_USER" in str(e)
         active_jobs.pop(job_id, None)
-        if cancelled:
+        if canceled:
             for name in os.listdir(out_dir):
                 if name.startswith(job_id):
                     try:
                         os.remove(os.path.join(out_dir, name))
                     except Exception:
                         pass
-            return json.dumps({"status": "cancelled", "jobId": job_id})
+            return json.dumps({"status": "canceled", "jobId": job_id})
         return json.dumps({"status": "error", "message": str(e), "jobId": job_id})

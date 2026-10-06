@@ -177,7 +177,7 @@ class _TabPipelineState extends State<TabPipeline> {
       if (!granted) {
         final copies = await _confirm("PERMISSION DENIED", "Android did not allow modifying the originals.\n\nContinue and add fixed COPIES to Music instead?", "USE COPIES");
         if (!copies) {
-          _setStatus("Batch Cancelled. Nothing Was Changed.");
+          _setStatus("Batch Canceled. Nothing Was Changed.");
           return;
         }
         fixInPlace = false;
@@ -299,7 +299,7 @@ class _TabPipelineState extends State<TabPipeline> {
     TapFeedback.machineConfirm();
     setState(() {
       _isBatchRunning = false;
-      _globalStatus = "${_cancelRequested ? 'Batch Cancelled' : 'Batch Complete'}: $fixed Fixed • $review Need Review • $failed Failed.";
+      _globalStatus = "${_cancelRequested ? 'Batch Canceled' : 'Batch Complete'}: $fixed Fixed • $review Need Review • $failed Failed.";
     });
   }
 
@@ -547,7 +547,7 @@ class _TabPipelineState extends State<TabPipeline> {
                           OutlinedButton.icon(
                             onPressed: _cancelRequested ? null : () => setState(() {
                               _cancelRequested = true;
-                              _globalStatus = "Cancelling After The Current Track...";
+                              _globalStatus = "Canceling After The Current Track...";
                             }),
                             icon: const Icon(Icons.cancel, color: Colors.redAccent),
                             label: const Text("CANCEL", style: TextStyle(fontFamily: 'ShareTechMono', color: Colors.redAccent, fontWeight: FontWeight.bold)),

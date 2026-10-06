@@ -12,7 +12,7 @@ class WhisperModel {
   static const String downloadUrl = 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin';
   static const int minBytes = 140000000;
 
-  static bool _prepareCancelled = false;
+  static bool _prepareCanceled = false;
   static HttpClient? _activeClient;
 
   static Future<File> file() async {
@@ -29,7 +29,7 @@ class WhisperModel {
   static Future<File> ensure({void Function(String stage, double progress)? onProgress}) async {
     final target = await file();
     if (target.existsSync() && target.lengthSync() >= minBytes) return target;
-    _prepareCancelled = false;
+    _prepareCanceled = false;
 
     try {
       final data = await rootBundle.load('assets/models/$fileName');
@@ -53,7 +53,7 @@ class WhisperModel {
       final sink = part.openWrite();
       try {
         await for (final chunk in response) {
-          if (_prepareCancelled) throw HttpException('Model preparation cancelled');
+          if (_prepareCanceled) throw HttpException('Model preparation canceled');
           sink.add(chunk);
           received += chunk.length;
           if (total > 0) onProgress?.call('Downloading model', received / total);
@@ -64,14 +64,14 @@ class WhisperModel {
       }
       if (part.lengthSync() < minBytes) throw const FileSystemException('Model download incomplete');
       await part.rename(target.path);
-      _prepareCancelled = false;
+      _prepareCanceled = false;
       return target;
     } catch (e) {
-      if (_prepareCancelled) {
+      if (_prepareCanceled) {
         try {
           if (part.existsSync()) part.deleteSync();
         } catch (_) {}
-        throw HttpException('Model preparation cancelled');
+        throw HttpException('Model preparation canceled');
       }
       try {
         if (part.existsSync()) part.deleteSync();
@@ -84,7 +84,7 @@ class WhisperModel {
   }
 
   static Future<void> cancelPrepare() async {
-    _prepareCancelled = true;
+    _prepareCanceled = true;
     _activeClient?.close(force: true);
   }
 }

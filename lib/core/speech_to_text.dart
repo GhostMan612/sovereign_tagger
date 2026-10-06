@@ -181,13 +181,13 @@ const Set<String> _silencePhrases = {
 };
 
 bool isLikelyHallucination(String text) {
-  final normalised = text
+  final normalized = text
       .toLowerCase()
       .replaceAll(RegExp(r'[^a-z0-9 ]'), '')
       .replaceAll(RegExp(r'\s+'), ' ')
       .trim();
-  if (normalised.isEmpty) return true;
-  return _silencePhrases.contains(normalised);
+  if (normalized.isEmpty) return true;
+  return _silencePhrases.contains(normalized);
 }
 
 class SpeechEngines {

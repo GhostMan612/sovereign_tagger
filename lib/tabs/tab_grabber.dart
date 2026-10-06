@@ -204,9 +204,9 @@ class _TabGrabberState extends State<TabGrabber> {
       final raw = await _ytChannel.invokeMethod('downloadMedia', {'url': url, 'formatId': formatId, 'jobId': jobId, 'optionsJson': jsonEncode({'formatId': formatId, 'playlist': playlist})});
       final result = jsonDecode(raw.toString()) as Map<String, dynamic>;
       if (!mounted) return;
-      if (result['status'] == 'cancelled') {
+      if (result['status'] == 'canceled') {
         setState(() => _jobs.remove(jobId));
-        _setStatus("Download Cancelled.");
+        _setStatus("Download Canceled.");
       } else if (result['status'] == 'error') {
         setState(() {
           job.error = result['message']?.toString() ?? 'Unknown yt-dlp error';
@@ -224,7 +224,7 @@ class _TabGrabberState extends State<TabGrabber> {
 
   Future<void> _cancelJob(_GrabJob job) async {
     TapFeedback.machineTap();
-    setState(() => job.stage = "Cancelling...");
+    setState(() => job.stage = "Canceling...");
     try {
       await _ytChannel.invokeMethod('cancelDownload', {'jobId': job.id});
     } catch (_) {}
@@ -877,7 +877,7 @@ class _TabGrabberState extends State<TabGrabber> {
                       leading: Icon(isAudioOnly ? Icons.audiotrack : Icons.video_library, color: isAudioOnly ? themeColor : Colors.cyanAccent, size: 30),
                       title: Text(isAudioOnly ? "AUDIO ONLY (${f['ext']} • ${f['acodec'] ?? '?'})" : "VIDEO (${f['resolution']} • ${f['ext']})", style: const TextStyle(fontFamily: 'ShareTechMono', color: Colors.white, fontSize: 13)),
                       subtitle: Text(details.join(" • "), style: const TextStyle(fontFamily: 'ShareTechMono', color: Colors.white54, fontSize: 11)),
-                      trailing: Text(f['format_id'].toString(), style: const TextStyle(fontFamily: 'ShareTechMono', color: Colors.grey, fontSize: 12)),
+                      trailing: Text(f['format_id'].toString(), style: const TextStyle(fontFamily: 'ShareTechMono', color: Colors.white54, fontSize: 12)),
                       onTap: () {
                         Navigator.pop(context);
                         if (isAudioOnly) {
@@ -927,7 +927,7 @@ class _TabGrabberState extends State<TabGrabber> {
                       leading: Icon(Icons.audiotrack, color: themeColor, size: 30),
                       title: Text("AUDIO (${f['ext']} • ${f['acodec'] ?? '?'})", style: const TextStyle(fontFamily: 'ShareTechMono', color: Colors.white)),
                       subtitle: Text("${_sizeLabel(f)} • ${f['abr'] is num ? (f['abr'] as num).toStringAsFixed(0) : '?'} KBPS", style: const TextStyle(fontFamily: 'ShareTechMono', color: Colors.white54)),
-                      trailing: Text(f['format_id'].toString(), style: const TextStyle(fontFamily: 'ShareTechMono', color: Colors.grey, fontSize: 12)),
+                      trailing: Text(f['format_id'].toString(), style: const TextStyle(fontFamily: 'ShareTechMono', color: Colors.white54, fontSize: 12)),
                       onTap: () {
                         Navigator.pop(context);
                         _startDownload(url, "$videoFormatId+${f['format_id']}", isVideo: true, label: title);
