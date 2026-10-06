@@ -981,7 +981,7 @@ class _TabGrabberState extends State<TabGrabber> {
                   _h("AUDIO MODES"),
                   _b("M4A ORIGINAL (default): grabs the AAC stream the site already serves — no re-encode, no quality loss, fully taggable.\nMP3 320K: re-encodes for old car stereos. Bigger file, not better sound (sources are ~128-160 kbps).\nAS-IS: keeps whatever the site served (often .webm/.opus). Can't hold tags in this app."),
                   _h("COVER ART"),
-                  _b("The video thumbnail is centre-cropped to a square and offered as cover art. Untick it on the card if you'd rather use the Forge's catalog art."),
+                  _b("The video thumbnail is center-cropped to a square and offered as cover art. Turn it off on the card if you'd rather use the Forge's catalog art."),
                   _h("SITES"),
                   _b("YouTube • SoundCloud • Bandcamp • Vimeo • X • Reddit • Facebook (silent videos auto-heal) • direct media links — 1000+ sites via yt-dlp."),
                   _h("WHEN IT BREAKS"),

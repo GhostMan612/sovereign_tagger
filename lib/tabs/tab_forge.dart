@@ -753,6 +753,56 @@ class _TabForgeState extends State<TabForge> {
     );
   }
 
+  void _showForgeManual() {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => Material(
+        color: Colors.black,
+        shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(16)), side: BorderSide(color: Colors.cyanAccent)),
+        child: SafeArea(
+          child: DraggableScrollableSheet(
+            expand: false,
+            initialChildSize: 0.75,
+            maxChildSize: 0.95,
+            builder: (ctx, scroll) => SingleChildScrollView(
+              controller: scroll,
+              padding: const EdgeInsets.all(20),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      const Icon(Icons.help_outline, color: Colors.cyanAccent),
+                      const SizedBox(width: 8),
+                      const Expanded(child: Text('FORGE FIELD MANUAL', style: TextStyle(fontFamily: 'ShareTechMono', fontSize: 16, fontWeight: FontWeight.bold, color: Colors.cyanAccent))),
+                      IconButton(icon: const Icon(Icons.close, color: Colors.white54), onPressed: () => Navigator.pop(ctx)),
+                    ],
+                  ),
+                  _mh('MOUNT'),
+                  _mb('MOUNT AUDIO FILE or EDIT IN FORGE from Library/Player. A private working copy opens in the Grid.Nothing writes to the original until SAVE.'),
+                  _mh('FIELDS'),
+                  _mb('Fill TITLE, ARTIST, ALBUM, GENRE, TRACK, DISC, YEAR, COMMENT. SEARCH METADATA shows iTunes, Deezer, and MusicBrainz candidates. IDENTIFY uses ACRCloud. APPLY only after you review the sheet.'),
+                  _mh('ART'),
+                  _mb('BROWSE ART picks a JPEG/PNG, CLEAR ART removes embedded cover. FIND pulls lyrics from LRCLIB when logged in.'),
+                  _mh('SAVE'),
+                  _mb('SAVE AS NEW COPY writes a fixed file into Music. SAVE & FIX ORIGINAL rewrites the original only after Android grants access. Set USE COPIES when mounting from Files if this is unwanted.'),
+                  _mh('PROTECTION'),
+                  _mb('Undo with STRIP to Core or CLEAR ALL before saving. FIND and SYNC never save. All field edits sit in the form until you press SAVE.'),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _mh(String t) => Padding(padding: const EdgeInsets.only(top: 14, bottom: 4), child: Text(t, style: const TextStyle(fontFamily: 'ShareTechMono', fontSize: 12, fontWeight: FontWeight.bold, color: Colors.amberAccent)));
+
+  Widget _mb(String t) => Text(t, style: const TextStyle(fontFamily: 'VT323', fontSize: 15, color: Colors.white70, height: 1.35));
+
   @override
   Widget build(BuildContext context) {
     return ValueListenableBuilder<Color>(
@@ -777,6 +827,11 @@ class _TabForgeState extends State<TabForge> {
                         decoration: BoxDecoration(border: Border.all(color: Colors.amberAccent), borderRadius: BorderRadius.circular(4)),
                         child: const Text("UNSAVED", style: TextStyle(fontFamily: 'ShareTechMono', fontSize: 11, color: Colors.amberAccent)),
                       ),
+                    IconButton(
+                      icon: Icon(Icons.help_outline, color: themeColor),
+                      tooltip: "FIELD MANUAL",
+                      onPressed: _showForgeManual,
+                    ),
                   ],
                 ),
                 const SizedBox(height: 10),

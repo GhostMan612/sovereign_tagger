@@ -725,6 +725,54 @@ class _TabLibraryState extends State<TabLibrary> with AutomaticKeepAliveClientMi
         _Sort.duration => "LENGTH",
       };
 
+  void _showLibraryManual() {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => Material(
+        color: Colors.black,
+        shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(16)), side: BorderSide(color: Colors.cyanAccent)),
+        child: SafeArea(
+          child: DraggableScrollableSheet(
+            expand: false,
+            initialChildSize: 0.75,
+            maxChildSize: 0.95,
+            builder: (ctx, scroll) => SingleChildScrollView(
+              controller: scroll,
+              padding: const EdgeInsets.all(20),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      const Icon(Icons.help_outline, color: Colors.cyanAccent),
+                      const SizedBox(width: 8),
+                      const Expanded(child: Text('LIBRARY FIELD MANUAL', style: TextStyle(fontFamily: 'ShareTechMono', fontSize: 16, fontWeight: FontWeight.bold, color: Colors.cyanAccent))),
+                      IconButton(icon: const Icon(Icons.close, color: Colors.white54), onPressed: () => Navigator.pop(ctx)),
+                    ],
+                  ),
+                  _lh('VIEWS'),
+                  _lb('SONGS, ALBUMS, ARTISTS, FOLDERS, PLAYLISTS, NEW — choose the one in the top dropdown. The active view is highlighted and the list refreshes scan-wide from MediaStore.'),
+                  _lh('SORTING'),
+                  _lb('TITLE, ARTIST, ALBUM, DATE ADDED, LENGTH, and default. The sort menu also supports the Current Playlist view. Switched views reset the selection sheet.'),
+                  _lh('SEARCH'),
+                  _lb('Type to filter live. TAP the search field or hit the mic to explore. Clearing the field returns the full list.'),
+                  _lh('ACTIONS'),
+                  _lb('Tap a track to play it from this list. Long-press opens TRACK ACTIONS. PLAY ALL builds the queue from current list order. SHUFFLE ALL builds a shuffled queue.Tap a song to play from there. PLAY ALL / SHUFFLE on any list. Long-press for play next, queue, favorite, playlist, FORGE.'),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _lh(String t) => Padding(padding: const EdgeInsets.only(top: 14, bottom: 4), child: Text(t, style: const TextStyle(fontFamily: 'ShareTechMono', fontSize: 12, fontWeight: FontWeight.bold, color: Colors.amberAccent)));
+
+  Widget _lb(String t) => Text(t, style: const TextStyle(fontFamily: 'VT323', fontSize: 15, color: Colors.white70, height: 1.35));
+
   @override
   Widget build(BuildContext context) {
     super.build(context);
@@ -746,6 +794,11 @@ class _TabLibraryState extends State<TabLibrary> with AutomaticKeepAliveClientMi
                     children: [
                       Expanded(child: Text("LIBRARY", style: TextStyle(fontFamily: 'ShareTechMono', fontSize: 22, fontWeight: FontWeight.bold, color: themeColor, letterSpacing: 1.2))),
                       if (_status.isNotEmpty) Text(_status, style: TextStyle(fontFamily: 'ShareTechMono', fontSize: 11, color: _status.startsWith('ERR') ? Colors.redAccent : Colors.white38)),
+                      IconButton(
+                        tooltip: "FIELD MANUAL",
+                        icon: Icon(Icons.help_outline, color: themeColor),
+                        onPressed: _showLibraryManual,
+                      ),
                       PopupMenuButton<_Sort>(
                         tooltip: "SORT",
                         color: Colors.black,

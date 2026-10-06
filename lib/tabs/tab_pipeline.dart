@@ -419,6 +419,54 @@ class _TabPipelineState extends State<TabPipeline> {
     );
   }
 
+  void _showBatchManual() {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => Material(
+        color: Colors.black,
+        shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(16)), side: BorderSide(color: Colors.cyanAccent)),
+        child: SafeArea(
+          child: DraggableScrollableSheet(
+            expand: false,
+            initialChildSize: 0.75,
+            maxChildSize: 0.95,
+            builder: (ctx, scroll) => SingleChildScrollView(
+              controller: scroll,
+              padding: const EdgeInsets.all(20),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      const Icon(Icons.help_outline, color: Colors.cyanAccent),
+                      const SizedBox(width: 8),
+                      const Expanded(child: Text('BATCH FIELD MANUAL', style: TextStyle(fontFamily: 'ShareTechMono', fontSize: 16, fontWeight: FontWeight.bold, color: Colors.cyanAccent))),
+                      IconButton(icon: const Icon(Icons.close, color: Colors.white54), onPressed: () => Navigator.pop(ctx)),
+                    ],
+                  ),
+                  _pbh('LOAD'),
+                  _pbb('Pick tracks with FROM LIBRARY for library items, or FILES / FOLDERS for files chosen in the file picker. They are added to the batch once Android grants media access.'),
+                  _pbh('REVIEW'),
+                  _pbb('Match confidence 80% and above is marked confident. The rest wait in REVIEW for you to confirm manually. OPEN IN FORGE opens a selected track for exact edits. EXECUTE BATCH starts the batch.'),
+                  _pbh('WRITE POLICY'),
+                  _pbb('Confident matches are written back over their originals instead of making duplicates. You can toggle RENAME FILES TO ARTIST - TITLE and USE COPIES before running. DELETE FROM DEVICE removes a misplaced file after Android confirms it.'),
+                  _pbh('RUNNINGS'),
+                  _pbb('Long-press a track to RE-IDENTIFY FROM SCRATCH or OPEN IN FORGE. ADD more tracks to the library picker or FILES adds another group to the existing run. REMOVE FROM BATCH pulls it out before EXECUTING. When complete, PROCESSED items play or send to the Forge.'),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _pbh(String t) => Padding(padding: const EdgeInsets.only(top: 14, bottom: 4), child: Text(t, style: const TextStyle(fontFamily: 'ShareTechMono', fontSize: 12, fontWeight: FontWeight.bold, color: Colors.amberAccent)));
+
+  Widget _pbb(String t) => Text(t, style: const TextStyle(fontFamily: 'VT323', fontSize: 15, color: Colors.white70, height: 1.35));
+
   @override
   Widget build(BuildContext context) {
     return ValueListenableBuilder<Color>(
@@ -435,7 +483,12 @@ class _TabPipelineState extends State<TabPipeline> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    Text("BATCH TAGGER", style: TextStyle(fontFamily: 'ShareTechMono', fontSize: 22, fontWeight: FontWeight.bold, color: themeColor, letterSpacing: 1.2)),
+                    Row(
+                      children: [
+                        Expanded(child: Text("BATCH TAGGER", style: TextStyle(fontFamily: 'ShareTechMono', fontSize: 22, fontWeight: FontWeight.bold, color: themeColor, letterSpacing: 1.2))),
+                        IconButton(icon: Icon(Icons.help_outline, color: themeColor), tooltip: "FIELD MANUAL", onPressed: _showBatchManual),
+                      ],
+                    ),
                     const SizedBox(height: 12),
                     Row(
                       children: [

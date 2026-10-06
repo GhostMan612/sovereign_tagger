@@ -834,6 +834,56 @@ class _TabWorkbenchState extends State<TabWorkbench> {
     }
   }
 
+  void _showWorkbenchManual() {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => Material(
+        color: Colors.black,
+        shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(16)), side: BorderSide(color: Colors.cyanAccent)),
+        child: SafeArea(
+          child: DraggableScrollableSheet(
+            expand: false,
+            initialChildSize: 0.75,
+            maxChildSize: 0.95,
+            builder: (ctx, scroll) => SingleChildScrollView(
+              controller: scroll,
+              padding: const EdgeInsets.all(20),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      const Icon(Icons.help_outline, color: Colors.cyanAccent),
+                      const SizedBox(width: 8),
+                      const Expanded(child: Text('WORKBENCH FIELD MANUAL', style: TextStyle(fontFamily: 'ShareTechMono', fontSize: 16, fontWeight: FontWeight.bold, color: Colors.cyanAccent))),
+                      IconButton(icon: const Icon(Icons.close, color: Colors.white54), onPressed: () => Navigator.pop(ctx)),
+                    ],
+                  ),
+                  _wmh('MOUNT'),
+                  _wmb('Mount a file with MOUNT MEDIA, or record into a file. All DSP ops use FFmpeg and write the result only after EXECUTE ON THE MACHINE.'),
+                  _wmh('QUALITY'),
+                  _wmb('Master status: 48k/16-bit WAV via STUDIO REC, or AAC fallback. Use COPY MODE for same-format passthrough. Fold to mono produces a WAV master by default. No re-encodes unless the operation needs one.'),
+                  _wmh('COMMON OPS'),
+                  _wmb('EXTRACT AUDIO, CLIP, CONVERT FORMAT, NORMALIZE LOUDNORM, GRANULAR DSP, FADE IN/OUT, FOLD TO MONO, TRIM SILENCE, and WHISPER. Each op has its own duration/start/end fields as shown below. EXECUTE writes only into temp paths or a new file.'),
+                  _wmh('WHISPER'),
+                  _wmb('Transcribe produces a plain text block and writes a sidecar .srt. First run extracts the bundled 141MB model. Cancel stops the FFmpeg session and discards the partial output.'),
+                  _wmh('RECORDER'),
+                  _wmb('REC captures 48k mono PCM WAV by default. HALT auto-exports the recording to cache. STOP finishes the file. AAC is thefallback mode.'),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _wmh(String t) => Padding(padding: const EdgeInsets.only(top: 14, bottom: 4), child: Text(t, style: const TextStyle(fontFamily: 'ShareTechMono', fontSize: 12, fontWeight: FontWeight.bold, color: Colors.amberAccent)));
+
+  Widget _wmb(String t) => Text(t, style: const TextStyle(fontFamily: 'VT323', fontSize: 15, color: Colors.white70, height: 1.35));
+
   @override
   Widget build(BuildContext context) {
     return ValueListenableBuilder<Color>(
@@ -846,9 +896,20 @@ class _TabWorkbenchState extends State<TabWorkbench> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                Text(
-                  "THE SCALPEL & STUDIO",
-                  style: TextStyle(fontFamily: 'ShareTechMono', fontSize: 22, fontWeight: FontWeight.bold, color: themeColor, letterSpacing: 1.2)
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        "THE SCALPEL & STUDIO",
+                        style: TextStyle(fontFamily: 'ShareTechMono', fontSize: 22, fontWeight: FontWeight.bold, color: themeColor, letterSpacing: 1.2)
+                      ),
+                    ),
+                    IconButton(
+                      icon: Icon(Icons.help_outline, color: themeColor),
+                      tooltip: "FIELD MANUAL",
+                      onPressed: _showWorkbenchManual,
+                    ),
+                  ],
                 ),
                 const SizedBox(height: 8),
                 const Text(
