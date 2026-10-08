@@ -117,7 +117,7 @@ class WhisperFfmpegEngine implements SpeechEngine {
 
       final text = srtToPlainText(await srt.readAsString());
       if (text.trim().isEmpty || isLikelyHallucination(text.trim())) {
-        throw StateError('no speech recognised');
+        throw StateError('no speech recognized');
       }
       return text;
     } finally {

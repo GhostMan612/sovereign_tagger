@@ -110,7 +110,7 @@ class GhostBrain {
     'studio': 'workbench', 'dsp': 'workbench', 'mastering': 'workbench',
     'songs': 'song', 'track': 'song', 'tracks': 'song', 'tune': 'song', 'tunes': 'song', 'music': 'song',
     'equalizer': 'eq', 'bass': 'eq', 'treble': 'eq',
-    'fav': 'favorite', 'favorites': 'favorite', 'like': 'favorite', 'love': 'favorite', 'heart': 'favorite',
+    'fav': 'favorite', 'favorite': 'favorite', 'favorites': 'favorite', 'like': 'favorite', 'love': 'favorite', 'heart': 'favorite',
     'loop': 'repeat', 'looping': 'repeat',
     'random': 'shuffle', 'shuffled': 'shuffle', 'shuffling': 'shuffle',
     'artwork': 'art', 'cover': 'art', 'covers': 'art', 'picture': 'art', 'image': 'art', 'thumbnail': 'art',

@@ -221,7 +221,7 @@ class VoiceInput extends ChangeNotifier {
 
   String _describe(Object e) {
     final raw = e.toString();
-    if (raw.contains('no speech recognised')) return 'DID NOT CATCH ANY WORDS. TRY AGAIN.';
+    if (raw.contains('no speech recognized')) return 'DID NOT CATCH ANY WORDS. TRY AGAIN.';
     if (raw.contains('not wired yet')) return '${_engine.label} IS NOT WIRED YET.';
     if (raw.contains('MissingPluginException') || raw.contains('NotImplementedError')) {
       return 'VOICE ENGINE UNAVAILABLE ON THIS BUILD.';
