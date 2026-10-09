@@ -25,6 +25,28 @@ Session-end law: update rows 2–4 every session (+ row 5 when a new gotcha is l
 **Last operator device pass (2026-10-02):** both previously-open verification items **PASS** — crossfade exercised at > 0 (fade audible and continuous, so the `0.0 → 0.05` mute-floor fix is hardware-verified, closing the last "safe by construction" caveat), and the Ghost UI behaving as expected. The operator then ran the **scripted per-defect checklist** and confirmed **GH23–GH27 individually**: GH23 no longer says "No match" for `"the beatles"` (it searches the library), GH24 no longer just reports the loaded track (it acts on the request), GH25 pauses, GH26 "play all my library tracks" loads and plays the full library shuffled, GH27 a fresh download is found and played immediately. That is five per-defect confirmations, not a surface-wide impression.
 **Branch:** `main` is the single canonical branch and the only local or remote branch. 2026-10-01: `master`, `backup-before-main-sync` (local) and `claude/strange-lewin-97ba5a` / `claude/elegant-franklin-j99jl0` (remote) were **deleted** after verifying every one of them was fully merged into `main`. They no longer exist — do not reference them. Work on `main` (or a short-lived branch off it).
 
+## What shipped — American-English sweep, then the canceled contract closed on hardware (2026-10-09)
+
+Two commits, then all five cancel paths were driven on a real device until each one actually printed its string. `flutter analyze --no-pub` → `No issues found!` (twice); `flutter build apk --release` green; mojibake scan clean over every changed file.
+
+**`ee00d0f` — `Normalize British spellings to American English` (14 files).** Cancel identifiers and user-visible statuses across Dart *and* Python: `cancelled`→`canceled`, `Cancelled`→`Canceled`, `CANCELLED`→`CANCELED`, plus `recognised`→`recognized`, `normalised`→`normalized`, `Grey`→`White54`, and the blueprints. **`df54e53` — `Normalize remaining recognized aliases`** (`speech_to_text.dart`, `voice_input.dart`, `ghost_brain.dart`): `no speech recognised`→`no speech recognized` plus the last Ghost alias rows.
+
+**Every cancel string is now device-proven rather than inferred:**
+
+| Flow | Surface | Exact string observed |
+|---|---|---|
+| 1 | Grabber, cancelled mid-transfer | `> Download Canceled.` |
+| 2 | Batch, MediaStore write denied | `> Batch Canceled. Nothing Was Changed.` |
+| 3 | Library delete, denied | `> DELETE CANCELED.` |
+| 4 | Forge save, write denied | `> Save Canceled. Tags Are Still In The Working Copy — Nothing Lost.` |
+| 5 | Settings restore picker, backed out | `> Restore canceled.` |
+
+Flow 4 resisted four attempts, and the reason it looked like a code bug is now **G43** — stated plainly because the naive staging is genuinely misleading. The first three attempts mounted files the app had itself created, so `requestWriteAccess` returned success with no prompt and the save completed (`> ORIGINAL FIXED ✓`). Revoking `WRITE_EXTERNAL_STORAGE` did **not** change that. The fix was to stage a file the app does not own: `adb shell cp` into `/sdcard/Music`, broadcast `MEDIA_SCANNER_SCAN_FILE`, confirm `owner_package_name=com.android.shell`, mount it via Library → `EDIT IN FORGE`, then `SAVE & FIX ORIGINAL`. Only then did `com.android.providers.media.PermissionActivity` appear; `Deny` → `PERMISSION DENIED` → `CANCEL` produced the string above.
+
+**Two honest limits, both recorded rather than smoothed over.** (1) Batch renders title-case `Batch Canceled`, not uppercase `BATCH CANCELED`; the Library path really is uppercase. Both are American spellings — unifying the casing is a one-line change, not a defect. (2) **There is no bridge-level logcat line and never will be on this path:** `bridge.py:269` returns `{"status": "canceled", ...}` with no `print`/`log`, and Flow 4's decision is made in Dart (`tab_forge.dart`), which logs nothing either. A process-scoped `logcat -d --pid` across the whole Flow 4 sequence returned 8 lines, none cancel-related. The contract is therefore proven by **UI string plus static read**, not by logcat — do not go hunting for a bridge log line that was never written.
+
+No source change was needed to close any of the five. B160V permissions were restored afterwards (`READ_MEDIA_AUDIO`, `READ_EXTERNAL_STORAGE`, `WRITE_EXTERNAL_STORAGE`, `READ_MEDIA_VIDEO`, `READ_MEDIA_IMAGES` re-granted and re-verified).
+
 ## GH29 closed by measurement — tag commits are provably lossless for all 11 extensions (2026-10-02)
 
 Answering "can you actually close the last one?" — **yes**, without UI taps and without a test suite. The trick: run **the app's exact shipping jar** off-device. `android/app/build.gradle:116` pins `net.jthink:jaudiotagger:3.0.1` and it is the only version in the Gradle cache, so a JVM probe exercises literally the same code that ships.

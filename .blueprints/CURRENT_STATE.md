@@ -236,4 +236,26 @@ Known limits, stated rather than hidden: transcription is offline/file-based so 
 - **Repo cleaned**: Removed dead scaffolding (`lib/core/jobs`, `lib/core/models`, `tools/`), stale blueprints (old versions, PDFs, large text dumps).
 - No `test/` suite (deferred-zero-bloat); verification is `flutter analyze --no-pub` + device smoke.
 
+## Canceled contract — device-verified 2026-10-09, plus how to re-stage the Forge branch
+
+All five cancel surfaces were driven on hardware (B160V) until each printed its string; none is inferred from source any more:
+
+| Surface | Exact string observed | Trigger |
+|---|---|---|
+| `tab_grabber.dart:207` | `> Download Canceled.` | cancel mid-transfer; bridge returned `{"status":"canceled"}` |
+| `tab_pipeline.dart:180` | `> Batch Canceled. Nothing Was Changed.` | MediaStore write denied, then `CANCEL` on `PERMISSION DENIED` |
+| `tab_library.dart:327-340` | `> DELETE CANCELED.` | MediaStore delete permission denied |
+| `tab_forge.dart:634` | `> Save Canceled. Tags Are Still In The Working Copy — Nothing Lost.` | write request denied, then `CANCEL` |
+| `settings_screen.dart:358` | `> Restore canceled.` | `RESTORE ALL` → document picker → Back |
+
+**Re-staging the Forge (Flow 4) branch — read this before concluding it is broken.** `MainActivity.kt:401-405` short-circuits `result.success(true)` whenever `storageBridge.urisNeedingWriteGrant()` returns empty, which is what happens for any MediaStore row the app itself created (every download/save-pipeline output qualifies). Mounting such a file makes `SAVE & FIX ORIGINAL` succeed silently with `> ORIGINAL FIXED ✓` and never reach the deny branch. Revoking `WRITE_EXTERNAL_STORAGE` does not change this, because persisted per-URI grants survive it. To actually reach it:
+
+1. `adb shell cp /sdcard/Music/<any>.mp3 /sdcard/Music/FLOW4-NOT-OWNED.mp3`
+2. `adb shell am broadcast -a android.intent.action.MEDIA_SCANNER_SCAN_FILE -d file:///sdcard/Music/FLOW4-NOT-OWNED.mp3`
+3. Confirm ownership flipped: `adb shell content query --uri content://media/external/audio/media --projection _id:title:_data:owner_package_name` → must **not** be `com.sovereigntagger`.
+4. Library → `RESCAN` → the track's overflow → **`EDIT IN FORGE`** (not `MOUNT AUDIO FILE`, which yields a SAF temp copy that carries its own write grant). Confirm the header reads `Mounted: FLOW4-NOT-OWNED.mp3` + `LIBRARY ORIGINAL (SAVE FIXES IT IN PLACE)`.
+5. `SAVE & FIX ORIGINAL` → `com.android.providers.media.PermissionActivity` appears ("Allow Sovereign Tagger to modify this audio file?") → **Deny** → app `PERMISSION DENIED` → **CANCEL** → the string above.
+
+**No bridge log line exists for this and none can.** `bridge.py:269` returns the `canceled` payload without any `print`/`log`, and Forge's cancel is decided in Dart. A process-scoped `logcat -d --pid <pid>` over a full Flow 4 sequence produced 8 lines, none cancel-related. Treat the UI string plus the static read as the proof; a logcat grep for `"status": "canceled"` will always come back empty and that is not a defect. Casing note: Batch renders title-case `Batch Canceled` while Library renders uppercase `DELETE CANCELED` — both American; unifying them is cosmetic.
+
 (End of file - total 72 lines)
