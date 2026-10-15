@@ -308,6 +308,7 @@ class MainActivity: AudioServiceActivity() {
                 }
                 "autoImportConfig" -> runAsync(result, "STORAGE_ERROR") { storageBridge.autoImportConfig() }
                 "getTempDirectory" -> { result.success(storageBridge.getTempDirectory()) }
+                "getAppDocDir" -> { result.success(context.filesDir.absolutePath) }
                 "openUrl" -> {
                     val url = call.argument<String>("url") ?: ""
                     try {

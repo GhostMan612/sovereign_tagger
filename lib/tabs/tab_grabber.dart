@@ -19,6 +19,7 @@ import '../core/storage_client.dart';
 import '../core/tag_io.dart';
 import '../core/title_cleaner.dart';
 import '../screens/main_shell.dart';
+import '../core/ghost_commands.dart';
 
 enum _ExportMode { m4a, mp3, original }
 
@@ -118,13 +119,16 @@ class _TabGrabberState extends State<TabGrabber> {
     super.initState();
     _eventSub = _eventChannel.receiveBroadcastStream().listen(_onEvent, onError: (_) {});
     SovereignState.pendingGrabberUrl.addListener(_onSharedUrl);
+    GhostCommandBus.pendingGrabberCommand.addListener(_onGhostGrabCommand);
     WidgetsBinding.instance.addPostFrameCallback((_) => _onSharedUrl());
+    WidgetsBinding.instance.addPostFrameCallback((_) => _onGhostGrabCommand());
   }
 
   @override
   void dispose() {
     _eventSub?.cancel();
     SovereignState.pendingGrabberUrl.removeListener(_onSharedUrl);
+    GhostCommandBus.pendingGrabberCommand.removeListener(_onGhostGrabCommand);
     _urlController.dispose();
     _artistController.dispose();
     _titleController.dispose();
@@ -146,6 +150,28 @@ class _TabGrabberState extends State<TabGrabber> {
     setState(() {
       _urlController.text = url;
       _statusMessage = "Link Received. Choose MAX AUDIO, QUICK VIDEO Or FETCH ALL FORMATS.";
+    });
+  }
+
+  void _onGhostGrabCommand() {
+    final cmd = GhostCommandBus.pendingGrabberCommand.value;
+    if (cmd == null) return;
+    GhostCommandBus.pendingGrabberCommand.value = null;
+    if (!mounted) return;
+    setState(() {
+      _searchSource = cmd.source;
+      if (cmd.isSearchQuery) {
+        if (cmd.queryOrUrl.contains(' - ')) {
+          final parts = cmd.queryOrUrl.split(' - ');
+          _artistController.text = parts.first.trim();
+          _titleController.text = parts.sublist(1).join(' - ').trim();
+        } else {
+          _artistController.clear();
+          _titleController.text = cmd.queryOrUrl;
+        }
+      } else {
+        _urlController.text = cmd.queryOrUrl;
+      }
     });
   }
 

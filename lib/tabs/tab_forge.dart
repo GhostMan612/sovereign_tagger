@@ -108,7 +108,16 @@ class _TabForgeState extends State<TabForge> {
       return;
     }
     SovereignState.pendingForge.value = null;
-    _mount(req);
+    _mount(req).then((_) async {
+      if (!mounted) return;
+      if (req.autoTask == ForgeAutoTask.searchMetadata && req.prefill.isEmpty) {
+        await _searchMetadata();
+      } else if (req.autoTask == ForgeAutoTask.findLyrics && (req.prefill['LYRICS'] ?? '').isEmpty) {
+        await _findLyrics();
+      } else if (req.autoTask == ForgeAutoTask.acrIdentify && req.prefill.isEmpty) {
+        await _acrIdentify();
+      }
+    });
   }
 
   Future<bool> _confirm(String title, String body, String yes, {Color? yesColor}) async {
@@ -249,9 +258,9 @@ class _TabForgeState extends State<TabForge> {
 
   Future<void> _pickFile() async {
     TapFeedback.machineTap();
-    FilePickerResult? result;
+    PlatformFile? file;
     try {
-      result = await FilePicker.platform.pickFiles(type: FileType.audio, allowMultiple: false);
+      file = await FilePicker.pickFile(type: FileType.audio);
     } on PlatformException catch (e) {
       _setStatus("ERR: File Picker Fault: ${e.message}");
       return;
@@ -259,11 +268,11 @@ class _TabForgeState extends State<TabForge> {
       _setStatus("ERR: File Picker Fault: $e");
       return;
     }
-    if (result == null || result.files.single.path == null) return;
-    final file = result.files.single;
+    if (file == null || file.path == null) return;
     String? originUri;
-    if (file.identifier != null) {
-      originUri = await StorageClient.resolveMediaUri(identifier: file.identifier);
+    final fileUriStr = file.uri.toString();
+    if (fileUriStr.startsWith("content://")) {
+      originUri = await StorageClient.resolveMediaUri(identifier: fileUriStr);
     }
     await _mount(ForgeRequest(path: file.path!, origin: ForgeOrigin.picked, originUri: originUri));
     if (mounted && originUri == null && _workingPath.isNotEmpty) {
@@ -341,16 +350,16 @@ class _TabForgeState extends State<TabForge> {
   Future<void> _pickCoverArt() async {
     TapFeedback.machineTap();
     if (_isProcessing || _workingPath.isEmpty) return;
-    FilePickerResult? result;
+    PlatformFile? file;
     try {
-      result = await FilePicker.platform.pickFiles(type: FileType.image, allowMultiple: false);
+      file = await FilePicker.pickFile(type: FileType.image);
     } on PlatformException catch (e) {
       _setStatus("ERR: Image Picker Fault: ${e.message}");
       return;
     }
-    if (result == null || result.files.single.path == null) return;
+    if (file == null || file.path == null) return;
     try {
-      final bytes = await File(result.files.single.path!).readAsBytes();
+      final bytes = await File(file.path!).readAsBytes();
       if (!mounted) return;
       setState(() {
         _coverArtBase64 = base64Encode(bytes);

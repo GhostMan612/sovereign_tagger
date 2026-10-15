@@ -330,10 +330,10 @@ class _TabWorkbenchState extends State<TabWorkbench> {
   Future<void> _pickSecondFile() async {
     if (_isProcessing || _isRecording) return;
     try {
-      final result = await FilePicker.platform.pickFiles(type: FileType.any, allowMultiple: false);
-      if (result != null && result.files.single.path != null) {
+      final file = await FilePicker.pickFile(type: FileType.any);
+      if (file != null && file.path != null) {
         if (!mounted) return;
-        setState(() => _secondFilePath = result.files.single.path!);
+        setState(() => _secondFilePath = file.path!);
       }
     } on PlatformException catch (e) {
       if (!mounted) return;
@@ -373,11 +373,11 @@ class _TabWorkbenchState extends State<TabWorkbench> {
   Future<void> _pickFile() async {
     if (_isProcessing || _isRecording) return;
     try {
-      FilePickerResult? result = await FilePicker.platform.pickFiles(type: FileType.any, allowMultiple: false);
+      final file = await FilePicker.pickFile(type: FileType.any);
 
-      if (result != null && result.files.single.path != null) {
+      if (file != null && file.path != null) {
         if (!mounted) return;
-        final path = result.files.single.path!;
+        final path = file.path!;
         final dur = await probeDurationMs(path);
         if (!mounted) return;
         setState(() {

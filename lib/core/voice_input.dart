@@ -1,13 +1,14 @@
-// ============================================================
+// =========================================================
 // As Above, So Below. As Within, So Without.
 // The Future Dictates The Past and The Past is Always Present.
-// ============================================================
+// =========================================================
 
 import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
 
 import 'pcm_recorder.dart';
@@ -23,6 +24,11 @@ class VoiceInput extends ChangeNotifier {
   static const Duration maxDuration = Duration(seconds: 12);
   static const int bytesPerSecond = sampleRate * 2;
   static const int minBytesForOneSecond = bytesPerSecond;
+
+  /// Optional hooks wired by AppGhostWorld to duck AudioService volume while listening
+  /// so music playback doesn't bleed into the Whisper microphone capture.
+  static Future<void> Function()? onRecordingStarted;
+  static Future<void> Function()? onRecordingStopped;
 
   SpeechEngine _engine;
   VoicePhase _phase = VoicePhase.idle;
@@ -59,9 +65,6 @@ class VoiceInput extends ChangeNotifier {
       return null;
     }
     if (_micBlocked) {
-      // _micBlocked latches, so re-probe before bouncing the user to Settings.
-      // Otherwise granting the mic there dead-ends: every tap would re-open
-      // Settings until the app was restarted.
       if (await PcmRecorder.hasPermission()) {
         _micBlocked = false;
         return _start();
@@ -76,205 +79,244 @@ class VoiceInput extends ChangeNotifier {
 
   Future<String?> _start() async {
     _cancelRequested = false;
-    _status = 'WAKING THE MIC...';
+    _status = 'PREPARING...';
     _progress = 0.0;
     _phase = VoicePhase.preparing;
     _safeNotify();
 
-    String? path;
-    try {
-      if (await PcmRecorder.isRecording()) {
-        return _fail('THE OTHER RECORDER IS BUSY. STOP IT FIRST.');
-      }
-
-      final ok = await _ensureMic();
-      if (!ok) return null;
-      if (_cancelRequested) return _abandon();
-
-      if (!await _engine.isReady()) {
-        if (_cancelRequested || _disposed) return _abandon();
-        final mb = (_engine.payloadBytes / 1000000).round();
-        _status = 'FETCHING ${_engine.label} (${mb}MB, ONCE)...';
-        _safeNotify();
-        await _engine.prepare(onProgress: (stage, p) {
-          if (_cancelRequested || _disposed) return;
-          _progress = p;
-          _status = '${_engine.label}: $stage ${(p * 100).toStringAsFixed(0)}%';
-          _safeNotify();
-        });
-        if (_cancelRequested || _disposed) return _abandon();
-      }
-
-      final tempDir = await _storage.invokeMethod<String>('getTempDirectory');
-      if (_cancelRequested || _disposed) return _abandon();
-      if (tempDir == null || tempDir.isEmpty) {
-        return _fail('NO TEMP DIRECTORY.');
-      }
-
-      path = '$tempDir/ghost_voice_${DateTime.now().millisecondsSinceEpoch}.wav';
-      final armed = await PcmRecorder.start(path: path, sampleRate: sampleRate, channels: 1);
-      if (!armed) {
-        await _deleteQuietly(path);
-        path = null;
-        return _fail('MIC ENGINE FAILED TO ARM.');
-      }
-      if (_cancelRequested || _disposed) {
-        await PcmRecorder.stop();
-        await _deleteQuietly(path);
-        path = null;
-        return _abandon();
-      }
-
-      _pendingPath = path;
-      _status = 'LISTENING... ${maxDuration.inSeconds}s MAX';
-      _progress = 0.0;
-      _phase = VoicePhase.listening;
-      _safeNotify();
-
-      _timer?.cancel();
-      _timer = Timer(maxDuration, () {
-        if (_phase == VoicePhase.listening) {
-          unawaited(_stopAndTranscribe());
+    final hasPerm = await PcmRecorder.hasPermission();
+    if (!hasPerm) {
+      final status = await Permission.microphone.request();
+      if (!status.isGranted) {
+        if (status.isPermanentlyDenied || status.isRestricted) {
+          _micBlocked = true;
         }
-      });
-      return null;
-    } catch (e) {
-      await _deleteQuietly(path);
-      if (_disposed || _cancelRequested) return null;
-      return _fail('MIC FAULT: $e');
+        _status = 'MIC PERMISSION DENIED';
+        _phase = VoicePhase.idle;
+        _safeNotify();
+        return null;
+      }
     }
-  }
+    _micBlocked = false;
 
-  Future<bool> _ensureMic() async {
-    if (await PcmRecorder.hasPermission()) {
-      _micBlocked = false;
-      return true;
+    final baseDir = await _fetchAppDocDir();
+    if (baseDir == null) {
+      _status = 'STORAGE ERROR';
+      _phase = VoicePhase.idle;
+      _safeNotify();
+      return null;
     }
-    final status = await Permission.microphone.request();
-    if (status.isGranted) {
-      _micBlocked = false;
-      return true;
+
+    // Duck background playback volume before opening the microphone
+    try {
+      await onRecordingStarted?.call();
+    } catch (_) {}
+
+    final path = '$baseDir/voice_input.pcm';
+    _deleteFile(path);
+    final ok = await PcmRecorder.start(path: path, sampleRate: sampleRate, channels: 1);
+    if (!ok) {
+      try {
+        await onRecordingStopped?.call();
+      } catch (_) {}
+      _status = 'RECORDING FAILED TO START';
+      _phase = VoicePhase.idle;
+      _safeNotify();
+      return null;
     }
-    _micBlocked = status.isPermanentlyDenied || status.isRestricted;
-    _fail(_micBlocked
-        ? 'MIC BLOCKED. TAP MIC AGAIN TO OPEN APP SETTINGS.'
-        : 'MIC ACCESS DENIED.');
-    return false;
+
+    _pendingPath = path;
+    _phase = VoicePhase.listening;
+    _status = 'LISTENING...';
+    _safeNotify();
+
+    _timer?.cancel();
+    _timer = Timer(maxDuration, () async {
+      if (_phase == VoicePhase.listening) {
+        await _stopAndTranscribe();
+      }
+    });
+
+    return null;
   }
 
   Future<String?> _stopAndTranscribe() async {
     _timer?.cancel();
     _timer = null;
+
+    final path = _pendingPath;
+    _pendingPath = null;
+
+    if (path == null) {
+      try {
+        await onRecordingStopped?.call();
+      } catch (_) {}
+      _phase = VoicePhase.idle;
+      _status = '';
+      _safeNotify();
+      return null;
+    }
+
+    _status = 'STOPPING RECORDER...';
+    _safeNotify();
+    await PcmRecorder.stop();
+    try {
+      await onRecordingStopped?.call();
+    } catch (_) {}
+
+    if (_cancelRequested) {
+      _deleteFile(path);
+      _phase = VoicePhase.idle;
+      _status = 'CANCELLED';
+      _safeNotify();
+      return null;
+    }
+
+    final file = File(path);
+    if (!file.existsSync() || file.lengthSync() < minBytesForOneSecond) {
+      _deleteFile(path);
+      _phase = VoicePhase.idle;
+      _status = 'SPEAK LONGER (MIN 1 SECOND)';
+      _safeNotify();
+      return null;
+    }
+
     _phase = VoicePhase.transcribing;
-    _status = '${_engine.label} IS THINKING...';
-    _progress = 0.0;
+    _status = 'TRANSCRIBING...';
+    _progress = 0.5;
     _safeNotify();
 
-    String? path;
     try {
-      path = await PcmRecorder.stop();
-      final recorded = path ?? _pendingPath;
-      if (_cancelRequested || _disposed) return null;
+      final result = await _engine.transcribe(path);
+      _deleteFile(path);
+      _phase = VoicePhase.idle;
+      _progress = 1.0;
 
-      if (recorded == null || !File(recorded).existsSync()) {
-        return _fail('NOTHING WAS RECORDED.');
-      }
-      if (File(recorded).lengthSync() < minBytesForOneSecond) {
-        return _fail('DID NOT HEAR ANYTHING.');
+      if (result.trim().isEmpty) {
+        _status = 'NO SPEECH DETECTED';
+        _safeNotify();
+        return null;
       }
 
-      final text = await _engine.transcribe(recorded);
-      if (_cancelRequested || _disposed) return null;
-
-      final trimmed = text.trim();
-      if (trimmed.isEmpty || isLikelyHallucination(trimmed)) {
-        return _fail('DID NOT CATCH ANY WORDS. TRY AGAIN.');
-      }
-      _reset();
-      return trimmed;
+      final normalized = _normalizeDomainTranscript(result.trim());
+      _status = normalized;
+      _safeNotify();
+      return normalized;
     } catch (e) {
-      if (_disposed || _cancelRequested) return null;
-      return _fail(_describe(e));
-    } finally {
-      final victim = path ?? _pendingPath;
-      _pendingPath = null;
-      await _deleteQuietly(victim);
+      _deleteFile(path);
+      _phase = VoicePhase.idle;
+      _status = 'TRANSCRIBE ERROR: $e';
+      _safeNotify();
+      return null;
     }
+  }
+
+  /// Corrects common Whisper ggml-base.en homophones for Sovereign Tagger terminology.
+  static String _normalizeDomainTranscript(String raw) {
+    var out = raw;
+    const replacements = <String, String>{
+      r'\bforged\b': 'forge',
+      r'\bford\b': 'forge',
+      r'\bfourth tab\b': 'forge tab',
+      r'\bgrab her\b': 'grabber',
+      r'\bgrab a\b': 'grabber',
+      r'\blrc lib\b': 'lrclib',
+      r'\bl r c lib\b': 'lrclib',
+      r'\bacr cloud\b': 'acrcloud',
+      r'\ba c r cloud\b': 'acrcloud',
+      r'\breplay game\b': 'replaygain',
+      r'\breplay gain\b': 'replaygain',
+      r'\bid 3\b': 'id3',
+    };
+    replacements.forEach((pattern, target) {
+      out = out.replaceAll(RegExp(pattern, caseSensitive: false), target);
+    });
+    return out;
   }
 
   Future<void> cancel() async {
     _cancelRequested = true;
     _timer?.cancel();
     _timer = null;
-    unawaited(_engine.cancel());
+
     if (_phase == VoicePhase.listening) {
-      try {
-        await PcmRecorder.stop();
-      } catch (_) {}
+      await PcmRecorder.stop();
     }
-    final victim = _pendingPath;
-    _pendingPath = null;
-    await _deleteQuietly(victim);
-    if (_disposed) return;
-    _reset();
+    try {
+      await onRecordingStopped?.call();
+    } catch (_) {}
+
+    if (_pendingPath != null) {
+      _deleteFile(_pendingPath!);
+      _pendingPath = null;
+    }
+
+    _phase = VoicePhase.idle;
+    _status = 'CANCELLED';
+    _progress = 0.0;
+    _safeNotify();
   }
 
-  String _describe(Object e) {
-    final raw = e.toString();
-    if (raw.contains('no speech recognized')) return 'DID NOT CATCH ANY WORDS. TRY AGAIN.';
-    if (raw.contains('not wired yet')) return '${_engine.label} IS NOT WIRED YET.';
-    if (raw.contains('MissingPluginException') || raw.contains('NotImplementedError')) {
-      return 'VOICE ENGINE UNAVAILABLE ON THIS BUILD.';
-    }
-    if (raw.contains('whisper filter returned')) return 'TRANSCRIPTION FAILED.';
-    if (raw.length > 140) return 'VOICE FAULT: ${raw.substring(0, 140)}';
-    return 'VOICE FAULT: $raw';
-  }
+  Future<String?> _fetchAppDocDir() async {
+    // 1. Try native storage channel first if implemented
+    try {
+      final String? res = await _storage.invokeMethod<String>('getAppDocDir');
+      if (res != null && res.isNotEmpty && Directory(res).existsSync()) {
+        return res;
+      }
+    } catch (_) {}
 
-  String? _abandon() {
-    _timer?.cancel();
-    _timer = null;
-    _pendingPath = null;
-    if (_disposed) return null;
-    _reset();
+    // 2. Try native storage getTempDirectory (implemented on StorageBridge)
+    try {
+      final String? res = await _storage.invokeMethod<String>('getTempDirectory');
+      if (res != null && res.isNotEmpty && Directory(res).existsSync()) {
+        return res;
+      }
+    } catch (_) {}
+
+    // 3. Fallback to path_provider ApplicationDocumentsDirectory
+    try {
+      final docDir = await getApplicationDocumentsDirectory();
+      if (docDir.existsSync()) return docDir.path;
+    } catch (_) {}
+
+    // 4. Fallback to path_provider TemporaryDirectory
+    try {
+      final tmpDir = await getTemporaryDirectory();
+      if (tmpDir.existsSync()) return tmpDir.path;
+    } catch (_) {}
+
+    // 5. Fallback to dart:io Directory.systemTemp (/data/user/0/com.sovereigntagger/cache)
+    try {
+      final sysTmp = Directory.systemTemp;
+      if (sysTmp.existsSync()) return sysTmp.path;
+    } catch (_) {}
+
     return null;
   }
 
-  String? _fail(String message) {
-    _status = message;
-    _phase = VoicePhase.idle;
-    _progress = 0.0;
-    _safeNotify();
-    return null;
-  }
-
-  void _reset() {
-    _phase = VoicePhase.idle;
-    _status = '';
-    _progress = 0.0;
-    _safeNotify();
+  void _deleteFile(String path) {
+    try {
+      final f = File(path);
+      if (f.existsSync()) f.deleteSync();
+    } catch (_) {}
   }
 
   void _safeNotify() {
-    if (_disposed) return;
-    notifyListeners();
-  }
-
-  static Future<void> _deleteQuietly(String? path) async {
-    if (path == null) return;
-    try {
-      final f = File(path);
-      if (f.existsSync()) await f.delete();
-    } catch (_) {}
+    if (!_disposed) notifyListeners();
   }
 
   @override
   void dispose() {
     _disposed = true;
-    _cancelRequested = true;
     _timer?.cancel();
-    _timer = null;
-    unawaited(cancel());
+    if (_phase == VoicePhase.listening) {
+      PcmRecorder.stop();
+      onRecordingStopped?.call();
+    }
+    if (_pendingPath != null) {
+      _deleteFile(_pendingPath!);
+    }
     super.dispose();
   }
 }

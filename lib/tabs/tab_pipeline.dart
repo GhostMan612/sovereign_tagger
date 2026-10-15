@@ -91,18 +91,19 @@ class _TabPipelineState extends State<TabPipeline> {
   Future<void> _pickFiles() async {
     TapFeedback.machineTap();
     if (_isBatchRunning) return;
-    FilePickerResult? result;
+    List<PlatformFile> pickedFiles;
     try {
-      result = await FilePicker.platform.pickFiles(type: FileType.audio, allowMultiple: true);
+      pickedFiles = await FilePicker.pickFiles(type: FileType.audio);
     } on PlatformException catch (e) {
       _setStatus("ERR: File Picker Fault: ${e.message}");
       return;
     }
-    if (result == null || result.files.isEmpty) return;
+    if (pickedFiles.isEmpty) return;
     final entries = <({String path, String? uri, String name})>[];
-    for (final f in result.files) {
+    for (final f in pickedFiles) {
       if (f.path == null) continue;
-      final uri = f.identifier == null ? null : await StorageClient.resolveMediaUri(identifier: f.identifier);
+      final uriStr = f.uri.toString();
+      final uri = uriStr.startsWith("content://") ? await StorageClient.resolveMediaUri(identifier: uriStr) : null;
       entries.add((path: f.path!, uri: uri, name: f.name));
     }
     await _addItems(entries);

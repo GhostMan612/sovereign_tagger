@@ -115,10 +115,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   Future<void> _importConfig() async {
     TapFeedback.machineTap();
-    FilePickerResult? result = await FilePicker.platform.pickFiles(type: FileType.any);
-    if (result != null && result.files.single.path != null) {
+    final picked = await FilePicker.pickFile(type: FileType.any);
+    if (picked != null && picked.path != null) {
       try {
-        final file = File(result.files.single.path!);
+        final file = File(picked.path!);
         final encryptedData = await file.readAsString();
         final config = jsonDecode(_decrypt(encryptedData));
         
@@ -145,7 +145,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       int count = 0;
       
       try {
-        await FilePicker.platform.clearTemporaryFiles();
+        await FilePicker.clearTemporaryFiles();
       } catch (_) {}
 
       const storageChannel = MethodChannel('com.sovereign.tagger/storage');
@@ -353,13 +353,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
     TapFeedback.machineTap();
     setState(() { _isRestoring = true; _backupStatus = "Select backup binary..."; });
     try {
-      final result = await FilePicker.platform.pickFiles(type: FileType.any);
-      if (result == null || result.files.single.path == null) {
+      final picked = await FilePicker.pickFile(type: FileType.any);
+      if (picked == null || picked.path == null) {
         setState(() => _backupStatus = "Restore canceled.");
         return;
       }
       
-      final file = File(result.files.single.path!);
+      final file = File(picked.path!);
       final encryptedData = await file.readAsString();
       final decrypted = _decrypt(encryptedData);
       final backup = jsonDecode(decrypted) as Map<String, dynamic>;

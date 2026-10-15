@@ -544,9 +544,9 @@ class AudioService {
 
   static Future<void> pickAndEnqueue() async {
     try {
-      final result = await FilePicker.platform.pickFiles(type: FileType.any, allowMultiple: true);
-      if (result == null) return;
-      final files = result.files.where((f) => f.path != null).map((f) => File(f.path!)).where((file) => mediaExtensions.contains(file.path.split('.').last.toLowerCase())).toList();
+      final pickedFiles = await FilePicker.pickFiles(type: FileType.any);
+      if (pickedFiles.isEmpty) return;
+      final files = pickedFiles.where((f) => f.path != null).map((f) => File(f.path!)).where((file) => mediaExtensions.contains(file.path.split('.').last.toLowerCase())).toList();
       await addAllToQueue(files);
     } catch (_) {}
   }
@@ -688,18 +688,18 @@ class AudioService {
 
   static Future<void> pickSingleFile() async {
     try {
-      final result = await FilePicker.platform.pickFiles(type: FileType.any, allowMultiple: false);
-      if (result != null && result.files.single.path != null) {
-        await playFiles([File(result.files.single.path!)]);
+      final file = await FilePicker.pickFile(type: FileType.any);
+      if (file != null && file.path != null) {
+        await playFiles([File(file.path!)]);
       }
     } catch (_) {}
   }
 
   static Future<void> pickMultipleFiles() async {
     try {
-      final result = await FilePicker.platform.pickFiles(type: FileType.any, allowMultiple: true);
-      if (result != null && result.files.isNotEmpty) {
-        final files = result.files.where((f) => f.path != null).map((f) => File(f.path!)).where((file) => mediaExtensions.contains(file.path.split('.').last.toLowerCase())).toList();
+      final pickedFiles = await FilePicker.pickFiles(type: FileType.any);
+      if (pickedFiles.isNotEmpty) {
+        final files = pickedFiles.where((f) => f.path != null).map((f) => File(f.path!)).where((file) => mediaExtensions.contains(file.path.split('.').last.toLowerCase())).toList();
         if (files.isNotEmpty) await playFiles(files);
       }
     } catch (_) {}
