@@ -1,11 +1,11 @@
 # CURRENT_STATE.md — Sovereign Tagger v2 (post-Phase 31)
-> Snapshot as of 2026-10-15 — Phases 0–31 COMPLETE. `flutter analyze --no-pub` -> `No issues found!`.
+> Snapshot as of 2026-10-15 — Phases 0–30 COMPLETE; Phase 31 Implementation & Build VERIFIED; Device Verification PENDING. `flutter analyze --no-pub` -> `No issues found!`. `flutter build apk --debug --target-platform android-arm64` -> `app-debug.apk` built cleanly in 320.2s with `libsovereign_whistle.so` (7.78MB, ARM64 NDK/JNI).
 >
 > **Phase 31 deltas (Whistle Native STT Migration + Voice/Playback Reliability):**
-> - **Whistle Native STT Engine**: Integrated Cactus Compute's 16.9 MB `whistle.cact` model as the preferred offline speech-to-text engine (`WhistleEngine`). Linked prebuilt `libneedle.a` (Android ARM64) via JNI/C++ bridge (`needle.h`, `sovereign_whistle.cpp`, `WhistleBridge.kt`). Unsupported ABIs (`x86_64` emulators) gracefully fall back to stub implementation returning `UNSUPPORTED_ABI` without build failures (G44). Whisper FFmpeg engine remains available as testable fallback.
+> - **Whistle Native STT Engine**: Integrated Cactus Compute's 16.9 MB `whistle.cact` model as the preferred offline speech-to-text engine (`WhistleEngine`). Linked prebuilt `libneedle.a` (Android ARM64) via JNI/C++ bridge (`needle.h`, `sovereign_whistle.cpp`, `WhistleBridge.kt`). Unsupported ABIs (`x86_64` emulators) gracefully fall back to stub implementation returning `UNSUPPORTED_ABI` without build failures (G44). Both `arm64-v8a` and `x86_64` targets compiled and verified via ELF symbol table inspection. Whisper FFmpeg engine remains available as testable fallback.
 > - **Model Distribution & Validation**: Bundled `whistle.cact` in `assets/models/whistle.cact` (16,919,407 bytes, SHA-256 `b6e02f048568ac5d01a2042556c658061e699acbc0aa2a1439f52f3d461dffeb`) with lazy extraction and HF fallback via `lib/core/whistle_model.dart`. Audio normalization: deterministic native PCM16 to Float32 conversion in [-1.0, 1.0] without passing WAV headers into the inference model.
 > - **Voice Lifecycle & Auto-Stop Repair**: Fixed `PcmRecorderBridge.kt` thread join race by stopping `AudioRecord` *before* joining writer thread and confirming `writerFinished` before writing WAV header. Fixed 12-second auto-stop to deliver transcript to query field via `VoiceInput.onTranscript` broadcast stream.
-> - **Audio Focus & Notification Resume**: Disabled `just_audio` automatic interruption handling (`handleInterruptions: false` on `AudioPlayer`) to prevent dual-controller race conditions (G45); `SovereignAudioHandler` explicitly manages `session.interruptionEventStream` and `becomingNoisyEventStream` to duck volume to 0.25 on notification and automatically resume playback when focus returns (if playback was active).
+> - **Audio Focus & Notification Resume**: Disabled `just_audio` automatic interruption handling (`handleInterruptions: false` on `AudioPlayer`) to prevent dual-controller race conditions (G45); `SovereignAudioHandler` explicitly manages `session.interruptionEventStream` and `becomingNoisyEventStream` to capture effective `_preDuckVolume` prior to ducking, duck volume to 25% of pre-duck volume (`_preDuckVolume * 0.25`), and restore exact pre-duck volume upon completion. Automatically resumes playback when focus returns only if `wantPlaying` was true (manual pause prevents auto-resume).
 > - **Ghost Chatbot Rendering & SFX Jank**: Resolved Logcat `BLASTBufferQueue` frame acquisition saturation warnings by isolating typewriter text updates into `ValueNotifier<String>` + `ValueListenableBuilder<String>` on chat bubbles (G46); throttled typing SFX and avatar mouth animation to every 4th character.
 
 ## App identity
@@ -21,14 +21,14 @@ Sovereign Tagger — autonomous Android media pipeline: yt-dlp (chaquopy Python 
 - **core/speech_to_text.dart**: `SpeechEngine` abstraction; `WhistleEngine` (native ARM64 C++ bridge, single-thread serialized execution, keyword biasing via `WhistleKeywords`) + `WhisperFfmpegEngine` fallback.
 - **core/whistle_model.dart**: `WhistleModel` asset extraction to cache directory and lazy HuggingFace download fallback.
 - **core/voice_input.dart**: `VoiceInput` state machine (`idle, preparing, listening, stopping, modelLoading, transcribing, completed, failed, canceled`), 12s cap, WAV capture, `onTranscript` broadcast stream.
-- **core/audio_handler.dart**: `SovereignAudioHandler` with authoritative interruption & becoming noisy listeners: volume ducking to 0.25 on duck; transient loss pause with auto-resume on interruption end; safe pause on noisy (headphone disconnect).
+- **core/audio_handler.dart**: `SovereignAudioHandler` with authoritative interruption & becoming noisy listeners: captures `_preDuckVolume`, ducks to `_preDuckVolume * 0.25`, restores `_preDuckVolume`; transient loss pause with auto-resume on interruption end (gated on `wantPlaying`); safe pause on noisy (headphone disconnect).
 - **widgets/ghost_chat_overlay.dart**: Frosted glass panel with decoupled `ValueNotifier<String>` typewriter text updates; throttled typing SFX and avatar mouth animation to every 4th character; wired to `VoiceInput.onTranscript` for manual and auto-stop voice queries.
 
 ### Native layer (`android/app/src/main/`)
 
 - **C++ NDK (`cpp/`)**:
   - `CMakeLists.txt`: Links `libneedle.a` on `arm64-v8a`; compiles stub on unsupported ABIs.
-  - `needle.h`: Cactus Compute Needle 3 / Whistle C header.
+  - `needle.h`: Cactus Compute Needle 3 / Whistle native C header.
   - `sovereign_whistle.cpp`: JNI bridge implementing `nativeLoadModel`, `nativeTranscribe`, `nativeUnloadModel`, and `nativeIsSupported`.
 - **Kotlin (`kotlin/com/sovereigntagger/`)**:
   - `WhistleBridge.kt`: Thread-safe serialized native executor; WAV PCM16 to Float32 sample normalization; JSON transcript parser.
@@ -48,5 +48,5 @@ Sovereign Tagger — autonomous Android media pipeline: yt-dlp (chaquopy Python 
 | WS2 | `cpp/CMakeLists.txt` | `libneedle.a` ARM64-only failed build on `x86_64` emulators | 31 | **FIXED** ABI conditional in CMake and `#if WHISTLE_ARM64_SUPPORTED` in C++ returns `UNSUPPORTED_ABI` cleanly without crash. |
 | WS3 | `PcmRecorderBridge.kt` | Thread join executed before stopping `AudioRecord`, causing writer race before WAV header finalize | 31 | **FIXED** `audioRecord.stop()` called first to unblock loop, verified `writerFinished` before writing WAV header. |
 | WS4 | `core/voice_input.dart` | 12-second auto-stop called `_stopAndTranscribe()` without delivering result to Ghost overlay | 31 | **FIXED** Refactored completion delivery via `VoiceInput.onTranscript` broadcast stream. |
-| WS5 | `core/audio_handler.dart` | `just_audio` automatic interruption handling failed to resume after transient notifications | 31 | **FIXED** Passed `handleInterruptions: false` to `AudioPlayer` and centralized ducking/resume in `SovereignAudioHandler`. |
+| WS5 | `core/audio_handler.dart` | `just_audio` automatic interruption handling failed to resume after transient notifications | 31 | **FIXED** Passed `handleInterruptions: false` to `AudioPlayer`, captured `_preDuckVolume`, and centralized ducking/resume in `SovereignAudioHandler`. |
 | WS6 | `widgets/ghost_chat_overlay.dart` | Typewriter loop called per-char `setState`, causing `BLASTBufferQueue` queue saturation warnings | 31 | **FIXED** Decoupled text updates via `ValueNotifier<String>` + `ValueListenableBuilder<String>`; throttled typing SFX to 1/4 cadence. |

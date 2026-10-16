@@ -38,6 +38,7 @@ class SovereignAudioHandler extends BaseAudioHandler with QueueHandler, SeekHand
   final TransportCallbacks transport;
   MediaItem? _current;
   bool _wasInterrupted = false;
+  double _preDuckVolume = 1.0;
 
   SovereignAudioHandler(this.player, this.transport) {
     _init();
@@ -52,7 +53,8 @@ class SovereignAudioHandler extends BaseAudioHandler with QueueHandler, SeekHand
       if (event.begin) {
         switch (event.type) {
           case AudioInterruptionType.duck:
-            player.setVolume(0.25);
+            _preDuckVolume = player.volume;
+            player.setVolume((_preDuckVolume * 0.25).clamp(0.0, 1.0));
             break;
           case AudioInterruptionType.pause:
           case AudioInterruptionType.unknown:
@@ -65,7 +67,7 @@ class SovereignAudioHandler extends BaseAudioHandler with QueueHandler, SeekHand
       } else {
         switch (event.type) {
           case AudioInterruptionType.duck:
-            player.setVolume(1.0);
+            player.setVolume(_preDuckVolume.clamp(0.0, 1.0));
             break;
           case AudioInterruptionType.pause:
             if (_wasInterrupted && transport.wantPlaying()) {
