@@ -50,6 +50,12 @@ android {
             abiFilters "arm64-v8a", "x86_64"
         }
 
+        externalNativeBuild {
+            cmake {
+                cppFlags "-std=c++17"
+            }
+        }
+
         python {
             // Chaquopy LTS is 3.11; 3.14 is bleeding edge and will fail if chaquopy plugin <15.x. If Gradle sync fails with "Python 3.14 not found", change to "3.11".
             version "3.14"
@@ -58,6 +64,12 @@ android {
                 install "mutagen"
                 install "lyricsgenius"
             }
+        }
+    }
+
+    externalNativeBuild {
+        cmake {
+            path file("src/main/cpp/CMakeLists.txt")
         }
     }
 

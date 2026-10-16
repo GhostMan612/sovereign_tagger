@@ -32,6 +32,7 @@ class MainActivity: AudioServiceActivity() {
     private val SHARE_CHANNEL = "com.sovereign.tagger/share"
     private val WIDGET_CHANNEL = "com.sovereign.tagger/widget"
     private val SFX_CHANNEL = "com.sovereign.tagger/sfx"
+    private val WHISTLE_CHANNEL = "com.sovereign.tagger/whistle"
 
     private val REQ_WRITE = 7301
     private val REQ_DELETE = 7302
@@ -41,6 +42,8 @@ class MainActivity: AudioServiceActivity() {
     private val pcmRecorderBridge by lazy { PcmRecorderBridge(this) }
     private val pcmRecorderChannel = "com.sovereign.tagger/pcm_recorder"
     private val pcmEventChannel = "com.sovereign.tagger/pcm_events"
+
+    private val whistleBridge by lazy { WhistleBridge(this) }
 
     private var eventSink: EventChannel.EventSink? = null
     private var pcmEventSink: EventChannel.EventSink? = null
@@ -361,7 +364,7 @@ class MainActivity: AudioServiceActivity() {
                 "isRecording" -> result.success(pcmRecorderBridge.isRecordingNow())
                 "startRecording" -> {
                     val path = call.argument<String>("path") ?: ""
-                    val sampleRate = call.argument<Int>("sampleRate") ?: 48000
+                    val sampleRate = call.argument<Int>("sampleRate") ?: 16000
                     val channels = call.argument<Int>("channels") ?: 1
                     Thread {
                         val ok = pcmRecorderBridge.startRecording(path, sampleRate, channels)
@@ -377,6 +380,35 @@ class MainActivity: AudioServiceActivity() {
                             if (outPath != null) result.success(outPath) else result.error("PCM_ERROR", "No recording active", null)
                         }
                     }.start()
+                }
+                else -> result.notImplemented()
+            }
+        }
+
+        MethodChannel(messenger, WHISTLE_CHANNEL).setMethodCallHandler { call, result ->
+            when (call.method) {
+                "isSupported" -> result.success(whistleBridge.isSupported())
+                "isReady" -> result.success(whistleBridge.isReady())
+                "loadModel" -> {
+                    val path = call.argument<String>("path") ?: ""
+                    whistleBridge.loadModel(path) { ok, err ->
+                        mainHandler.post {
+                            if (ok) result.success(true)
+                            else result.error("WHISTLE_LOAD_ERROR", err ?: "Failed to load model", null)
+                        }
+                    }
+                }
+                "transcribe" -> {
+                    val wavPath = call.argument<String>("wavPath") ?: ""
+                    val language = call.argument<String>("language")
+                    val keywords = call.argument<String>("keywords")
+                    val wordTimestamps = call.argument<Boolean>("wordTimestamps") ?: false
+                    whistleBridge.transcribeWav(wavPath, language, keywords, wordTimestamps) { text, err ->
+                        mainHandler.post {
+                            if (text != null) result.success(text)
+                            else result.error("WHISTLE_TRANSCRIBE_ERROR", err ?: "Transcription failed", null)
+                        }
+                    }
                 }
                 else -> result.notImplemented()
             }

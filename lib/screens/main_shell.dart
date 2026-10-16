@@ -66,10 +66,10 @@ class AudioService {
 
   static AudioPlayer _createPlayer() {
     try {
-      return AudioPlayer(audioPipeline: PlaybackFx.createPipeline());
+      return AudioPlayer(audioPipeline: PlaybackFx.createPipeline(), handleInterruptions: false);
     } catch (e) {
       debugPrint('SOVEREIGN PLAYBACK: effects pipeline rejected ($e) - falling back to default sink');
-      return AudioPlayer();
+      return AudioPlayer(handleInterruptions: false);
     }
   }
 
@@ -100,6 +100,7 @@ class AudioService {
   static Timer? sleepTimer;
   static DateTime? _sleepDeadline;
   static bool _wantPlaying = false;
+  static bool get wantPlaying => _wantPlaying;
   static int _loadToken = 0;
   static String _loadedKey = "";
   static DateTime _lastPersist = DateTime.fromMillisecondsSinceEpoch(0);
@@ -367,6 +368,7 @@ class AudioService {
             seek: seek,
             skipToIndex: playIndex,
             isPlaying: () => isPlaying,
+            wantPlaying: () => wantPlaying,
           ),
         ),
         config: const audioservice.AudioServiceConfig(

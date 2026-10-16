@@ -43,6 +43,7 @@ class _GhostChatOverlayState extends State<GhostChatOverlay> with TickerProvider
   late final TextEditingController _inputController;
   late final FocusNode _inputFocus;
   late final ScrollController _scrollController;
+  StreamSubscription<String>? _voiceSub;
 
   GhostChatState _chatState = GhostChatState.collapsed;
   late final GhostBrain _brain = GhostBrain(AppGhostWorld(() => context));
@@ -106,6 +107,19 @@ class _GhostChatOverlayState extends State<GhostChatOverlay> with TickerProvider
     _inputFocus = FocusNode()..addListener(_onFocusChange);
     _scrollController = ScrollController();
 
+    _voiceSub = _voice.onTranscript.listen((text) {
+      if (!mounted) return;
+      final trimmed = text.trim();
+      if (trimmed.isEmpty) return;
+      final existing = _inputController.text.trim();
+      _inputController.text = existing.isEmpty ? trimmed : '$existing $trimmed';
+      _inputController.selection = TextSelection.collapsed(offset: _inputController.text.length);
+      widget.ghostController.setMood(GhostMood.listening);
+      Sfx.play(SfxId.select);
+      _inputFocus.requestFocus();
+      unawaited(_typewriterSay('HEARD: $trimmed', isGhost: true));
+    });
+
     _checkFirstLaunch();
   }
 
@@ -161,7 +175,13 @@ class _GhostChatOverlayState extends State<GhostChatOverlay> with TickerProvider
 
   Future<void> _typewriterSay(String text, {bool isGhost = true}) async {
     if (!mounted) return;
-    final message = _ChatMessage(text: '', isGhost: isGhost, isTyping: true);
+    final notifier = ValueNotifier<String>('');
+    final message = _ChatMessage(
+      text: '',
+      isGhost: isGhost,
+      isTyping: true,
+      typingTextNotifier: notifier,
+    );
     setState(() {
       _messages.add(message);
       _scrollToBottom();
@@ -169,20 +189,27 @@ class _GhostChatOverlayState extends State<GhostChatOverlay> with TickerProvider
     if (isGhost) widget.ghostController.setMood(GhostMood.talking);
 
     for (int i = 1; i <= text.length; i++) {
-      if (!mounted) return;
-      final index = _messages.indexWhere((m) => m.id == message.id);
-      if (index < 0) break;
-      setState(() => _messages[index] = _messages[index].copyWith(text: text.substring(0, i)));
+      if (!mounted) {
+        notifier.dispose();
+        return;
+      }
+      notifier.value = text.substring(0, i);
       final char = text[i - 1];
       if (isGhost && char.trim().isNotEmpty) {
-        widget.ghostController.talk();
-        if (i.isEven) Sfx.play(SfxId.type);
+        if (i % 4 == 0) widget.ghostController.talk();
+        if (i % 4 == 0) Sfx.play(SfxId.type);
       }
       await Future.delayed(Duration(milliseconds: 22 + _rng.nextInt(34)));
     }
-    if (!mounted) return;
+    if (!mounted) {
+      notifier.dispose();
+      return;
+    }
     final index = _messages.indexWhere((m) => m.id == message.id);
-    if (index >= 0) setState(() => _messages[index] = _messages[index].copyWith(text: text, isTyping: false));
+    if (index >= 0) {
+      setState(() => _messages[index] = _messages[index].copyWith(text: text, isTyping: false));
+    }
+    notifier.dispose();
     if (isGhost) {
       widget.ghostController.setMood(_inputFocus.hasFocus && _inputController.text.isNotEmpty ? GhostMood.listening : GhostMood.idle);
       Sfx.play(SfxId.message);
@@ -198,19 +225,7 @@ class _GhostChatOverlayState extends State<GhostChatOverlay> with TickerProvider
       await _voice.cancel();
       return;
     }
-    final wasListening = _voice.isListening;
-    final text = await _voice.toggle();
-    if (!mounted) return;
-    if (text == null) return;
-    final trimmed = text.trim();
-    if (trimmed.isEmpty) return;
-    final existing = _inputController.text.trim();
-    _inputController.text = existing.isEmpty ? trimmed : '$existing $trimmed';
-    _inputController.selection = TextSelection.collapsed(offset: _inputController.text.length);
-    widget.ghostController.setMood(GhostMood.listening);
-    Sfx.play(SfxId.select);
-    _inputFocus.requestFocus();
-    if (wasListening) unawaited(_typewriterSay('HEARD: $trimmed', isGhost: true));
+    await _voice.toggle();
   }
 
   void _onFocusChange() {
@@ -258,26 +273,13 @@ class _GhostChatOverlayState extends State<GhostChatOverlay> with TickerProvider
       reply = await _brain.respond(query);
     } catch (e) {
       debugPrint('GHOST: _brain.respond threw: $e');
-      reply = GhostReply('THE MACHINE CHOKED ON THAT ONE: $e', tone: GhostTone.sarcastic);
+      reply = GhostReply("ERROR: $e");
     }
     if (!mounted) return;
-    switch (reply.tone) {
-      case GhostTone.happy:
-        widget.ghostController.setEmotion(GhostEmotion.happy);
-        break;
-      case GhostTone.sarcastic:
-        widget.ghostController.setEmotion(GhostEmotion.sarcastic);
-        break;
-      case GhostTone.info:
-        break;
-    }
-    if (reply.laugh) unawaited(widget.ghostController.glitchLaugh());
     await _typewriterSay(reply.text, isGhost: true);
     if (!mounted) return;
-    if (reply.chips.isNotEmpty) _showSuggestionChips(reply.chips);
-    if (reply.hide && _chatState == GhostChatState.expanded) {
-      await Future.delayed(const Duration(milliseconds: 600));
-      if (mounted && _chatState == GhostChatState.expanded) await _toggleCollapse();
+    if (reply.chips.isNotEmpty) {
+      _showSuggestionChips(reply.chips);
     }
   }
 
@@ -288,52 +290,47 @@ class _GhostChatOverlayState extends State<GhostChatOverlay> with TickerProvider
     });
   }
 
-void _scrollToBottom() {
+  void _scrollToBottom() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (_scrollController.hasClients) {
         _scrollController.animateTo(
           0.0,
-          duration: const Duration(milliseconds: 200),
-          curve: Curves.easeOut,
+          duration: const Duration(milliseconds: 240),
+          curve: Curves.easeOutCubic,
         );
       }
     });
   }
 
-  Future<void> _toggleCollapse() async {
+  void _toggleCollapse() {
     _userInteracted = true;
-    if (_chatState == GhostChatState.expanded) {
-      Sfx.play(SfxId.close);
+    final willExpand = _chatState == GhostChatState.collapsed;
+    Sfx.play(willExpand ? SfxId.open : SfxId.close);
+    setState(() {
+      _chatState = willExpand ? GhostChatState.expanded : GhostChatState.collapsed;
+    });
+    if (willExpand) {
+      _controller.forward();
+      widget.ghostController.setMood(_inputController.text.isNotEmpty ? GhostMood.listening : GhostMood.idle);
+      if (_messages.isEmpty) {
+        _startContextualTutorial();
+      }
+    } else {
+      _controller.reverse();
       _inputFocus.unfocus();
       widget.ghostController.setMood(GhostMood.idle);
-      setState(() => _chatState = GhostChatState.collapsed);
-      await _controller.reverse();
-    } else {
-      Sfx.play(SfxId.open);
-      widget.ghostController.setEmotion(GhostEmotion.happy);
-      setState(() => _chatState = GhostChatState.expanded);
-      await _controller.forward();
-      await Future.delayed(const Duration(milliseconds: 300));
-      if (!mounted) return;
-      _inputFocus.requestFocus();
     }
   }
 
-  void _onDrag(DragUpdateDetails d) {
-    final mq = MediaQuery.of(context);
+  void _onDrag(DragUpdateDetails details) {
     setState(() {
-      _dragOffset = Offset(
-        (_dragOffset.dx + d.delta.dx).clamp(-(mq.size.width - 96), 0.0),
-        (_dragOffset.dy + d.delta.dy).clamp(-(mq.size.height - 220), 60.0),
-      );
+      _dragOffset += details.delta;
     });
   }
 
   @override
   void dispose() {
-    // _voice.dispose() already stops the recorder and deletes the WAV. Calling
-    // cancel() here too raced two PcmRecorder.stop() invocations against a
-    // still-listening phase.
+    _voiceSub?.cancel();
     _voice.dispose();
     _controller.dispose();
     _inputController.dispose();
@@ -583,7 +580,8 @@ void _scrollToBottom() {
       builder: (context, _) {
         final s = _voice.status;
         if (s.isEmpty) return const SizedBox.shrink();
-        final showBar = _voice.phase == VoicePhase.preparing && _voice.progress > 0;
+        final showBar = (_voice.phase == VoicePhase.preparing || _voice.phase == VoicePhase.modelLoading) && _voice.progress > 0;
+        final isError = _voice.phase == VoicePhase.failed || _voice.phase == VoicePhase.canceled;
         return Padding(
           padding: const EdgeInsets.only(top: 6),
           child: Column(
@@ -594,7 +592,7 @@ void _scrollToBottom() {
                 style: TextStyle(
                   fontFamily: 'VT323',
                   fontSize: 12,
-                  color: _voice.phase == VoicePhase.idle ? Colors.redAccent : themeColor,
+                  color: isError ? Colors.redAccent : themeColor,
                 ),
               ),
               if (showBar)
@@ -651,15 +649,29 @@ void _scrollToBottom() {
               ),
               const SizedBox(height: 2),
             ],
-            Text(
-              msg.isTyping ? '${msg.text}_' : msg.text,
-              style: TextStyle(
-                fontFamily: isGhost ? 'VT323' : 'ShareTechMono',
-                fontSize: isGhost ? 15 : 12,
-                color: isGhost ? Colors.white : Colors.black,
-                height: 1.25,
+            if (msg.typingTextNotifier != null)
+              ValueListenableBuilder<String>(
+                valueListenable: msg.typingTextNotifier!,
+                builder: (context, val, _) => Text(
+                  '${val}_',
+                  style: TextStyle(
+                    fontFamily: isGhost ? 'VT323' : 'ShareTechMono',
+                    fontSize: isGhost ? 15 : 12,
+                    color: isGhost ? Colors.white : Colors.black,
+                    height: 1.25,
+                  ),
+                ),
+              )
+            else
+              Text(
+                msg.isTyping ? '${msg.text}_' : msg.text,
+                style: TextStyle(
+                  fontFamily: isGhost ? 'VT323' : 'ShareTechMono',
+                  fontSize: isGhost ? 15 : 12,
+                  color: isGhost ? Colors.white : Colors.black,
+                  height: 1.25,
+                ),
               ),
-            ),
           ],
         ),
       ),
@@ -730,6 +742,7 @@ class _ChatMessage {
   final bool isGhost;
   final bool isTyping;
   final List<String>? chips;
+  final ValueNotifier<String>? typingTextNotifier;
 
   _ChatMessage({
     int? id,
@@ -737,10 +750,18 @@ class _ChatMessage {
     required this.isGhost,
     this.isTyping = false,
     this.chips,
+    this.typingTextNotifier,
   }) : id = id ?? ++_counter;
 
   _ChatMessage copyWith({String? text, bool? isTyping}) =>
-      _ChatMessage(id: id, text: text ?? this.text, isGhost: isGhost, isTyping: isTyping ?? this.isTyping, chips: chips);
+      _ChatMessage(
+        id: id,
+        text: text ?? this.text,
+        isGhost: isGhost,
+        isTyping: isTyping ?? this.isTyping,
+        chips: chips,
+        typingTextNotifier: typingTextNotifier,
+      );
 }
 
 class _LaunchStep {

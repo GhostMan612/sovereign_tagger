@@ -6,9 +6,11 @@
 import 'dart:io';
 
 import 'package:ffmpeg_kit_extended_flutter/ffmpeg_kit_extended_flutter.dart';
+import 'package:flutter/services.dart';
 
 import 'ffmpeg_executor.dart';
 import 'whisper_model.dart';
+import 'whistle_model.dart';
 
 abstract class SpeechEngine {
   const SpeechEngine();
@@ -22,48 +24,99 @@ abstract class SpeechEngine {
   Future<void> cancel() async {}
 }
 
-class SpeechEngineNotWired implements SpeechEngine {
-  const SpeechEngineNotWired({
-    required this.id,
-    required this.label,
-    required this.payloadBytes,
-    required this.wiring,
-  });
+class WhistleKeywords {
+  static const String domainKeywords =
+      'Sovereign Tagger\n'
+      'Ghost\n'
+      'Grabber\n'
+      'Forge\n'
+      'Workbench\n'
+      'ReplayGain\n'
+      'LRCLIB\n'
+      'Genius\n'
+      'ACRCloud\n'
+      'metadata\n'
+      'album artwork\n'
+      'lyrics\n'
+      'playlist\n'
+      'equalizer';
+}
+
+class WhistleEngine implements SpeechEngine {
+  WhistleEngine();
+
+  static const MethodChannel _channel = MethodChannel('com.sovereign.tagger/whistle');
+  static bool? _cachedSupported;
 
   @override
-  final String id;
-  @override
-  final String label;
-  @override
-  final int payloadBytes;
-  final String wiring;
+  String get id => 'whistle';
 
   @override
-  Future<bool> isReady() async => false;
+  String get label => 'WHISTLE';
 
   @override
-  Future<void> cancel() async {}
+  int get payloadBytes => WhistleModel.minBytes;
+
+  static Future<bool> isSupported() async {
+    if (_cachedSupported != null) return _cachedSupported!;
+    try {
+      _cachedSupported = await _channel.invokeMethod<bool>('isSupported') ?? false;
+    } catch (_) {
+      _cachedSupported = false;
+    }
+    return _cachedSupported!;
+  }
+
+  @override
+  Future<bool> isReady() async {
+    final supported = await isSupported();
+    if (!supported) return false;
+    try {
+      return await _channel.invokeMethod<bool>('isReady') ?? false;
+    } catch (_) {
+      return false;
+    }
+  }
 
   @override
   Future<void> prepare({void Function(String stage, double progress)? onProgress}) async {
-    throw UnsupportedError('$label is not wired yet. Needs: $wiring');
+    final supported = await isSupported();
+    if (!supported) {
+      throw UnsupportedError('Whistle native engine is not supported on this device architecture');
+    }
+    final modelFile = await WhistleModel.ensure(onProgress: onProgress);
+    onProgress?.call('Loading Whistle into memory', 0.9);
+    final loaded = await _channel.invokeMethod<bool>('loadModel', {'path': modelFile.path});
+    if (loaded != true) {
+      throw StateError('Failed to load Whistle weights into native runtime');
+    }
+    onProgress?.call('Whistle ready', 1.0);
+  }
+
+  @override
+  Future<void> cancel() async {
+    await WhistleModel.cancelPrepare();
   }
 
   @override
   Future<String> transcribe(String wavPath, {String language = 'en'}) async {
-    throw UnsupportedError('$label is not wired yet. Needs: $wiring');
+    final supported = await isSupported();
+    if (!supported) {
+      throw UnsupportedError('Whistle is not supported on this device architecture');
+    }
+    if (!await isReady()) {
+      await prepare();
+    }
+    final String? res = await _channel.invokeMethod<String>('transcribe', {
+      'wavPath': wavPath,
+      'language': language,
+      'keywords': WhistleKeywords.domainKeywords,
+    });
+    if (res == null || res.trim().isEmpty) {
+      throw StateError('no speech recognized');
+    }
+    return res.trim();
   }
-}
-
-class WhistleEngine extends SpeechEngineNotWired {
-  const WhistleEngine()
-      : super(
-          id: 'whistle',
-          label: 'WHISTLE',
-          payloadBytes: 16900000,
-          wiring: 'NDK + CMake + JNI bridge to needle_load/needle_transcribe, '
-              'plus whistle.cact from huggingface.co/Cactus-Compute/whistle',
-        );
 }
 
 class WhisperFfmpegEngine implements SpeechEngine {
@@ -193,9 +246,12 @@ bool isLikelyHallucination(String text) {
 class SpeechEngines {
   const SpeechEngines._();
 
-  static final List<SpeechEngine> all = [WhisperFfmpegEngine(), WhistleEngine()];
+  static final WhistleEngine _whistle = WhistleEngine();
+  static final WhisperFfmpegEngine _whisper = WhisperFfmpegEngine();
 
-  static SpeechEngine get preferred => WhisperFfmpegEngine();
+  static final List<SpeechEngine> all = [_whistle, _whisper];
+
+  static SpeechEngine get preferred => _whistle;
 
   static SpeechEngine? byId(String id) {
     for (final e in all) {

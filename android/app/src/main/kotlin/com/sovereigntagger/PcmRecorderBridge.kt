@@ -18,13 +18,15 @@ import java.io.RandomAccessFile
 
 class PcmRecorderBridge(private val context: Context) {
 
+    private val lock = Any()
     private var audioRecord: AudioRecord? = null
     private var recordingThread: Thread? = null
     @Volatile private var isRecording = false
+    @Volatile private var writerFinished = false
     @Volatile var amplitudeListener: ((Int) -> Unit)? = null
     private var lastEmitMs = 0L
     private var wavFile: File? = null
-    private var sampleRate: Int = 48000
+    private var sampleRate: Int = 16000
     private var channelCount: Int = 1
     private var bitsPerSample: Int = 16
 
@@ -33,93 +35,115 @@ class PcmRecorderBridge(private val context: Context) {
     }
 
     fun startRecording(path: String, reqSampleRate: Int, reqChannels: Int): Boolean {
-        try {
-            if (isRecording) return false
-            sampleRate = if (reqSampleRate in 8000..96000) reqSampleRate else 48000
-            channelCount = if (reqChannels == 2) 2 else 1
-            bitsPerSample = 16
+        synchronized(lock) {
+            try {
+                if (isRecording || recordingThread != null) return false
+                sampleRate = if (reqSampleRate in 8000..96000) reqSampleRate else 16000
+                channelCount = if (reqChannels == 2) 2 else 1
+                bitsPerSample = 16
 
-            val channelConfig = if (channelCount == 2) AudioFormat.CHANNEL_IN_STEREO else AudioFormat.CHANNEL_IN_MONO
-            val audioFormat = AudioFormat.ENCODING_PCM_16BIT
-            val minBuf = AudioRecord.getMinBufferSize(sampleRate, channelConfig, audioFormat)
-            if (minBuf <= 0) return false
-            val bufferSize = minBuf * 2
+                val channelConfig = if (channelCount == 2) AudioFormat.CHANNEL_IN_STEREO else AudioFormat.CHANNEL_IN_MONO
+                val audioFormat = AudioFormat.ENCODING_PCM_16BIT
+                val minBuf = AudioRecord.getMinBufferSize(sampleRate, channelConfig, audioFormat)
+                if (minBuf <= 0) return false
+                val bufferSize = (minBuf * 2).coerceAtLeast(4096)
 
-            wavFile = File(path)
-            wavFile!!.parentFile?.mkdirs()
-            if (wavFile!!.exists()) wavFile!!.delete()
-            writeWavHeaderPlaceholder(wavFile!!, sampleRate, channelCount, bitsPerSample)
+                val targetFile = File(path)
+                targetFile.parentFile?.mkdirs()
+                if (targetFile.exists()) targetFile.delete()
+                writeWavHeaderPlaceholder(targetFile, sampleRate, channelCount, bitsPerSample)
 
-            audioRecord = AudioRecord(MediaRecorder.AudioSource.MIC, sampleRate, channelConfig, audioFormat, bufferSize)
-            if (audioRecord!!.state != AudioRecord.STATE_INITIALIZED) {
-                audioRecord?.release()
-                audioRecord = null
-                return false
-            }
-            audioRecord!!.startRecording()
-            isRecording = true
+                val recorder = AudioRecord(MediaRecorder.AudioSource.MIC, sampleRate, channelConfig, audioFormat, bufferSize)
+                if (recorder.state != AudioRecord.STATE_INITIALIZED) {
+                    recorder.release()
+                    return false
+                }
+                recorder.startRecording()
 
-            recordingThread = Thread {
-                val buffer = ShortArray(bufferSize / 2)
-                val byteBuf = java.nio.ByteBuffer.allocate(bufferSize).order(java.nio.ByteOrder.LITTLE_ENDIAN)
-                val fos = FileOutputStream(wavFile!!, true)
-                try {
-                    while (isRecording) {
-                        val read = audioRecord?.read(buffer, 0, buffer.size) ?: 0
-                        if (read > 0) {
-                            byteBuf.clear()
-                            var peak = 0
-                            for (i in 0 until read) {
-                                val s = buffer[i]
-                                byteBuf.putShort(s)
-                                val v: Int = if (s < 0) -s.toInt() else s.toInt()
-                                if (v > peak) peak = v
-                            }
-                            fos.write(byteBuf.array(), 0, read * 2)
-                            val listener = amplitudeListener
-                            if (listener != null) {
-                                val now = System.currentTimeMillis()
-                                if (now - lastEmitMs >= 50) {
-                                    lastEmitMs = now
-                                    listener(peak)
+                audioRecord = recorder
+                wavFile = targetFile
+                isRecording = true
+                writerFinished = false
+
+                recordingThread = Thread {
+                    val buffer = ShortArray(bufferSize / 2)
+                    val byteBuf = java.nio.ByteBuffer.allocate(bufferSize).order(java.nio.ByteOrder.LITTLE_ENDIAN)
+                    var fos: FileOutputStream? = null
+                    try {
+                        fos = FileOutputStream(targetFile, true)
+                        while (isRecording) {
+                            val rec = audioRecord ?: break
+                            val read = rec.read(buffer, 0, buffer.size)
+                            if (read > 0 && isRecording) {
+                                byteBuf.clear()
+                                var peak = 0
+                                for (i in 0 until read) {
+                                    val s = buffer[i]
+                                    byteBuf.putShort(s)
+                                    val v: Int = if (s < 0) -s.toInt() else s.toInt()
+                                    if (v > peak) peak = v
+                                }
+                                fos.write(byteBuf.array(), 0, read * 2)
+                                val listener = amplitudeListener
+                                if (listener != null) {
+                                    val now = System.currentTimeMillis()
+                                    if (now - lastEmitMs >= 50) {
+                                        lastEmitMs = now
+                                        listener(peak)
+                                    }
                                 }
                             }
                         }
+                    } catch (_: Exception) {
+                    } finally {
+                        try {
+                            fos?.flush()
+                            fos?.close()
+                        } catch (_: Exception) {}
+                        writerFinished = true
                     }
-                } catch (_: Exception) {
-                } finally {
-                    try { fos.flush(); fos.close() } catch (_: Exception) {}
+                }.apply {
+                    priority = Thread.MAX_PRIORITY
+                    start()
                 }
-            }.apply {
-                priority = Thread.MAX_PRIORITY
-                start()
+                return true
+            } catch (e: Exception) {
+                try { audioRecord?.release() } catch (_: Exception) {}
+                audioRecord = null
+                isRecording = false
+                writerFinished = true
+                return false
             }
-            return true
-        } catch (e: Exception) {
-            try { audioRecord?.release() } catch (_: Exception) {}
-            audioRecord = null
-            isRecording = false
-            return false
         }
     }
 
     fun stopRecording(): String? {
-        if (!isRecording) return null
-        isRecording = false
-        try { recordingThread?.join(800) } catch (_: Exception) {}
-        recordingThread = null
-        try {
-            audioRecord?.stop()
-        } catch (_: Exception) {}
-        try { audioRecord?.release() } catch (_: Exception) {}
-        audioRecord = null
-        val f = wavFile
-        wavFile = null
-        if (f != null && f.exists()) {
-            finalizeWavHeader(f, sampleRate, channelCount, bitsPerSample)
-            return f.absolutePath
+        synchronized(lock) {
+            if (!isRecording && recordingThread == null) return null
+            isRecording = false
+
+            try {
+                audioRecord?.stop()
+            } catch (_: Exception) {}
+
+            try {
+                recordingThread?.join(1500)
+            } catch (_: Exception) {}
+            recordingThread = null
+
+            try {
+                audioRecord?.release()
+            } catch (_: Exception) {}
+            audioRecord = null
+
+            val f = wavFile
+            wavFile = null
+            if (f != null && f.exists() && writerFinished) {
+                finalizeWavHeader(f, sampleRate, channelCount, bitsPerSample)
+                return f.absolutePath
+            }
+            return null
         }
-        return null
     }
 
     fun isRecordingNow(): Boolean = isRecording

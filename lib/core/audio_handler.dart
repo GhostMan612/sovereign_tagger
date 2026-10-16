@@ -5,6 +5,7 @@
 
 import 'dart:async';
 import 'package:audio_service/audio_service.dart';
+import 'package:flutter/foundation.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:audio_session/audio_session.dart';
 
@@ -17,6 +18,7 @@ class TransportCallbacks {
   final Future<void> Function(Duration position) seek;
   final Future<void> Function(int index) skipToIndex;
   final bool Function() isPlaying;
+  final bool Function() wantPlaying;
 
   const TransportCallbacks({
     required this.play,
@@ -27,6 +29,7 @@ class TransportCallbacks {
     required this.seek,
     required this.skipToIndex,
     required this.isPlaying,
+    required this.wantPlaying,
   });
 }
 
@@ -34,6 +37,7 @@ class SovereignAudioHandler extends BaseAudioHandler with QueueHandler, SeekHand
   final AudioPlayer player;
   final TransportCallbacks transport;
   MediaItem? _current;
+  bool _wasInterrupted = false;
 
   SovereignAudioHandler(this.player, this.transport) {
     _init();
@@ -42,6 +46,44 @@ class SovereignAudioHandler extends BaseAudioHandler with QueueHandler, SeekHand
   Future<void> _init() async {
     final session = await AudioSession.instance;
     await session.configure(const AudioSessionConfiguration.music());
+
+    session.interruptionEventStream.listen((event) {
+      debugPrint('SOVEREIGN AUDIO FOCUS: interruption begin=${event.begin} type=${event.type}');
+      if (event.begin) {
+        switch (event.type) {
+          case AudioInterruptionType.duck:
+            player.setVolume(0.25);
+            break;
+          case AudioInterruptionType.pause:
+          case AudioInterruptionType.unknown:
+            if (transport.isPlaying()) {
+              _wasInterrupted = true;
+              transport.pause();
+            }
+            break;
+        }
+      } else {
+        switch (event.type) {
+          case AudioInterruptionType.duck:
+            player.setVolume(1.0);
+            break;
+          case AudioInterruptionType.pause:
+            if (_wasInterrupted && transport.wantPlaying()) {
+              _wasInterrupted = false;
+              transport.play();
+            }
+            break;
+          case AudioInterruptionType.unknown:
+            _wasInterrupted = false;
+            break;
+        }
+      }
+    });
+
+    session.becomingNoisyEventStream.listen((_) {
+      debugPrint('SOVEREIGN AUDIO FOCUS: becoming noisy (headphones disconnected)');
+      transport.pause();
+    });
 
     player.playbackEventStream.listen((event) => playbackState.add(_transformEvent(event)));
     player.playingStream.listen((_) => playbackState.add(_transformEvent(player.playbackEvent)));

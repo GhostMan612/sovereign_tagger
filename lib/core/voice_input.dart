@@ -14,7 +14,17 @@ import 'package:permission_handler/permission_handler.dart';
 import 'pcm_recorder.dart';
 import 'speech_to_text.dart';
 
-enum VoicePhase { idle, preparing, listening, transcribing }
+enum VoicePhase {
+  idle,
+  preparing,
+  listening,
+  stopping,
+  modelLoading,
+  transcribing,
+  completed,
+  failed,
+  canceled,
+}
 
 class VoiceInput extends ChangeNotifier {
   VoiceInput({SpeechEngine? engine}) : _engine = engine ?? SpeechEngines.preferred;
@@ -26,7 +36,7 @@ class VoiceInput extends ChangeNotifier {
   static const int minBytesForOneSecond = bytesPerSecond;
 
   /// Optional hooks wired by AppGhostWorld to duck AudioService volume while listening
-  /// so music playback doesn't bleed into the Whisper microphone capture.
+  /// so music playback doesn't bleed into the microphone capture.
   static Future<void> Function()? onRecordingStarted;
   static Future<void> Function()? onRecordingStopped;
 
@@ -39,12 +49,21 @@ class VoiceInput extends ChangeNotifier {
   bool _cancelRequested = false;
   bool _micBlocked = false;
   bool _disposed = false;
+  int _requestId = 0;
+
+  final StreamController<String> _transcriptController = StreamController<String>.broadcast();
+  Stream<String> get onTranscript => _transcriptController.stream;
 
   VoicePhase get phase => _phase;
   String get status => _status;
   double get progress => _progress;
   SpeechEngine get engine => _engine;
-  bool get isBusy => _phase != VoicePhase.idle;
+  bool get isBusy =>
+      _phase == VoicePhase.preparing ||
+      _phase == VoicePhase.listening ||
+      _phase == VoicePhase.stopping ||
+      _phase == VoicePhase.modelLoading ||
+      _phase == VoicePhase.transcribing;
   bool get isListening => _phase == VoicePhase.listening;
   bool get micBlocked => _micBlocked;
 
@@ -78,6 +97,7 @@ class VoiceInput extends ChangeNotifier {
   }
 
   Future<String?> _start() async {
+    _requestId++;
     _cancelRequested = false;
     _status = 'PREPARING...';
     _progress = 0.0;
@@ -92,7 +112,7 @@ class VoiceInput extends ChangeNotifier {
           _micBlocked = true;
         }
         _status = 'MIC PERMISSION DENIED';
-        _phase = VoicePhase.idle;
+        _phase = VoicePhase.failed;
         _safeNotify();
         return null;
       }
@@ -102,17 +122,16 @@ class VoiceInput extends ChangeNotifier {
     final baseDir = await _fetchAppDocDir();
     if (baseDir == null) {
       _status = 'STORAGE ERROR';
-      _phase = VoicePhase.idle;
+      _phase = VoicePhase.failed;
       _safeNotify();
       return null;
     }
 
-    // Duck background playback volume before opening the microphone
     try {
       await onRecordingStarted?.call();
     } catch (_) {}
 
-    final path = '$baseDir/voice_input.pcm';
+    final path = '$baseDir/voice_input.wav';
     _deleteFile(path);
     final ok = await PcmRecorder.start(path: path, sampleRate: sampleRate, channels: 1);
     if (!ok) {
@@ -120,7 +139,7 @@ class VoiceInput extends ChangeNotifier {
         await onRecordingStopped?.call();
       } catch (_) {}
       _status = 'RECORDING FAILED TO START';
-      _phase = VoicePhase.idle;
+      _phase = VoicePhase.failed;
       _safeNotify();
       return null;
     }
@@ -141,6 +160,7 @@ class VoiceInput extends ChangeNotifier {
   }
 
   Future<String?> _stopAndTranscribe() async {
+    final currentReq = _requestId;
     _timer?.cancel();
     _timer = null;
 
@@ -157,17 +177,19 @@ class VoiceInput extends ChangeNotifier {
       return null;
     }
 
+    _phase = VoicePhase.stopping;
     _status = 'STOPPING RECORDER...';
     _safeNotify();
+
     await PcmRecorder.stop();
     try {
       await onRecordingStopped?.call();
     } catch (_) {}
 
-    if (_cancelRequested) {
+    if (_cancelRequested || currentReq != _requestId) {
       _deleteFile(path);
-      _phase = VoicePhase.idle;
-      _status = 'CANCELLED';
+      _phase = VoicePhase.canceled;
+      _status = 'CANCELED';
       _safeNotify();
       return null;
     }
@@ -175,8 +197,31 @@ class VoiceInput extends ChangeNotifier {
     final file = File(path);
     if (!file.existsSync() || file.lengthSync() < minBytesForOneSecond) {
       _deleteFile(path);
-      _phase = VoicePhase.idle;
+      _phase = VoicePhase.failed;
       _status = 'SPEAK LONGER (MIN 1 SECOND)';
+      _safeNotify();
+      return null;
+    }
+
+    if (!await _engine.isReady()) {
+      _phase = VoicePhase.modelLoading;
+      _status = 'MODEL LOADING...';
+      _safeNotify();
+      try {
+        await _engine.prepare();
+      } catch (e) {
+        _deleteFile(path);
+        _phase = VoicePhase.failed;
+        _status = 'MODEL LOAD FAILED: $e';
+        _safeNotify();
+        return null;
+      }
+    }
+
+    if (_cancelRequested || currentReq != _requestId) {
+      _deleteFile(path);
+      _phase = VoicePhase.canceled;
+      _status = 'CANCELED';
       _safeNotify();
       return null;
     }
@@ -189,29 +234,44 @@ class VoiceInput extends ChangeNotifier {
     try {
       final result = await _engine.transcribe(path);
       _deleteFile(path);
-      _phase = VoicePhase.idle;
+
+      if (_cancelRequested || currentReq != _requestId) {
+        _phase = VoicePhase.canceled;
+        _status = 'CANCELED';
+        _safeNotify();
+        return null;
+      }
+
       _progress = 1.0;
 
       if (result.trim().isEmpty) {
+        _phase = VoicePhase.failed;
         _status = 'NO SPEECH DETECTED';
         _safeNotify();
         return null;
       }
 
       final normalized = _normalizeDomainTranscript(result.trim());
+      _phase = VoicePhase.completed;
       _status = normalized;
+      _transcriptController.add(normalized);
       _safeNotify();
       return normalized;
     } catch (e) {
       _deleteFile(path);
-      _phase = VoicePhase.idle;
-      _status = 'TRANSCRIBE ERROR: $e';
+      if (_cancelRequested || currentReq != _requestId) {
+        _phase = VoicePhase.canceled;
+        _status = 'CANCELED';
+      } else {
+        _phase = VoicePhase.failed;
+        _status = 'TRANSCRIBE ERROR: $e';
+      }
       _safeNotify();
       return null;
     }
   }
 
-  /// Corrects common Whisper ggml-base.en homophones for Sovereign Tagger terminology.
+  /// Corrects common speech recognition homophones for Sovereign Tagger terminology.
   static String _normalizeDomainTranscript(String raw) {
     var out = raw;
     const replacements = <String, String>{
@@ -236,10 +296,11 @@ class VoiceInput extends ChangeNotifier {
 
   Future<void> cancel() async {
     _cancelRequested = true;
+    _requestId++;
     _timer?.cancel();
     _timer = null;
 
-    if (_phase == VoicePhase.listening) {
+    if (_phase == VoicePhase.listening || _phase == VoicePhase.stopping) {
       await PcmRecorder.stop();
     }
     try {
@@ -251,14 +312,17 @@ class VoiceInput extends ChangeNotifier {
       _pendingPath = null;
     }
 
-    _phase = VoicePhase.idle;
-    _status = 'CANCELLED';
+    try {
+      await _engine.cancel();
+    } catch (_) {}
+
+    _phase = VoicePhase.canceled;
+    _status = 'CANCELED';
     _progress = 0.0;
     _safeNotify();
   }
 
   Future<String?> _fetchAppDocDir() async {
-    // 1. Try native storage channel first if implemented
     try {
       final String? res = await _storage.invokeMethod<String>('getAppDocDir');
       if (res != null && res.isNotEmpty && Directory(res).existsSync()) {
@@ -266,7 +330,6 @@ class VoiceInput extends ChangeNotifier {
       }
     } catch (_) {}
 
-    // 2. Try native storage getTempDirectory (implemented on StorageBridge)
     try {
       final String? res = await _storage.invokeMethod<String>('getTempDirectory');
       if (res != null && res.isNotEmpty && Directory(res).existsSync()) {
@@ -274,19 +337,16 @@ class VoiceInput extends ChangeNotifier {
       }
     } catch (_) {}
 
-    // 3. Fallback to path_provider ApplicationDocumentsDirectory
     try {
       final docDir = await getApplicationDocumentsDirectory();
       if (docDir.existsSync()) return docDir.path;
     } catch (_) {}
 
-    // 4. Fallback to path_provider TemporaryDirectory
     try {
       final tmpDir = await getTemporaryDirectory();
       if (tmpDir.existsSync()) return tmpDir.path;
     } catch (_) {}
 
-    // 5. Fallback to dart:io Directory.systemTemp (/data/user/0/com.sovereigntagger/cache)
     try {
       final sysTmp = Directory.systemTemp;
       if (sysTmp.existsSync()) return sysTmp.path;
@@ -317,6 +377,7 @@ class VoiceInput extends ChangeNotifier {
     if (_pendingPath != null) {
       _deleteFile(_pendingPath!);
     }
+    _transcriptController.close();
     super.dispose();
   }
 }
