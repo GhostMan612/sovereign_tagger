@@ -1108,6 +1108,7 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
                       1 => BackdropVariant.forge,
                       2 => BackdropVariant.pipeline,
                       3 => BackdropVariant.workbench,
+                      4 => BackdropVariant.library,
                       _ => BackdropVariant.generic,
                     };
                     return CyberBackdrop(accentColor: themeColor, variant: variant);

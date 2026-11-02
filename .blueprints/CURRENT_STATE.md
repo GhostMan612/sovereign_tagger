@@ -1,5 +1,10 @@
-# CURRENT_STATE.md — Sovereign Tagger v2 (post-Phase 31)
-> Snapshot as of 2026-10-15 — Phases 0–30 COMPLETE; Phase 31 Implementation & Build VERIFIED; Device Verification PENDING. `flutter analyze --no-pub` -> `No issues found!`. `flutter build apk --debug --target-platform android-arm64` -> `app-debug.apk` built cleanly in 320.2s with `libsovereign_whistle.so` (7.78MB, ARM64 NDK/JNI).
+# CURRENT_STATE.md — Sovereign Tagger v2 (post-Phase 32)
+> Snapshot as of 2026-11-02 — Phases 0–32 COMPLETE (`flutter analyze --no-pub` -> `No issues found!`).
+>
+> **Phase 32 deltas (Hybrid Animated Cyberpunk Backdrops):**
+> - **Tab Occlusion Fix (G47)**: Unblocked `MainShell`'s `CyberBackdrop` across all 5 tabs (`TabGrabber`, `TabForge`, `TabPipeline`, `TabWorkbench`, `TabLibrary`) by switching root `Colors.black` wrappers to `Colors.transparent` (preserving wrapper types per G32) with translucent dark-glass (`0.80–0.82`) cards/inputs.
+> - **Hybrid Animated Cyberpunk Scenes**: Added 6 compact 9:16 WebP cyberpunk background scenes (`assets/backgrounds/bg_{grabber,forge,pipeline,workbench,library,theater}.webp`) tinted dynamically on the GPU via Rec.709 luminance `ColorFilter.matrix` (`CyberBackdrop.accentColorFilter`) to match `SovereignState.accentColor`, animated with Ken Burns drift + breathing glow beneath the 6-variant additive (`BlendMode.plus`) `shaders/backdrop.frag` GPU shader across all tabs + `TheaterScreen`, `SettingsScreen`, `PlaybackEngineScreen`, `EqPresetsScreen`, `LyricSyncScreen`, and `SplashScreen`.
+> - **Backdrop Controls**: Added `FeedbackSettings.backdrop` toggle (halts ticker when disabled) and `FeedbackSettings.backdropIntensity` (`20%–150%`) slider in `SettingsScreen`, persisted in `SharedPreferences` and `.bin` backup/restore.
 >
 > **Phase 31 deltas (Whistle Native STT Migration + Voice/Playback Reliability):**
 > - **Whistle Native STT Engine**: Integrated Cactus Compute's 16.9 MB `whistle.cact` model as the preferred offline speech-to-text engine (`WhistleEngine`). Linked prebuilt `libneedle.a` (Android ARM64) via JNI/C++ bridge (`needle.h`, `sovereign_whistle.cpp`, `WhistleBridge.kt`). Unsupported ABIs (`x86_64` emulators) gracefully fall back to stub implementation returning `UNSUPPORTED_ABI` without build failures (G44). Both `arm64-v8a` and `x86_64` targets compiled and verified via ELF symbol table inspection. Whisper FFmpeg engine remains available as testable fallback.

@@ -6,6 +6,8 @@
 import 'package:flutter/material.dart';
 import 'package:just_audio/just_audio.dart';
 import '../core/lrc.dart';
+import '../widgets/cyber_backdrop.dart';
+import '../widgets/machine_rain.dart';
 import 'main_shell.dart';
 
 class LyricSyncScreen extends StatefulWidget {
@@ -107,14 +109,24 @@ class _LyricSyncScreenState extends State<LyricSyncScreen> {
               child: Container(color: themeColor.withValues(alpha: 0.3), height: 1.0),
             ),
           ),
-          body: Column(
+          body: Stack(
+            fit: StackFit.expand,
             children: [
-              Container(
-                padding: const EdgeInsets.all(16),
-                decoration: const BoxDecoration(
-                  color: Colors.black,
-                  border: Border(bottom: BorderSide(color: Colors.white24))
+              Positioned.fill(
+                child: CyberBackdrop(
+                  accentColor: themeColor,
+                  variant: BackdropVariant.forge,
+                  intensity: 0.80,
                 ),
+              ),
+              Column(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      color: Colors.black.withValues(alpha: 0.82),
+                      border: const Border(bottom: BorderSide(color: Colors.white24)),
+                    ),
                 child: Column(
                   children: [
                     Row(
@@ -250,6 +262,8 @@ class _LyricSyncScreenState extends State<LyricSyncScreen> {
                     ),
                   ],
                 ),
+              ),
+            ],
               ),
             ],
           ),

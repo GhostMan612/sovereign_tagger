@@ -475,12 +475,12 @@ class _TabPipelineState extends State<TabPipeline> {
       builder: (context, themeColor, child) {
         final isErr = _globalStatus.startsWith("ERR");
         return Container(
-          color: Colors.black,
+          color: Colors.transparent,
           child: Column(
             children: [
               Container(
                 padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
-                color: Colors.black,
+                color: Colors.black.withValues(alpha: 0.68),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
@@ -578,7 +578,7 @@ class _TabPipelineState extends State<TabPipeline> {
                     final item = _queue[index];
                     final c = _getBucketColor(item.bucket, themeColor);
                     return Card(
-                      color: Colors.black,
+                      color: Colors.black.withValues(alpha: 0.82),
                       margin: const EdgeInsets.only(bottom: 10.0),
                       shape: RoundedRectangleBorder(side: BorderSide(color: c.withValues(alpha: 0.6)), borderRadius: BorderRadius.circular(4)),
                       child: ListTile(

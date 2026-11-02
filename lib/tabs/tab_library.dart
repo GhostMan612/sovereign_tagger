@@ -785,7 +785,7 @@ class _TabLibraryState extends State<TabLibrary> with AutomaticKeepAliveClientMi
             if (!didPop && _detail != null) setState(() => _detail = null);
           },
           child: Container(
-            color: Colors.black,
+            color: Colors.transparent,
             child: Column(
               children: [
                 Padding(

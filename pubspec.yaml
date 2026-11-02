@@ -37,6 +37,7 @@ flutter:
     - shaders/backdrop.frag
   assets:
     - assets/
+    - assets/backgrounds/
     - assets/models/
   fonts:
     - family: ShareTechMono

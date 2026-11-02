@@ -821,7 +821,7 @@ class _TabForgeState extends State<TabForge> {
         final isErr = _statusMessage.startsWith("ERR");
         final canFix = _originUri != null;
         return Container(
-          color: Colors.black,
+          color: Colors.transparent,
           child: SingleChildScrollView(
             padding: const EdgeInsets.all(20.0),
             child: Column(
@@ -887,6 +887,8 @@ class _TabForgeState extends State<TabForge> {
                       labelStyle: const TextStyle(fontFamily: 'ShareTechMono', color: Colors.white54),
                       enabledBorder: OutlineInputBorder(borderSide: BorderSide(color: themeColor.withValues(alpha: 0.3))),
                       focusedBorder: OutlineInputBorder(borderSide: BorderSide(color: themeColor)),
+                      filled: true,
+                      fillColor: Colors.black.withValues(alpha: 0.80),
                       isDense: true,
                       suffixIcon: IconButton(
                         tooltip: "AUTO NAME FROM TAGS",

@@ -5,6 +5,8 @@
 
 import 'package:flutter/material.dart';
 import '../core/playback_fx.dart';
+import '../widgets/cyber_backdrop.dart';
+import '../widgets/machine_rain.dart';
 
 class EqPresetsScreen extends StatefulWidget {
   const EqPresetsScreen({super.key});
@@ -122,17 +124,27 @@ class _EqPresetsScreenState extends State<EqPresetsScreen> {
             child: Container(color: Colors.purpleAccent.withValues(alpha: 0.3), height: 1.0),
           ),
         ),
-        body: SingleChildScrollView(
-          padding: const EdgeInsets.all(16.0),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Container(
-                padding: const EdgeInsets.symmetric(vertical: 12),
-                decoration: BoxDecoration(
-                  color: Colors.black,
-                  border: Border.all(color: Colors.purpleAccent.withValues(alpha: 0.5)),
-                ),
+        body: Stack(
+          fit: StackFit.expand,
+          children: [
+            const Positioned.fill(
+              child: CyberBackdrop(
+                accentColor: Colors.purpleAccent,
+                variant: BackdropVariant.workbench,
+                intensity: 0.90,
+              ),
+            ),
+            SingleChildScrollView(
+              padding: const EdgeInsets.all(16.0),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Container(
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    decoration: BoxDecoration(
+                      color: Colors.black.withValues(alpha: 0.82),
+                      border: Border.all(color: Colors.purpleAccent.withValues(alpha: 0.5)),
+                    ),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
@@ -222,6 +234,8 @@ class _EqPresetsScreenState extends State<EqPresetsScreen> {
               ),
             ],
           ),
+            ),
+          ],
         ),
       ),
     );

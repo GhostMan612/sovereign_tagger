@@ -268,6 +268,13 @@
 - [x] **31.7 BLASTBufferQueue & typing SFX optimization** — `GhostChatOverlay` decoupled typewriter text rendering using `ValueNotifier<String>` + `ValueListenableBuilder<String>` to prevent full glass-panel rebuilds (G46); throttled typing SFX and avatar mouth animation to every 4th character.
 - Gate: `flutter analyze --no-pub` -> `No issues found!`.
 
+## Phase 32 — Hybrid Animated Cyberpunk Backdrops [x]
+- [x] **32.1 Tab root occlusion fix (G47)** — Converted opaque `Colors.black` root wrappers in `TabGrabber`, `TabForge`, `TabPipeline`, `TabWorkbench`, and `TabLibrary` to `Colors.transparent` while preserving exact widget wrapper types (`AnimatedTabStack` G32 invariant) and adding translucent dark-glass (`0.80–0.82`) backing on cards and fields.
+- [x] **32.2 Six themed 9:16 cyberpunk background scenes (`assets/backgrounds/*.webp`)** — `bg_grabber`, `bg_forge`, `bg_pipeline`, `bg_workbench`, `bg_library`, and `bg_theater` dynamically recolored in GPU hardware via Rec.709 luminance `ColorFilter.matrix` (`CyberBackdrop.accentColorFilter`) to match any `SovereignState.accentColor` (including `SplashScreen`), with 30fps Ken Burns drift, breathing glow, and 420ms crossfades.
+- [x] **32.3 6-variant additive GPU shader (`shaders/backdrop.frag`) + full-app coverage** — Added `BackdropVariant.library` (archive halo + dust motes) and acoustic wave rings (`generic`), composited with `BlendMode.plus` over the animated scene art across `MainShell`, `TheaterScreen`, `SettingsScreen`, `PlaybackEngineScreen`, `EqPresetsScreen`, and `LyricSyncScreen`.
+- [x] **32.4 Kernel toggle & live intensity slider** — Added `FeedbackSettings.backdrop` + `FeedbackSettings.backdropIntensity` (`20%–150%`) in `SettingsScreen` (`ValueListenableBuilder` per G41, ticker-stopped when disabled, persisted in prefs + `.bin` vault backup/restore).
+- Gate: `flutter analyze --no-pub` -> `No issues found!`; `impellerc` shader compile clean; mojibake scan clean.
+
 ## Phase S0–S4 — SOVEREIGN SDK EDITION [-] PARKED 2026-10-01 — spec only, do not start
 
 > **OPERATOR DECISION 2026-10-01: PARKED.** The operator needs to research the

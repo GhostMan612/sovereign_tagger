@@ -16,6 +16,8 @@ import '../core/playlists.dart';
 import '../screens/main_shell.dart';
 import '../screens/playback_engine_screen.dart';
 import '../screens/eq_presets_screen.dart';
+import '../widgets/cyber_backdrop.dart';
+import '../widgets/machine_rain.dart';
 import '../widgets/playlist_picker.dart';
 
 class TheaterScreen extends StatelessWidget {
@@ -264,9 +266,19 @@ class TheaterScreen extends StatelessWidget {
             builder: (context, isVideo, child) {
               final themeColor = isVideo ? Colors.cyanAccent : accentColor;
 
-              return Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
+              return Stack(
+                fit: StackFit.expand,
                 children: [
+                  Positioned.fill(
+                    child: CyberBackdrop(
+                      accentColor: themeColor,
+                      variant: BackdropVariant.generic,
+                      intensity: 0.95,
+                    ),
+                  ),
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
                   Expanded(
                     child: GestureDetector(
                       behavior: HitTestBehavior.opaque,
@@ -303,7 +315,7 @@ class TheaterScreen extends StatelessWidget {
                             onLeft: () => _seekBy(-10),
                             onRight: () => _seekBy(10),
                             child: Container(
-                              color: Colors.black,
+                              color: Colors.transparent,
                               child: Stack(
                                 fit: StackFit.expand,
                                 children: [
@@ -312,7 +324,7 @@ class TheaterScreen extends StatelessWidget {
                                     builder: (context, image, child) {
                                       if (image != null) {
                                         return Container(
-                                          color: Colors.black,
+                                          color: Colors.transparent,
                                           alignment: Alignment.center,
                                           child: InteractiveViewer(
                                             minScale: 1.0,
@@ -452,6 +464,8 @@ class TheaterScreen extends StatelessWidget {
                       }
                     ),
                   ],
+                ],
+                  ),
                 ],
               );
             }

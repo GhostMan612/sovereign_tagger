@@ -890,7 +890,7 @@ class _TabWorkbenchState extends State<TabWorkbench> {
       valueListenable: SovereignState.accentColor,
       builder: (context, themeColor, child) {
         return Scaffold(
-          backgroundColor: Colors.black,
+          backgroundColor: Colors.transparent,
           body: SingleChildScrollView(
             padding: const EdgeInsets.all(24.0),
             child: Column(

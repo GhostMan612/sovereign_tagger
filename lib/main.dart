@@ -11,6 +11,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'screens/main_shell.dart';
 import 'core/feedback_settings.dart';
 import 'core/sfx.dart';
+import 'widgets/cyber_backdrop.dart';
 import 'widgets/cyber_ink.dart';
 import 'widgets/cyber_page_transitions.dart';
 import 'widgets/machine_rain.dart';
@@ -163,13 +164,10 @@ class _SplashScreenState extends State<SplashScreen> {
           backgroundColor: Colors.black,
           body: Stack(
             children: [
-              Container(
-                decoration: const BoxDecoration(
-                  image: DecorationImage(
-                    image: AssetImage('assets/splash-screen-bg.png'),
-                    fit: BoxFit.cover,
-                    colorFilter: ColorFilter.mode(Colors.black54, BlendMode.darken),
-                  ),
+              Positioned.fill(
+                child: ColorFiltered(
+                  colorFilter: CyberBackdrop.accentColorFilter(themeColor, brightness: 0.55),
+                  child: Image.asset('assets/splash-screen-bg.png', fit: BoxFit.cover),
                 ),
               ),
               Positioned.fill(child: RepaintBoundary(child: MachineRain(accentColor: themeColor, opacity: 0.22))),

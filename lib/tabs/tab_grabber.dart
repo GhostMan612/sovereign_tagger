@@ -1039,7 +1039,7 @@ class _TabGrabberState extends State<TabGrabber> {
         enabledBorder: OutlineInputBorder(borderSide: BorderSide(color: themeColor.withValues(alpha: 0.3))),
         focusedBorder: OutlineInputBorder(borderSide: BorderSide(color: themeColor)),
         filled: true,
-        fillColor: Colors.black,
+        fillColor: Colors.black.withValues(alpha: 0.80),
       ),
       enabled: enabled,
     );
@@ -1050,7 +1050,7 @@ class _TabGrabberState extends State<TabGrabber> {
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
       padding: const EdgeInsets.all(10),
-      decoration: BoxDecoration(border: Border.all(color: failed ? Colors.redAccent : themeColor.withValues(alpha: 0.5)), borderRadius: BorderRadius.circular(6)),
+      decoration: BoxDecoration(color: Colors.black.withValues(alpha: 0.80), border: Border.all(color: failed ? Colors.redAccent : themeColor.withValues(alpha: 0.5)), borderRadius: BorderRadius.circular(6)),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -1169,7 +1169,7 @@ class _TabGrabberState extends State<TabGrabber> {
         final isErr = _statusMessage.startsWith("ERR");
         final pendingAudio = _cards.where((c) => !c.saved && !c.isVideo).length;
         return Container(
-          color: Colors.black,
+          color: Colors.transparent,
           child: SingleChildScrollView(
             padding: const EdgeInsets.all(20.0),
             child: Column(

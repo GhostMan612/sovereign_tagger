@@ -20,13 +20,25 @@ Session-end law: update rows 2–4 every session (+ row 5 when a new gotcha is l
 
 ## Where we are
 
-**Date:** 2026-10-15
-**Phase:** 0–30 complete; Phase 31 implementation & ARM64 build VERIFIED; device smoke test PENDING.
+**Date:** 2026-11-02
+**Phase:** 0–32 implementation & analyzer/shader gates VERIFIED; ready for Moto G hot-reload / APK install smoke test.
 - `flutter analyze --no-pub` -> `No issues found!`.
-- `flutter build apk --debug --target-platform android-arm64` -> `app-debug.apk` built in 320.2s with `libsovereign_whistle.so` (7.78MB).
-- `libsovereign_whistle.so` symbols verified: `needle_load`, `needle_transcribe`, and all JNI entry points exported.
-- Moto G / BLU View 5 physical device is currently offline on network (`adb devices` empty). Phase 31 remains OPEN pending hardware smoke test.
+- `impellerc` -> `shaders/backdrop.frag` 6-variant shader compiles cleanly.
 **Branch:** `main` is the single canonical branch.
+
+## What shipped — Phase 32 Hybrid Animated Cyberpunk Backdrops (2026-11-02)
+
+1. **Tab Root Occlusion Fix (G47)**:
+   - Discovered all 5 main tabs (`TabGrabber`, `TabForge`, `TabPipeline`, `TabWorkbench`, `TabLibrary`) had opaque `Colors.black` root wrappers that completely hid `MainShell`'s `CyberBackdrop`.
+   - Switched root wrappers to `Colors.transparent` (preserving exact widget wrapper types for `AnimatedTabStack` per G32) and added dark-glass (`0.80–0.82`) fills on cards, headers, and input fields.
+2. **6 Themed 9:16 Cyberpunk Scene Assets + GPU Accent Tinting**:
+   - Packaged `assets/backgrounds/bg_{grabber,forge,pipeline,workbench,library,theater}.webp` and registered `assets/backgrounds/` in `pubspec.yaml`.
+   - `CyberBackdrop.accentColorFilter` applies a Rec.709 perceptual luminance `ColorFilter.matrix` on the GPU so every background scene (plus `SplashScreen`'s `splash-screen-bg.png`) dynamically recolors to `SovereignState.accentColor` in real time, animated with 30fps Ken Burns drift, breathing glow, and 420ms crossfades.
+3. **6-Variant Additive GPU Shader & Full-Screen Coverage**:
+   - Expanded `BackdropVariant` with `library` and updated `shaders/backdrop.frag` (`BlendMode.plus` additive compositing) for all 6 variants (`grabber` packet rain, `forge` crucible sparks, `pipeline` laser scan + data streaks, `workbench` dual-harmonic oscilloscope, `library` archive halo + motes, `generic` concentric soundwave rings).
+   - Mounted `CyberBackdrop` on `TheaterScreen` (`tab_player.dart`), `SettingsScreen`, `PlaybackEngineScreen`, `EqPresetsScreen`, and `LyricSyncScreen`.
+4. **Settings Toggle & Live Intensity Slider**:
+   - Added `FeedbackSettings.backdrop` (`ANIMATED CYBER BACKDROP` toggle, stops ticker when disabled) and `FeedbackSettings.backdropIntensity` (`20%–150%` live slider) to `SettingsScreen` + `.bin` vault backup/restore.
 
 ## What shipped — Phase 31 Whistle Native STT Migration + Audio Focus Resume (2026-10-15)
 

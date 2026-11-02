@@ -107,12 +107,13 @@ class _MachineRainPainter extends CustomPainter {
   bool shouldRepaint(covariant _MachineRainPainter oldDelegate) => oldDelegate.tick != tick || oldDelegate.accentColor != accentColor || oldDelegate.opacity != opacity;
 }
 
-enum BackdropVariant { grabber, forge, pipeline, workbench, generic }
+enum BackdropVariant { grabber, forge, pipeline, workbench, library, generic }
 
 class AmbientBackdrop extends StatefulWidget {
   final Color accentColor;
   final BackdropVariant variant;
-  const AmbientBackdrop({super.key, required this.accentColor, this.variant = BackdropVariant.generic});
+  final double intensity;
+  const AmbientBackdrop({super.key, required this.accentColor, this.variant = BackdropVariant.generic, this.intensity = 1.0});
 
   @override
   State<AmbientBackdrop> createState() => _AmbientBackdropState();
@@ -142,17 +143,18 @@ class _AmbientBackdropState extends State<AmbientBackdrop> with SingleTickerProv
   }
   @override
   Widget build(BuildContext context) {
+    final k = widget.intensity.clamp(0.0, 2.0);
     return IgnorePointer(
       child: DecoratedBox(
         decoration: BoxDecoration(
           gradient: RadialGradient(
             center: Alignment.topCenter,
             radius: 1.2,
-            colors: [widget.accentColor.withValues(alpha: 0.06), Colors.transparent],
+            colors: [widget.accentColor.withValues(alpha: (0.06 * k).clamp(0.0, 1.0)), Colors.transparent],
           ),
         ),
         child: CustomPaint(
-          painter: _PulsingGridPainter(color: widget.accentColor.withValues(alpha: 0.035), controller: _ctrl, variant: widget.variant),
+          painter: _PulsingGridPainter(color: widget.accentColor.withValues(alpha: (0.04 * k).clamp(0.0, 1.0)), controller: _ctrl, variant: widget.variant),
           size: Size.infinite,
         ),
       ),
@@ -204,6 +206,7 @@ class _PulsingGridPainter extends CustomPainter {
       BackdropVariant.forge => 2,
       BackdropVariant.pipeline => 4,
       BackdropVariant.workbench => 3,
+      BackdropVariant.library => 3,
       BackdropVariant.generic => 2,
     };
 
@@ -239,6 +242,7 @@ class _PulsingGridPainter extends CustomPainter {
       BackdropVariant.forge => 1,
       BackdropVariant.pipeline => 2,
       BackdropVariant.workbench => 2,
+      BackdropVariant.library => 2,
       BackdropVariant.generic => 1,
     };
 
@@ -289,6 +293,7 @@ class _PulsingGridPainter extends CustomPainter {
       BackdropVariant.forge => 1,
       BackdropVariant.pipeline => 3,
       BackdropVariant.workbench => 2,
+      BackdropVariant.library => 2,
       BackdropVariant.generic => 2,
     };
 

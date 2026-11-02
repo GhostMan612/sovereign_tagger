@@ -5,6 +5,8 @@
 
 import 'package:flutter/material.dart';
 import '../core/playback_fx.dart';
+import '../widgets/cyber_backdrop.dart';
+import '../widgets/machine_rain.dart';
 
 class PlaybackEngineScreen extends StatelessWidget {
   const PlaybackEngineScreen({super.key});
@@ -15,7 +17,7 @@ class PlaybackEngineScreen extends StatelessWidget {
   Widget _panel({required IconData icon, required String title, required List<Widget> children}) {
     return Container(
       padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(color: Colors.black, border: Border.all(color: Colors.cyanAccent.withValues(alpha: 0.5))),
+      decoration: BoxDecoration(color: Colors.black.withValues(alpha: 0.82), border: Border.all(color: Colors.cyanAccent.withValues(alpha: 0.5))),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -47,9 +49,19 @@ class PlaybackEngineScreen extends StatelessWidget {
           child: Container(color: Colors.cyanAccent.withValues(alpha: 0.3), height: 1.0),
         ),
       ),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(20.0),
-        child: Column(
+      body: Stack(
+        fit: StackFit.expand,
+        children: [
+          const Positioned.fill(
+            child: CyberBackdrop(
+              accentColor: Colors.cyanAccent,
+              variant: BackdropVariant.generic,
+              intensity: 0.85,
+            ),
+          ),
+          SingleChildScrollView(
+            padding: const EdgeInsets.all(20.0),
+            child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             _panel(
@@ -144,6 +156,8 @@ class PlaybackEngineScreen extends StatelessWidget {
             ),
           ],
         ),
+          ),
+        ],
       ),
     );
   }

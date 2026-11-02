@@ -17,6 +17,8 @@ import '../core/ffmpeg_executor.dart';
 import '../core/ghost_settings.dart';
 import '../core/feedback_settings.dart';
 import '../screens/main_shell.dart';
+import '../widgets/cyber_backdrop.dart';
+import '../widgets/machine_rain.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -310,6 +312,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
           'crossfade_duration': prefs.getDouble('crossfade_duration') ?? 0.0,
           'gapless_enabled': prefs.getBool('gapless_enabled') ?? true,
           'accent_color': prefs.getInt('accent_color') ?? 0xFFFF003C,
+          'fx_backdrop_enabled': prefs.getBool('fx_backdrop_enabled') ?? true,
+          'fx_backdrop_intensity': prefs.getDouble('fx_backdrop_intensity') ?? 0.90,
         },
         'eq_presets': <String, double>{},
         'playlists': <String, dynamic>{},
@@ -383,6 +387,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
         if (settings['accent_color'] != null) {
           await prefs.setInt('accent_color', settings['accent_color']);
           SovereignState.accentColor.value = Color(settings['accent_color']);
+        }
+        if (settings['fx_backdrop_enabled'] != null) {
+          await FeedbackSettings.setBackdrop(settings['fx_backdrop_enabled'] == true);
+        }
+        if (settings['fx_backdrop_intensity'] is num) {
+          await FeedbackSettings.setBackdropIntensity((settings['fx_backdrop_intensity'] as num).toDouble());
         }
       }
       
@@ -540,9 +550,19 @@ class _SettingsScreenState extends State<SettingsScreen> {
               IconButton(icon: const Icon(Icons.file_upload, color: Colors.cyanAccent), tooltip: "EXPORT .BIN TO DOWNLOADS", onPressed: _exportConfig),
             ],
           ),
-          body: SingleChildScrollView(
-            padding: const EdgeInsets.all(24.0),
-            child: Column(
+          body: Stack(
+            fit: StackFit.expand,
+            children: [
+              Positioned.fill(
+                child: CyberBackdrop(
+                  accentColor: themeColor,
+                  variant: BackdropVariant.generic,
+                  intensity: 0.80,
+                ),
+              ),
+              SingleChildScrollView(
+                padding: const EdgeInsets.all(24.0),
+                child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 Text("> UI PREFERENCES", style: TextStyle(fontFamily: 'ShareTechMono', fontSize: 16, fontWeight: FontWeight.bold, color: themeColor)),
@@ -563,7 +583,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 Container(
                   padding: const EdgeInsets.all(12),
                   decoration: BoxDecoration(
-                    color: Colors.black,
+                    color: Colors.black.withValues(alpha: 0.82),
                     border: Border.all(color: themeColor.withValues(alpha: 0.5)),
                   ),
                   child: Column(
@@ -635,6 +655,44 @@ class _SettingsScreenState extends State<SettingsScreen> {
                           value: v,
                           activeThumbColor: themeColor,
                           onChanged: (x) => FeedbackSettings.setPulse(x),
+                        ),
+                      ),
+                      const Divider(color: Colors.white12, height: 16),
+                      ValueListenableBuilder<bool>(
+                        valueListenable: FeedbackSettings.backdrop,
+                        builder: (context, v, _) => SwitchListTile(
+                          dense: true,
+                          contentPadding: EdgeInsets.zero,
+                          title: const Text("ANIMATED CYBER BACKDROP", style: TextStyle(fontFamily: 'ShareTechMono', fontSize: 12, color: Colors.white70)),
+                          subtitle: const Text("themed cyberpunk scene art + live GPU shader", style: TextStyle(fontFamily: 'ShareTechMono', fontSize: 10, color: Colors.white38)),
+                          value: v,
+                          activeThumbColor: themeColor,
+                          onChanged: (x) => FeedbackSettings.setBackdrop(x),
+                        ),
+                      ),
+                      ValueListenableBuilder<double>(
+                        valueListenable: FeedbackSettings.backdropIntensity,
+                        builder: (context, intensity, _) => Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                const Text("BACKDROP INTENSITY", style: TextStyle(fontFamily: 'ShareTechMono', fontSize: 11, color: Colors.white70)),
+                                Text("${(intensity * 100).round()}%", style: TextStyle(fontFamily: 'ShareTechMono', fontSize: 11, color: themeColor)),
+                              ],
+                            ),
+                            Slider(
+                              value: intensity.clamp(0.20, 1.50),
+                              min: 0.20,
+                              max: 1.50,
+                              divisions: 26,
+                              activeColor: themeColor,
+                              inactiveColor: Colors.white24,
+                              onChanged: (val) => FeedbackSettings.setBackdropIntensity(val, persist: false),
+                              onChangeEnd: (val) => FeedbackSettings.setBackdropIntensity(val, persist: true),
+                            ),
+                          ],
                         ),
                       ),
                     ],
@@ -909,6 +967,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 const SizedBox(height: 48),
               ],
             ),
+              ),
+            ],
           ),
         );
       }
