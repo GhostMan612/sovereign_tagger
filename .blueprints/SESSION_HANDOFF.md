@@ -21,10 +21,23 @@ Session-end law: update rows 2–4 every session (+ row 5 when a new gotcha is l
 ## Where we are
 
 **Date:** 2026-11-02
-**Phase:** 0–32 implementation & analyzer/shader gates VERIFIED; ready for Moto G hot-reload / APK install smoke test.
+**Phase:** 0–33 implementation, analyzer, and Android ARM64 APK build gates VERIFIED; ready for Moto G smoke test.
 - `flutter analyze --no-pub` -> `No issues found!`.
 - `impellerc` -> `shaders/backdrop.frag` 6-variant shader compiles cleanly.
+- `flutter build apk --debug --target-platform android-arm64` -> `LiteRT 1.4.0` + `EmbeddingGemmaBridge.kt` + `SentencePieceTokenizer.kt` compile cleanly.
 **Branch:** `main` is the single canonical branch.
+
+## What shipped — Phase 33 Native EmbeddingGemma Engine & Semantic Library/LRC Vector Index (2026-11-02)
+
+1. **Native Google AI Edge `LiteRT` + Pure-Kotlin SentencePiece Bridge (`com.sovereign.tagger/embeddings`)**:
+   - Added `com.google.ai.edge.litert:litert:1.4.0` (`arm64-v8a` + `x86_64`, XNNPACK 4-thread CPU) in `android/app/build.gradle` + keep rules in `proguard-rules.pro`.
+   - Implemented `SentencePieceTokenizer.kt` (pure-Kotlin `sentencepiece.model` protobuf parser for Gemma BPE + Unigram with `<0xXX>` byte fallback) and `EmbeddingGemmaBridge.kt` (serialized worker thread, `MappedByteBuffer` read-only model mmap, asymmetric Gemma prompt templates, 256-D Matryoshka truncation + L2 normalization), wired into `MainActivity.kt` (`onTrimMemory` + `onDestroy`).
+2. **External Model Manager & Moto G RAM Lifecycle (`EmbeddingModel` + `ModelLifecycle`)**:
+   - `lib/core/embedding_model.dart` stages `embeddinggemma-300m_seq256_mixed-precision.tflite` + `sentencepiece.model` into `${getApplicationSupportDirectory()}/embedding_gemma/` (0 MB APK bloat, safe from `SettingsScreen._purgeCache`), supporting both Hugging Face download (with optional Read Token for Gemma license gate) and local `FilePicker` `.tflite`/tokenizer import via atomic `.part` rename (G39).
+   - `lib/core/model_lifecycle.dart` + `lib/core/ffmpeg_executor.dart` (`beforeExecuteHook`) unload the native interpreter after 5 min idle on `< 6 GB` RAM devices (`15 min` on `>= 6 GB`), on Android `onTrimMemory`, and before FFmpeg/Whisper jobs when free RAM `< 650 MB`.
+3. **Persistent Library & LRC Vector Index (`GhostVectorIndex`) + `GhostBrain` v2.1 + `SettingsScreen` UI**:
+   - `lib/services/ghost_vector_index.dart` indexes library tracks + `GENRE`/`COMMENT`/`LYRICS` tags + `.lrc`/`.txt` sidecars into `ghost_vectors.bin` (`GVEC` binary format, `engineId` vector-space locked per G48).
+   - Upgraded `lib/core/embedding_service.dart`, `lib/services/ghost_brain.dart`, `lib/services/ghost_world.dart`, `lib/widgets/ghost_chat_overlay.dart` (`GEMMA`/`256D` reactive badge), and `lib/screens/settings_screen.dart` (`> GHOSTBRAIN EMBEDDINGGEMMA [256-D AI]` kernel & vector index card).
 
 ## What shipped — Phase 32 Hybrid Animated Cyberpunk Backdrops (2026-11-02)
 

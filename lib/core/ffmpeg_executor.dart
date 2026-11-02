@@ -5,6 +5,7 @@
 
 import 'dart:async';
 import 'dart:collection';
+import 'package:flutter/foundation.dart';
 import 'package:ffmpeg_kit_extended_flutter/ffmpeg_kit_extended_flutter.dart';
 
 class FFmpegExecutor {
@@ -13,6 +14,7 @@ class FFmpegExecutor {
   static FFmpegSession? _currentSession;
   static String? _currentDescription;
   static final Set<String> _canceledDescriptions = <String>{};
+  static Future<void> Function()? beforeExecuteHook;
 
   static Future<FFmpegSession> execute(
     String command, {
@@ -48,6 +50,14 @@ class FFmpegExecutor {
           job.completer.completeError(StateError('FFmpeg task canceled'));
         }
         return;
+      }
+      final hook = beforeExecuteHook;
+      if (hook != null) {
+        try {
+          await hook();
+        } catch (e) {
+          debugPrint('FFMPEG_EXECUTOR: beforeExecuteHook failed: $e');
+        }
       }
       final session = FFmpegSession.create(job.command);
       _currentSession = session;

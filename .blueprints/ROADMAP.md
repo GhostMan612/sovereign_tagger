@@ -275,6 +275,12 @@
 - [x] **32.4 Kernel toggle & live intensity slider** — Added `FeedbackSettings.backdrop` + `FeedbackSettings.backdropIntensity` (`20%–150%`) in `SettingsScreen` (`ValueListenableBuilder` per G41, ticker-stopped when disabled, persisted in prefs + `.bin` vault backup/restore).
 - Gate: `flutter analyze --no-pub` -> `No issues found!`; `impellerc` shader compile clean; mojibake scan clean.
 
+## Phase 33 — Native EmbeddingGemma Engine & Semantic Library/LRC Vector Index [x]
+- [x] **33.1 Native `EmbeddingGemmaBridge.kt` + `SentencePieceTokenizer.kt` (`com.sovereign.tagger/embeddings`)** — Official Google AI Edge `LiteRT` (`com.google.ai.edge.litert:litert:1.4.0`, `arm64-v8a` + `x86_64`, XNNPACK 4-thread CPU) + pure-Kotlin binary `sentencepiece.model` protobuf BPE/Unigram tokenizer, read-only `MappedByteBuffer` flatbuffer loading, asymmetric Gemma prompt templates (`task: search result | query: ...` / `title: ... | text: ...`), and 256-D Matryoshka truncation + L2 normalization.
+- [x] **33.2 Zero-bloat external model manager (`EmbeddingModel`) & Moto G RAM lifecycle (`ModelLifecycle`)** — Stores weights under `${getApplicationSupportDirectory()}/embedding_gemma/` (0 MB APK bloat, protected from `_purgeCache`), supports streaming Hugging Face download with optional Bearer token + offline `.tflite`/`sentencepiece.model` `FilePicker` import (atomic `.part` staging per G39), 5-min idle unload on `< 6 GB` RAM devices, `MainActivity.onTrimMemory` unload, and `FFmpegExecutor.beforeExecuteHook` automatic unload before FFmpeg/Whisper jobs when free RAM `< 650 MB`.
+- [x] **33.3 Persistent Semantic Library & LRC Lyric Vector Index (`GhostVectorIndex`) + `GhostBrain` v2.1** — Binary `ghost_vectors.bin` index (`GVEC` magic, `engineId` space-locked per G48) indexing track metadata, `GENRE`/`COMMENT`/`LYRICS` tags, and `.lrc`/`.txt` sidecars; powers semantic vibe playlists (`"play something dark and synthwave"`), lyric recall (`"play that song with lyrics about..."`), multi-clause chained commands, neural KB/exemplar matching, and the `> GHOSTBRAIN EMBEDDINGGEMMA [256-D AI]` control panel in `SettingsScreen`.
+- Gate: `flutter analyze --no-pub` -> `No issues found!`; Android ARM64 APK build (`LiteRT` + Kotlin bridge compile) green; mojibake scan clean.
+
 ## Phase S0–S4 — SOVEREIGN SDK EDITION [-] PARKED 2026-10-01 — spec only, do not start
 
 > **OPERATOR DECISION 2026-10-01: PARKED.** The operator needs to research the

@@ -7,6 +7,7 @@ import 'dart:math' as math;
 import 'dart:typed_data';
 import '../core/embedding_service.dart';
 import '../core/ghost_commands.dart';
+import 'ghost_vector_index.dart';
 
 enum GhostTone { info, happy, sarcastic }
 
@@ -127,6 +128,7 @@ enum _SemanticIntent {
   forgeFullAuto,
   workbenchWhisper,
   workbenchReplayGain,
+  playSemanticVibe,
 }
 
 class _IntentExemplar {
@@ -151,6 +153,75 @@ class GhostBrain {
   String _grabChoiceMode = 'm4a';
 
   static List<_IntentExemplar>? _exemplars;
+  static List<_IntentExemplar>? _nativeExemplars;
+  static int _nativeExemplarsEpoch = -1;
+  static Map<String, Float32List>? _nativeKbVectors;
+  static int _nativeKbEpoch = -1;
+
+  static const Map<_SemanticIntent, List<String>> _rawExemplarPhrases = <_SemanticIntent, List<String>>{
+    _SemanticIntent.grabSearch: [
+      'use grabber tab to search for song',
+      'search grabber for artist and track',
+      'hunt on youtube for audio',
+      'hunt on soundcloud for song',
+      'look up track in grabber',
+      'find song on youtube in grabber',
+    ],
+    _SemanticIntent.grabDownload: [
+      'use grabber tab to search and download',
+      'grab and download song from youtube',
+      'download audio for artist title in grabber',
+      'rip audio from youtube in grabber',
+      'fetch and download track in mp3 or m4a',
+      'download this song with grabber',
+    ],
+    _SemanticIntent.grabThenForge: [
+      'download song in grabber and open in forge to find lyrics',
+      'grab track and auto tag in forge',
+      'search and download then extract metadata in forge',
+    ],
+    _SemanticIntent.forgeExtractMetadata: [
+      'use forge tab and extract metadata for loaded file',
+      'extract metadata for this song in forge',
+      'search metadata and tags for loaded track',
+      'auto tag the loaded file in forge',
+      'pull id3 tags and cover art in forge',
+      'find metadata for the current song',
+    ],
+    _SemanticIntent.forgeFindLyrics: [
+      'find the lyrics for the loaded file in forge',
+      'extract lyrics and synced lrc for this track',
+      'pull the words and karaoke lyrics for this song',
+      'get synced lyrics from lrclib or genius in forge',
+      'find lyrics for what is playing',
+    ],
+    _SemanticIntent.forgeAcrIdentify: [
+      'identify this song with acrcloud fingerprint',
+      'fingerprint the loaded audio file in forge',
+      'use acr to recognize what song this file is',
+    ],
+    _SemanticIntent.forgeFullAuto: [
+      'use forge tab and extract metadata for loaded file and find the lyrics',
+      'fix this song extract metadata and find synced lyrics',
+      'auto tag loaded file and pull lyrics in forge',
+      'get metadata cover art and lyrics for this track',
+    ],
+    _SemanticIntent.workbenchWhisper: [
+      'transcribe lyrics with whisper in workbench',
+      'run whisper speech to text on this track',
+    ],
+    _SemanticIntent.workbenchReplayGain: [
+      'scan replaygain loudness in workbench',
+      'normalize track volume with replaygain',
+    ],
+    _SemanticIntent.playSemanticVibe: [
+      'play something dark and synthwave from my library',
+      'play that song with lyrics about neon rain',
+      'find the track in my library that says',
+      'queue chill atmospheric late night music',
+      'play songs with a moody cyberpunk vibe',
+    ],
+  };
 
   GhostBrain(this.world, {math.Random? random}) : _rng = random ?? math.Random() {
     _ensureExemplars();
@@ -159,71 +230,60 @@ class GhostBrain {
   static void _ensureExemplars() {
     if (_exemplars != null) return;
     final svc = EmbeddingGemmaService.instance;
-    const rawMap = <_SemanticIntent, List<String>>{
-      _SemanticIntent.grabSearch: [
-        'use grabber tab to search for song',
-        'search grabber for artist and track',
-        'hunt on youtube for audio',
-        'hunt on soundcloud for song',
-        'look up track in grabber',
-        'find song on youtube in grabber',
-      ],
-      _SemanticIntent.grabDownload: [
-        'use grabber tab to search and download',
-        'grab and download song from youtube',
-        'download audio for artist title in grabber',
-        'rip audio from youtube in grabber',
-        'fetch and download track in mp3 or m4a',
-        'download this song with grabber',
-      ],
-      _SemanticIntent.grabThenForge: [
-        'download song in grabber and open in forge to find lyrics',
-        'grab track and auto tag in forge',
-        'search and download then extract metadata in forge',
-      ],
-      _SemanticIntent.forgeExtractMetadata: [
-        'use forge tab and extract metadata for loaded file',
-        'extract metadata for this song in forge',
-        'search metadata and tags for loaded track',
-        'auto tag the loaded file in forge',
-        'pull id3 tags and cover art in forge',
-        'find metadata for the current song',
-      ],
-      _SemanticIntent.forgeFindLyrics: [
-        'find the lyrics for the loaded file in forge',
-        'extract lyrics and synced lrc for this track',
-        'pull the words and karaoke lyrics for this song',
-        'get synced lyrics from lrclib or genius in forge',
-        'find lyrics for what is playing',
-      ],
-      _SemanticIntent.forgeAcrIdentify: [
-        'identify this song with acrcloud fingerprint',
-        'fingerprint the loaded audio file in forge',
-        'use acr to recognize what song this file is',
-      ],
-      _SemanticIntent.forgeFullAuto: [
-        'use forge tab and extract metadata for loaded file and find the lyrics',
-        'fix this song extract metadata and find synced lyrics',
-        'auto tag loaded file and pull lyrics in forge',
-        'get metadata cover art and lyrics for this track',
-      ],
-      _SemanticIntent.workbenchWhisper: [
-        'transcribe lyrics with whisper in workbench',
-        'run whisper speech to text on this track',
-      ],
-      _SemanticIntent.workbenchReplayGain: [
-        'scan replaygain loudness in workbench',
-        'normalize track volume with replaygain',
-      ],
-    };
-
     final built = <_IntentExemplar>[];
-    rawMap.forEach((intent, phrases) {
+    _rawExemplarPhrases.forEach((intent, phrases) {
       for (final p in phrases) {
         built.add(_IntentExemplar(intent, p, svc.embedSyncFallback(p)));
       }
     });
     _exemplars = built;
+  }
+
+  Future<List<_IntentExemplar>> _activeExemplarsForEngine(int engineId) async {
+    _ensureExemplars();
+    if (engineId != EmbeddingGemmaService.nativeEngineId) {
+      return _exemplars!;
+    }
+    if (_nativeExemplars != null && _nativeExemplarsEpoch == _embedder.engineEpoch) {
+      return _nativeExemplars!;
+    }
+    final intents = <_SemanticIntent>[];
+    final phrases = <String>[];
+    _rawExemplarPhrases.forEach((intent, list) {
+      for (final p in list) {
+        intents.add(intent);
+        phrases.add(p);
+      }
+    });
+    final vecs = await _embedder.embedBatch(phrases, isDocument: true);
+    if (_embedder.activeEngineId != EmbeddingGemmaService.nativeEngineId || vecs.length != phrases.length) {
+      return _exemplars!;
+    }
+    final built = <_IntentExemplar>[
+      for (var i = 0; i < phrases.length; i++) _IntentExemplar(intents[i], phrases[i], vecs[i]),
+    ];
+    _nativeExemplars = built;
+    _nativeExemplarsEpoch = _embedder.engineEpoch;
+    return built;
+  }
+
+  Future<Map<String, Float32List>?> _activeKbVectorsForEngine(int engineId) async {
+    if (engineId != EmbeddingGemmaService.nativeEngineId) return null;
+    if (_nativeKbVectors != null && _nativeKbEpoch == _embedder.engineEpoch) {
+      return _nativeKbVectors;
+    }
+    final docs = <String>[for (final e in _kb) '${e.title}. ${e.keys}. ${e.details.first}'];
+    final titles = <String>[for (final e in _kb) e.title];
+    final vecs = await _embedder.embedBatch(docs, titles: titles, isDocument: true);
+    if (_embedder.activeEngineId != EmbeddingGemmaService.nativeEngineId || vecs.length != _kb.length) {
+      return null;
+    }
+    final map = <String, Float32List>{
+      for (var i = 0; i < _kb.length; i++) _kb[i].id: vecs[i],
+    };
+    _nativeKbVectors = map;
+    _nativeKbEpoch = _embedder.engineEpoch;
+    return map;
   }
 
   static final RegExp _urlPattern = RegExp(r'https?://\S+', caseSensitive: false);
@@ -438,7 +498,7 @@ class GhostBrain {
       case 3:
         return const ['ReplayGain scan', 'Transcribe with Whisper', 'The workbench'];
       case 4:
-        return const ['Shuffle everything', "What's playing?", 'Extract metadata & lyrics', 'Open EQ'];
+        return const ['Shuffle everything', 'Play something dark', "What's playing?", 'Extract metadata & lyrics'];
       default:
         return const ['What can you do?', "What's playing?", 'Extract metadata & lyrics'];
     }
@@ -448,6 +508,40 @@ class GhostBrain {
     final raw = input.trim();
     if (raw.isEmpty) return GhostReply(_pick(const ["Say something. I'm listening.", "Static on the line - try again."]));
 
+    if (_urlPattern.firstMatch(raw) == null) {
+      final clauses = _splitChainedClauses(raw);
+      if (clauses.length > 1) {
+        final replies = <GhostReply>[];
+        for (final clause in clauses) {
+          replies.add(await _respondSingle(clause));
+        }
+        final last = replies.last;
+        return GhostReply(
+          [for (final r in replies) r.text].join('\n\n'),
+          tone: last.tone,
+          chips: last.chips,
+          laugh: replies.any((r) => r.laugh),
+          hide: replies.any((r) => r.hide),
+        );
+      }
+    }
+    return _respondSingle(raw);
+  }
+
+  static List<String> _splitChainedClauses(String raw) {
+    final lower = raw.toLowerCase();
+    if ((lower.contains('download') || lower.contains('grab')) && lower.contains('forge')) {
+      return <String>[raw];
+    }
+    final parts = raw
+        .split(RegExp(r'\s+(?:and\s+then|then\s+also)\s+|\s*;\s*', caseSensitive: false))
+        .map((s) => s.trim())
+        .where((s) => s.split(RegExp(r'\s+')).length >= 2)
+        .toList();
+    return parts.length > 1 ? parts.take(3).toList() : <String>[raw];
+  }
+
+  Future<GhostReply> _respondSingle(String raw) async {
     final url = _urlPattern.firstMatch(raw)?.group(0);
     if (url != null) {
       final lower = raw.toLowerCase();
@@ -488,10 +582,10 @@ class GhostBrain {
     final crossTab = await _crossTabAutomation(raw, q);
     if (crossTab != null) return crossTab;
 
-    final command = await _command(q);
+    final command = await _command(q, rawInput: raw);
     if (command != null) return command;
 
-    return _knowledge(words, rawQuery: raw);
+    return await _knowledge(words, rawQuery: raw);
   }
 
   Future<GhostReply?> _resolveGrabChoice(String raw, List<String> words) async {
@@ -553,12 +647,23 @@ class GhostBrain {
     final mentionsExtract = rawSet.contains('extract') || rawSet.contains('pull') || rawSet.contains('find') || rawSet.contains('fetch') || rawSet.contains('get') || rawSet.contains('search') || rawSet.contains('auto') || rawSet.contains('fix');
     final mentionsGrabber = set.contains('grab') || set.contains('grabber') || rawSet.contains('download') || rawSet.contains('rip') || rawSet.contains('hunt') || rawSet.contains('youtube') || rawSet.contains('soundcloud');
 
-    // Compute Hybrid EmbeddingGemma + BM25 Intent Similarity
+    final playVerbForCrossTab = rawSet.intersection(const {'play', 'put', 'listen', 'queue', 'add', 'shuffle', 'blast', 'spin'}).isNotEmpty;
+    final librarySemanticHint = playVerbForCrossTab ||
+        rawSet.contains('library') ||
+        text.contains(' lyrics about ') ||
+        text.contains(' song about ') ||
+        text.contains(' songs about ') ||
+        text.contains(' that says ');
+
     final queryVec = await _embedder.embed(raw);
+    final activeExemplars = await _activeExemplarsForEngine(_embedder.activeEngineId);
+    final usingNativeExemplars = !identical(activeExemplars, _exemplars);
+    final effQueryVec = usingNativeExemplars ? queryVec : _embedder.embedSyncFallback(raw);
+    final simGate = usingNativeExemplars ? 0.56 : 0.72;
     _SemanticIntent? bestIntent;
     var bestSim = -1.0;
-    for (final ex in _exemplars ?? const <_IntentExemplar>[]) {
-      final sim = EmbeddingGemmaService.cosine(queryVec, ex.vector);
+    for (final ex in activeExemplars) {
+      final sim = EmbeddingGemmaService.cosine(effQueryVec, ex.vector);
       if (sim > bestSim) {
         bestSim = sim;
         bestIntent = ex.intent;
@@ -567,7 +672,7 @@ class GhostBrain {
 
     // Check Grabber Search & Download Intent
     if (mentionsGrabber && !mentionsForge ||
-        (bestSim >= 0.72 &&
+        (bestSim >= simGate &&
             (bestIntent == _SemanticIntent.grabSearch ||
                 bestIntent == _SemanticIntent.grabDownload ||
                 bestIntent == _SemanticIntent.grabThenForge))) {
@@ -629,7 +734,7 @@ class GhostBrain {
 
     // Check Forge ACRCloud Fingerprint Intent
     if (mentionsAcr && (mentionsForge || mentionsExtract || rawSet.contains('song') || rawSet.contains('track') || rawSet.contains('file') || rawSet.contains('this')) ||
-        (bestSim >= 0.74 && bestIntent == _SemanticIntent.forgeAcrIdentify)) {
+        (bestSim >= simGate && bestIntent == _SemanticIntent.forgeAcrIdentify)) {
       final res = await world.forgeExtract(
         fetchMetadata: true,
         fetchLyrics: mentionsLyrics,
@@ -644,14 +749,15 @@ class GhostBrain {
 
     // Check Forge Metadata + Lyrics Extraction Intent
     if ((mentionsForge && (mentionsExtract || mentionsLyrics)) ||
-        (mentionsLyrics && mentionsExtract) ||
+        (mentionsLyrics && mentionsExtract && !librarySemanticHint) ||
         text.contains(' extract metadata ') ||
-        text.contains(' find lyrics ') ||
-        text.contains(' find the lyrics ') ||
+        (!librarySemanticHint && text.contains(' find lyrics ')) ||
+        (!librarySemanticHint && text.contains(' find the lyrics ')) ||
         text.contains(' pull the lyrics ') ||
         text.contains(' get the lyrics ') ||
         text.contains(' auto tag ') ||
-        (bestSim >= 0.72 &&
+        (!librarySemanticHint &&
+            bestSim >= simGate &&
             (bestIntent == _SemanticIntent.forgeExtractMetadata ||
                 bestIntent == _SemanticIntent.forgeFindLyrics ||
                 bestIntent == _SemanticIntent.forgeFullAuto))) {
@@ -685,7 +791,7 @@ class GhostBrain {
 
     // Check Workbench Whisper / ReplayGain Intent
     if ((rawSet.contains('whisper') && (rawSet.contains('transcribe') || rawSet.contains('lyrics') || rawSet.contains('run'))) ||
-        (bestSim >= 0.75 && bestIntent == _SemanticIntent.workbenchWhisper)) {
+        (bestSim >= simGate && bestIntent == _SemanticIntent.workbenchWhisper)) {
       world.openTab(3);
       GhostCommandBus.pendingWorkbenchCommand.value = WorkbenchCommand(
         filePath: world.activeFilePath,
@@ -699,7 +805,7 @@ class GhostBrain {
     }
 
     if ((rawSet.contains('replaygain') && (rawSet.contains('scan') || rawSet.contains('normalize') || rawSet.contains('analyze'))) ||
-        (bestSim >= 0.75 && bestIntent == _SemanticIntent.workbenchReplayGain)) {
+        (bestSim >= simGate && bestIntent == _SemanticIntent.workbenchReplayGain)) {
       world.openTab(3);
       GhostCommandBus.pendingWorkbenchCommand.value = WorkbenchCommand(
         filePath: world.activeFilePath,
@@ -710,6 +816,19 @@ class GhostBrain {
         tone: GhostTone.happy,
         chips: ['Open Playback Engine', 'Open EQ'],
       );
+    }
+
+    if (!mentionsGrabber &&
+        !mentionsForge &&
+        ((bestSim >= simGate && bestIntent == _SemanticIntent.playSemanticVibe) ||
+            (!playVerbForCrossTab &&
+                librarySemanticHint &&
+                (text.contains(' lyrics about ') ||
+                    text.contains(' song about ') ||
+                    text.contains(' songs about ') ||
+                    text.contains(' that says '))))) {
+      final semReply = await _semanticPlay(q, raw);
+      if (semReply != null) return semReply;
     }
 
     return null;
@@ -859,7 +978,7 @@ class GhostBrain {
     return null;
   }
 
-  Future<GhostReply?> _command(_Query q) async {
+  Future<GhostReply?> _command(_Query q, {String rawInput = ''}) async {
     final words = q.words;
     final set = q.set;
     final text = q.rawText;
@@ -926,7 +1045,7 @@ class GhostBrain {
     }
 
     if (playVerb && q.rawWords.length > 1) {
-      final result = await _playSomething(q);
+      final result = await _playSomething(q, rawInput: rawInput);
       if (result != null) return result;
     }
 
@@ -1012,7 +1131,7 @@ class GhostBrain {
     return null;
   }
 
-  Future<GhostReply?> _playSomething(_Query q) async {
+  Future<GhostReply?> _playSomething(_Query q, {String rawInput = ''}) async {
     final raw = q.rawWords;
     final rawSet = q.rawSet;
     final text = q.rawText;
@@ -1057,6 +1176,28 @@ class GhostBrain {
     final query = rest.join(' ');
     if (query.trim().isEmpty) return null;
 
+    final explicitSemantic = mode == null &&
+        (text.contains(' lyrics ') ||
+            text.contains(' lyric ') ||
+            text.contains(' about ') ||
+            text.contains(' vibe ') ||
+            text.contains(' vibes ') ||
+            text.contains(' mood ') ||
+            text.contains(' that says ') ||
+            text.contains(' that goes ') ||
+            (rest.length >= 2 &&
+                const {'something', 'anything', 'music', 'songs', 'tracks'}.contains(rest.first) &&
+                !const {'by', 'from', 'of'}.contains(rest[1])));
+    if (explicitSemantic) {
+      final sem = await _semanticPlay(
+        q,
+        rawInput.isNotEmpty ? rawInput : query,
+        preloadedLibrary: library,
+        verbOverride: verb,
+      );
+      if (sem != null) return sem;
+    }
+
     if (mode == 'album') {
       final tracks = _byAlbum(library, query);
       if (tracks.isEmpty) return GhostReply("No album called '$query' here.", tone: GhostTone.sarcastic);
@@ -1089,6 +1230,14 @@ class GhostBrain {
 
     final ranked = _rankTitles(library, query);
     if (ranked.isEmpty) {
+      final semFallback = await _semanticPlay(
+        q,
+        rawInput.isNotEmpty ? rawInput : query,
+        preloadedLibrary: library,
+        verbOverride: verb,
+        strict: true,
+      );
+      if (semFallback != null) return semFallback;
       return GhostReply("No match for '$query' in your library. Check the spelling, or GRAB it.", tone: GhostTone.sarcastic, chips: const ['How do I download?']);
     }
     final top = ranked.first;
@@ -1100,6 +1249,98 @@ class GhostBrain {
       return GhostReply('A few matches. Which one?\n${lines.join('\n')}', chips: [for (var i = 0; i < _choices.length; i++) '${i + 1}. ${_choices[i].title}']);
     }
     return _performTracks(verb, [top.key], '${top.key.title} - ${_artistOr(top.key)}');
+  }
+
+  static String _cleanSemanticPlayQuery(String raw) {
+    var s = raw.trim();
+    final prefixes = <RegExp>[
+      RegExp(r'^(?:hey|yo|ok|okay)?\s*(?:ghost|ghostbrain)?[,\s]*', caseSensitive: false),
+      RegExp(r'^(?:can|could|would)\s+you\s+(?:please\s+)?', caseSensitive: false),
+      RegExp(r'^(?:please\s+|just\s+|go\s+ahead\s+and\s+)*', caseSensitive: false),
+      RegExp(r'^(?:play|put\s+on|listen\s+to|queue\s+up|queue|add|shuffle|spin|blast|find)\s+', caseSensitive: false),
+      RegExp(r'^(?:me\s+)?(?:some|something|anything|(?:a|the|that)\s+(?:song|track)|songs|tracks|music)\s+', caseSensitive: false),
+      RegExp(r'^(?:in\s+my\s+library\s+|from\s+my\s+library\s+)', caseSensitive: false),
+      RegExp(r'^(?:with\s+lyrics\s+about|with\s+lyrics|with\s+a\s+vibe\s+like|that\s+says|that\s+goes|about)\s+', caseSensitive: false),
+    ];
+    for (final rx in prefixes) {
+      s = s.replaceFirst(rx, '').trim();
+    }
+    s = s.replaceFirst(RegExp(r'\s+(?:in\s+my\s+library|from\s+my\s+library|for\s+me|please)$', caseSensitive: false), '').trim();
+    return s.isEmpty ? raw.trim() : s;
+  }
+
+  Future<GhostReply?> _semanticPlay(
+    _Query q,
+    String rawQuery, {
+    List<GhostTrack>? preloadedLibrary,
+    _Verb? verbOverride,
+    bool strict = false,
+  }) async {
+    final clean = _cleanSemanticPlayQuery(rawQuery);
+    if (clean.isEmpty) return null;
+    final library = preloadedLibrary ?? await world.library();
+    if (library.isEmpty) {
+      return const GhostReply(
+        "I can't see any music yet. Open the LIBRARY once so Android grants access, then ask again.",
+        chips: ['Open library'],
+      );
+    }
+
+    var verb = verbOverride ?? _Verb.play;
+    if (verbOverride == null) {
+      if (q.rawSet.contains('shuffle')) verb = _Verb.shuffle;
+      if (q.rawSet.contains('queue') || q.rawSet.contains('add')) verb = _Verb.queue;
+      if (q.rawText.contains(' play next ') || q.rawText.contains(' up next ')) verb = _Verb.next;
+    }
+
+    final matches = await GhostVectorIndex.instance.search(library, clean, topK: 5);
+    if (matches.isEmpty) return null;
+
+    final isNative = _embedder.activeEngineId == EmbeddingGemmaService.nativeEngineId;
+    final floor = strict ? (isNative ? 0.46 : 0.30) : (isNative ? 0.28 : 0.16);
+    final strong = matches.where((m) => m.score >= floor).toList();
+    if (strong.isEmpty) return null;
+
+    final engineBadge = isNative ? 'LiteRT 256-D' : '256-D semantic';
+    final wantsVibeSet = verb == _Verb.shuffle ||
+        q.rawSet.contains('something') ||
+        q.rawSet.contains('anything') ||
+        q.rawSet.contains('songs') ||
+        q.rawSet.contains('tracks') ||
+        q.rawSet.contains('music') ||
+        q.rawSet.contains('vibe') ||
+        q.rawSet.contains('vibes') ||
+        q.rawSet.contains('mood');
+
+    if (wantsVibeSet && strong.length > 1) {
+      final chosen = strong.take(5).map((m) => m.track).toList();
+      final topNames = chosen.take(3).map((t) => t.title).join(', ');
+      return _performTracks(
+        verb == _Verb.play ? _Verb.shuffle : verb,
+        chosen,
+        '${chosen.length} $engineBadge matches for "$clean" ($topNames)',
+      );
+    }
+
+    final top = strong.first;
+    if (strong.length == 1 || (top.score - strong[1].score) >= 0.08) {
+      final label = '${top.track.title} - ${_artistOr(top.track)} [$engineBadge]';
+      return _performTracks(verb, <GhostTrack>[top.track], label);
+    }
+
+    _choices = strong.take(3).map((m) => m.track).toList();
+    _choiceVerb = verb;
+    final lines = <String>[
+      for (var i = 0; i < _choices.length; i++)
+        '${i + 1}. ${_choices[i].title} - ${_artistOr(_choices[i])}',
+    ];
+    return GhostReply(
+      'Semantic $engineBadge matches for "$clean". Say 1, 2, or 3:\n${lines.join('\n')}',
+      tone: GhostTone.happy,
+      chips: <String>[
+        for (var i = 0; i < _choices.length; i++) '${i + 1}. ${_choices[i].title}',
+      ],
+    );
   }
 
   Future<GhostReply> _performTracks(_Verb verb, List<GhostTrack> tracks, String label) async {
@@ -1141,12 +1382,16 @@ class GhostBrain {
     return GhostReply('${library.length} songs in your library.', chips: const ['Shuffle everything']);
   }
 
-  GhostReply _knowledge(List<String> words, {String rawQuery = ''}) {
+  Future<GhostReply> _knowledge(List<String> words, {String rawQuery = ''}) async {
     final terms = words.map(_stem).where((w) => w.length > 1 && !_stop.contains(w)).toList();
     if (terms.isEmpty) {
       return GhostReply(_pick(const ["Signal unclear. Try one of these:", "Say that again, in human? Or pick one:"]), tone: GhostTone.sarcastic, chips: suggestionsFor(world.currentTab));
     }
-    final queryVec = _embedder.embedSyncFallback(rawQuery.isEmpty ? words.join(' ') : rawQuery);
+    final qStr = rawQuery.isEmpty ? words.join(' ') : rawQuery;
+    final queryVec = await _embedder.embed(qStr);
+    final nativeKb = await _activeKbVectorsForEngine(_embedder.activeEngineId);
+    final useNative = nativeKb != null && _embedder.activeEngineId == EmbeddingGemmaService.nativeEngineId;
+    final effQueryVec = useNative ? queryVec : _embedder.embedSyncFallback(qStr);
     final scored = <MapEntry<_KbEntry, double>>[];
     final avg = _index.values.fold<int>(0, (s, t) => s + t.length) / _index.length;
     for (final entry in _kb) {
@@ -1162,9 +1407,10 @@ class GhostBrain {
       final titleTerms = _terms(entry.title);
       if (titleTerms.isNotEmpty && titleTerms.every((t) => terms.contains(t))) bm25 += 2.5;
 
-      // Hybrid RRF: combine BM25 score with EmbeddingGemma / n-gram cosine similarity
-      final docVec = _embedder.embedSyncFallback('${entry.title} ${entry.keys}');
-      final cos = math.max(0.0, EmbeddingGemmaService.cosine(queryVec, docVec));
+      final docVec = useNative
+          ? nativeKb[entry.id]!
+          : _embedder.embedSyncFallback('${entry.title} ${entry.keys}');
+      final cos = math.max(0.0, EmbeddingGemmaService.cosine(effQueryVec, docVec));
       final hybridScore = bm25 + (cos * 2.4);
       scored.add(MapEntry(entry, hybridScore));
     }

@@ -11,6 +11,7 @@ import 'package:flutter/services.dart';
 import '../core/forge_request.dart';
 import '../core/ghost_commands.dart';
 import '../core/metadata_sources.dart';
+import '../core/model_lifecycle.dart';
 import '../core/playlists.dart';
 import '../core/storage_client.dart';
 import '../core/tag_io.dart';
@@ -22,6 +23,7 @@ import '../screens/settings_screen.dart';
 import '../tabs/tab_library.dart';
 import '../tabs/tab_player.dart';
 import 'ghost_brain.dart';
+import 'ghost_vector_index.dart';
 
 class AppGhostWorld implements GhostWorld {
   static const Duration _cacheLife = Duration(minutes: 2);
@@ -121,6 +123,8 @@ class AppGhostWorld implements GhostWorld {
   static void _ensureHook() {
     if (_hooked) return;
     _hooked = true;
+    ModelLifecycle.instance.ensureInitialized();
+    unawaited(GhostVectorIndex.instance.loadFromDiskIfNeeded());
     StorageClient.libraryRevision.addListener(() => _generation++);
 
     // Track any file sent to Forge so "loaded file" voice commands always know the target path

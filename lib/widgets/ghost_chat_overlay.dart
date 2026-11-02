@@ -9,7 +9,9 @@ import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'ghost_avatar.dart';
 import '../screens/main_shell.dart';
+import '../core/embedding_service.dart';
 import '../core/ghost_settings.dart';
+import '../core/model_lifecycle.dart';
 import '../core/sfx.dart';
 import '../core/voice_input.dart';
 import '../services/ghost_brain.dart';
@@ -127,6 +129,7 @@ class _GhostChatOverlayState extends State<GhostChatOverlay> with TickerProvider
     if (!GhostSettings.isReady) await GhostSettings.ready();
     if (!mounted) return;
     if (!GhostSettings.firstLaunchComplete.value && GhostSettings.autoExpand.value && GhostSettings.visible.value) {
+      ModelLifecycle.instance.onChatExpanded();
       setState(() {
         _chatState = GhostChatState.expanded;
       });
@@ -310,12 +313,14 @@ class _GhostChatOverlayState extends State<GhostChatOverlay> with TickerProvider
       _chatState = willExpand ? GhostChatState.expanded : GhostChatState.collapsed;
     });
     if (willExpand) {
+      ModelLifecycle.instance.onChatExpanded();
       _controller.forward();
       widget.ghostController.setMood(_inputController.text.isNotEmpty ? GhostMood.listening : GhostMood.idle);
       if (_messages.isEmpty) {
         _startContextualTutorial();
       }
     } else {
+      ModelLifecycle.instance.onChatCollapsed();
       _controller.reverse();
       _inputFocus.unfocus();
       widget.ghostController.setMood(GhostMood.idle);
@@ -330,6 +335,7 @@ class _GhostChatOverlayState extends State<GhostChatOverlay> with TickerProvider
 
   @override
   void dispose() {
+    ModelLifecycle.instance.onChatCollapsed();
     _voiceSub?.cancel();
     _voice.dispose();
     _controller.dispose();
@@ -422,20 +428,45 @@ class _GhostChatOverlayState extends State<GhostChatOverlay> with TickerProvider
                       child: Row(
                         children: [
                           Icon(Icons.auto_awesome, color: themeColor, size: 16),
-                          const SizedBox(width: 8),
+                          const SizedBox(width: 6),
                           Expanded(
                             child: Text(
                               "GHOST IN THE MACHINE",
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
-                              style: TextStyle(fontFamily: 'ShareTechMono', fontSize: 12, fontWeight: FontWeight.bold, color: themeColor, letterSpacing: 1),
+                              style: TextStyle(fontFamily: 'ShareTechMono', fontSize: 11.5, fontWeight: FontWeight.bold, color: themeColor, letterSpacing: 0.6),
                             ),
+                          ),
+                          ValueListenableBuilder<bool>(
+                            valueListenable: EmbeddingGemmaService.instance.nativeActiveNotifier,
+                            builder: (context, nativeActive, _) {
+                              final badgeColor = nativeActive ? Colors.cyanAccent : themeColor.withValues(alpha: 0.7);
+                              return Container(
+                                margin: const EdgeInsets.only(right: 2),
+                                padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+                                decoration: BoxDecoration(
+                                  color: badgeColor.withValues(alpha: 0.14),
+                                  borderRadius: BorderRadius.circular(4),
+                                  border: Border.all(color: badgeColor.withValues(alpha: 0.65), width: 0.8),
+                                ),
+                                child: Text(
+                                  nativeActive ? "GEMMA" : "256D",
+                                  style: TextStyle(
+                                    fontFamily: 'ShareTechMono',
+                                    fontSize: 8.5,
+                                    fontWeight: FontWeight.bold,
+                                    color: badgeColor,
+                                  ),
+                                ),
+                              );
+                            },
                           ),
                           IconButton(
                             icon: const Icon(Icons.power_settings_new, color: Colors.redAccent, size: 18),
                             tooltip: "CLOSE GHOST",
                             onPressed: () {
                               Sfx.play(SfxId.close);
+                              ModelLifecycle.instance.onChatCollapsed();
                               if (mounted) setState(() => _chatState = GhostChatState.collapsed);
                               unawaited(GhostSettings.setVisible(false).catchError((Object e) {
                                 debugPrint('GHOST: could not persist visibility: $e');

@@ -1,91 +1,212 @@
-// ============================================================================
+// ============================================================
 // As Above, So Below. As Within, So Without.
 // The Future Dictates the Past and the Past is Always Present.
-// ============================================================================
+// ============================================================
 
 import 'dart:math' as math;
-import 'dart:typed_data';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
+import 'embedding_model.dart';
 
-/// On-device semantic embedding engine for GhostBrain v2.
-///
-/// Architecture:
-/// 1. Primary Native Engine: Attempts to invoke the 'com.sovereign.tagger/embeddings'
-///    MethodChannel backed by Google AI Edge LiteRT (EmbeddingGemma-300M / EmbeddingGemma-2-270M)
-///    truncated via Matryoshka Representation Learning (MRL) to [dims] (256 dimensions).
-/// 2. Zero-Dependency Offline Fallback: When the native LiteRT model is not yet installed
-///    or unloaded to conserve RAM during heavy FFmpeg/Whisper jobs, automatically falls back
-///    to a deterministic 256-dim L2-normalized signed random-projection character/word n-gram
-///    embedding vector so semantic cosine routing works out of the box with 0 MB overhead.
 class EmbeddingGemmaService {
   EmbeddingGemmaService._();
   static final EmbeddingGemmaService instance = EmbeddingGemmaService._();
 
-  static const MethodChannel _channel =
-      MethodChannel('com.sovereign.tagger/embeddings');
-
-  /// Matryoshka target dimensionality (128, 256, 512, or 768).
+  static const MethodChannel _channel = MethodChannel('com.sovereign.tagger/embeddings');
   static const int dims = 256;
+  static const int fallbackEngineId = 1;
+  static const int nativeEngineId = 2;
 
   bool _nativeChecked = false;
   bool _nativeAvailable = false;
-  final Map<String, Float32List> _cache = <String, Float32List>{};
+  int _engineEpoch = 0;
+  final ValueNotifier<bool> nativeActiveNotifier = ValueNotifier<bool>(false);
+
+  final Map<String, Float32List> _nativeCache = <String, Float32List>{};
+  final Map<String, Float32List> _fallbackCache = <String, Float32List>{};
 
   bool get isNativeAvailable => _nativeAvailable;
+  int get engineEpoch => _engineEpoch;
+  int get activeEngineId => _nativeAvailable ? nativeEngineId : fallbackEngineId;
 
-  /// Probes whether the native EmbeddingGemma LiteRT bridge is registered.
-  Future<bool> checkNativeAvailability() async {
-    if (_nativeChecked) return _nativeAvailable;
+  Future<bool> checkNativeAvailability({bool force = false}) async {
+    if (_nativeChecked && !force) return _nativeAvailable;
     _nativeChecked = true;
     try {
+      await EmbeddingModel.tryExtractBundledAssets();
       final res = await _channel.invokeMethod<bool>('isAvailable');
-      _nativeAvailable = res ?? false;
-    } catch (_) {
-      _nativeAvailable = false;
+      final next = res ?? false;
+      if (next != _nativeAvailable) {
+        _nativeAvailable = next;
+        _engineEpoch++;
+        nativeActiveNotifier.value = next;
+      }
+    } catch (e) {
+      debugPrint('EMBEDDING_GEMMA: availability check failed (using fallback): $e');
+      if (_nativeAvailable) {
+        _nativeAvailable = false;
+        _engineEpoch++;
+        nativeActiveNotifier.value = false;
+      }
     }
     return _nativeAvailable;
   }
 
-  /// Embeds [text] into an L2-normalized [dims]-dimensional vector.
-  Future<Float32List> embed(String text) async {
+  Future<Map<String, dynamic>> queryStatus() async {
+    try {
+      final raw = await _channel.invokeMethod<Map<Object?, Object?>>('status');
+      if (raw == null) return const <String, dynamic>{};
+      final map = raw.map((k, v) => MapEntry(k.toString(), v));
+      final ready = map['filesReady'] == true || map['loaded'] == true;
+      if (ready != _nativeAvailable) {
+        _nativeAvailable = ready;
+        _nativeChecked = true;
+        _engineEpoch++;
+        nativeActiveNotifier.value = ready;
+      }
+      return map;
+    } catch (e) {
+      debugPrint('EMBEDDING_GEMMA: status check failed: $e');
+      return <String, dynamic>{'error': e.toString()};
+    }
+  }
+
+  Future<Map<String, dynamic>> loadNativeModel({
+    String? modelPath,
+    String? tokenizerPath,
+  }) async {
+    final mPath = modelPath ?? (await EmbeddingModel.modelFile()).path;
+    final tPath = tokenizerPath ?? (await EmbeddingModel.tokenizerFile()).path;
+    final raw = await _channel.invokeMethod<Map<Object?, Object?>>(
+      'loadModel',
+      <String, dynamic>{
+        'modelPath': mPath,
+        'tokenizerPath': tPath,
+      },
+    );
+    _nativeChecked = true;
+    _nativeAvailable = true;
+    _nativeCache.clear();
+    _engineEpoch++;
+    nativeActiveNotifier.value = true;
+    if (raw == null) return const <String, dynamic>{'loaded': true};
+    return raw.map((k, v) => MapEntry(k.toString(), v));
+  }
+
+  Future<void> unloadNativeModel({bool keepAvailableForLazyReload = true}) async {
+    try {
+      await _channel.invokeMethod<bool>('unloadModel');
+    } catch (e) {
+      debugPrint('EMBEDDING_GEMMA: unloadModel failed: $e');
+    }
+    if (!keepAvailableForLazyReload && _nativeAvailable) {
+      _nativeAvailable = false;
+      _engineEpoch++;
+      nativeActiveNotifier.value = false;
+    }
+  }
+
+  Future<Float32List> embed(
+    String text, {
+    bool isDocument = false,
+    String? title,
+  }) async {
     final normalized = _normalize(text);
-    final cached = _cache[normalized];
-    if (cached != null) return cached;
+    final task = isDocument ? 'document' : 'query';
+    final cacheKey = '$task|${title ?? ''}|$normalized';
 
     if (!_nativeChecked) {
       await checkNativeAvailability();
     }
 
     if (_nativeAvailable) {
+      final hit = _nativeCache[cacheKey];
+      if (hit != null) return hit;
       try {
         final raw = await _channel.invokeMethod<List<dynamic>>(
           'embedText',
-          <String, dynamic>{'text': normalized, 'dims': dims},
+          <String, dynamic>{
+            'text': text.trim(),
+            'dims': dims,
+            'task': task,
+            if (title != null && title.isNotEmpty) 'title': title,
+          },
         );
         if (raw != null && raw.isNotEmpty) {
-          final vec = Float32List(math.min(dims, raw.length));
-          for (var i = 0; i < vec.length; i++) {
-            vec[i] = (raw[i] as num).toDouble();
-          }
-          _l2NormalizeInPlace(vec);
-          _putCache(normalized, vec);
+          final vec = _decodeVector(raw);
+          _putCache(_nativeCache, cacheKey, vec);
           return vec;
         }
-      } catch (_) {
+      } catch (e) {
+        debugPrint('EMBEDDING_GEMMA: native embedText fell back to offline n-gram projection: $e');
         _nativeAvailable = false;
+        _engineEpoch++;
+        nativeActiveNotifier.value = false;
       }
     }
 
-    final fallback = embedSyncFallback(normalized);
-    _putCache(normalized, fallback);
-    return fallback;
+    return embedSyncFallback(text);
   }
 
-  /// Synchronous 256-d L2-normalized feature-hashed n-gram + semantic concept projection.
-  /// Provides fast (<0.2ms) offline vector similarity when native weights are unloaded.
+  Future<List<Float32List>> embedBatch(
+    List<String> texts, {
+    List<String>? titles,
+    bool isDocument = true,
+  }) async {
+    if (texts.isEmpty) return const <Float32List>[];
+    if (!_nativeChecked) {
+      await checkNativeAvailability();
+    }
+
+    if (_nativeAvailable) {
+      try {
+        final task = isDocument ? 'document' : 'query';
+        final results = <Float32List>[];
+        const chunkSize = 24;
+        for (var offset = 0; offset < texts.length; offset += chunkSize) {
+          final end = math.min(offset + chunkSize, texts.length);
+          final subTexts = texts.sublist(offset, end);
+          final subTitles = titles != null && titles.length >= end
+              ? titles.sublist(offset, end)
+              : null;
+          final rawBatch = await _channel.invokeMethod<List<dynamic>>(
+            'embedBatch',
+            <String, dynamic>{
+              'texts': subTexts,
+              if (subTitles != null) 'titles': subTitles,
+              'dims': dims,
+              'task': task,
+            },
+          );
+          if (rawBatch == null || rawBatch.length != subTexts.length) {
+            throw StateError('Batch size mismatch from native EmbeddingGemma bridge');
+          }
+          for (var i = 0; i < rawBatch.length; i++) {
+            final item = rawBatch[i];
+            if (item is List<dynamic>) {
+              results.add(_decodeVector(item));
+            } else {
+              results.add(embedSyncFallback(subTexts[i]));
+            }
+          }
+        }
+        return results;
+      } catch (e) {
+        debugPrint('EMBEDDING_GEMMA: native embedBatch fell back to offline n-gram projection: $e');
+        _nativeAvailable = false;
+        _engineEpoch++;
+        nativeActiveNotifier.value = false;
+      }
+    }
+
+    return <Float32List>[
+      for (final t in texts) embedSyncFallback(t),
+    ];
+  }
+
   Float32List embedSyncFallback(String text) {
     final norm = _normalize(text);
-    final cached = _cache[norm];
+    final cached = _fallbackCache[norm];
     if (cached != null) return cached;
 
     final vec = Float32List(dims);
@@ -94,7 +215,6 @@ class EmbeddingGemmaService {
     final expanded = _expandSemanticConcepts(norm);
     final words = expanded.split(' ');
 
-    // 1. Word unigrams & bigrams with higher weight
     for (var i = 0; i < words.length; i++) {
       final w = words[i];
       if (w.isEmpty) continue;
@@ -104,7 +224,6 @@ class EmbeddingGemmaService {
       }
     }
 
-    // 2. Character trigrams & 4-grams for Whisper typo / homophone resilience
     final padded = ' $norm ';
     for (var i = 0; i <= padded.length - 3; i++) {
       _projectToken(vec, 'c3:${padded.substring(i, i + 3)}', 0.65);
@@ -114,11 +233,10 @@ class EmbeddingGemmaService {
     }
 
     _l2NormalizeInPlace(vec);
-    _putCache(norm, vec);
+    _putCache(_fallbackCache, norm, vec);
     return vec;
   }
 
-  /// Computes cosine similarity in [-1.0, 1.0] between two L2-normalized vectors.
   static double cosine(Float32List a, Float32List b) {
     final len = math.min(a.length, b.length);
     var dot = 0.0;
@@ -128,15 +246,30 @@ class EmbeddingGemmaService {
     return dot.clamp(-1.0, 1.0);
   }
 
-  void _putCache(String key, Float32List vec) {
-    if (_cache.length >= 512) {
-      _cache.remove(_cache.keys.first);
+  static Float32List _decodeVector(List<dynamic> raw) {
+    final len = math.min(dims, raw.length);
+    final vec = Float32List(dims);
+    if (raw is Float32List) {
+      for (var i = 0; i < len; i++) {
+        vec[i] = raw[i];
+      }
+    } else {
+      for (var i = 0; i < len; i++) {
+        vec[i] = (raw[i] as num).toDouble();
+      }
     }
-    _cache[key] = vec;
+    _l2NormalizeInPlace(vec);
+    return vec;
+  }
+
+  static void _putCache(Map<String, Float32List> map, String key, Float32List vec) {
+    if (map.length >= 512) {
+      map.remove(map.keys.first);
+    }
+    map[key] = vec;
   }
 
   static void _projectToken(Float32List vec, String token, double weight) {
-    // FNV-1a 32-bit two-choice hashing with signed Rademacher projection
     var h1 = 0x811c9dc5;
     var h2 = 0x1b873593;
     for (var i = 0; i < token.length; i++) {
@@ -203,6 +336,9 @@ class EmbeddingGemmaService {
     'normalize': 'workbench replaygain loudness volume lufs',
     'loaded': 'mounted current file track song forge',
     'mounted': 'loaded current file track song forge',
+    'dark': 'synthwave industrial cyberpunkelectronic night heavy moody',
+    'chill': 'ambient mellow lo-fi calm atmospheric slow relax',
+    'energetic': 'upbeat fast dance electronic hype bass workout',
   };
 
   static String _expandSemanticConcepts(String norm) {

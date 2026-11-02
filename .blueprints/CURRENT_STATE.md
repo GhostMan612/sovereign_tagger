@@ -1,5 +1,10 @@
-# CURRENT_STATE.md — Sovereign Tagger v2 (post-Phase 32)
-> Snapshot as of 2026-11-02 — Phases 0–32 COMPLETE (`flutter analyze --no-pub` -> `No issues found!`).
+# CURRENT_STATE.md — Sovereign Tagger v2 (post-Phase 33)
+> Snapshot as of 2026-11-02 — Phases 0–33 COMPLETE (`flutter analyze --no-pub` -> `No issues found!`).
+>
+> **Phase 33 deltas (Native `EmbeddingGemma-300M` Engine + Moto G RAM Lifecycle + Semantic Library/LRC Vector Index):**
+> - **Native `com.sovereign.tagger/embeddings` Bridge**: Added `EmbeddingGemmaBridge.kt` (`com.google.ai.edge.litert:litert:1.4.0` XNNPACK 4-thread CPU on both `arm64-v8a` and `x86_64`, read-only `MappedByteBuffer`, ProGuard keep rules) + pure-Kotlin `SentencePieceTokenizer.kt` (`sentencepiece.model` protobuf BPE/Unigram parser), producing asymmetric 256-D Matryoshka L2-normalized vectors with automatic fallback to `EmbeddingGemmaService`'s 0 MB n-gram/concept engine.
+> - **External Weights & Moto G RAM Guard (`EmbeddingModel` + `ModelLifecycle`)**: Stores `embeddinggemma-300m_seq256_mixed-precision.tflite` + `sentencepiece.model` in `${getApplicationSupportDirectory()}/embedding_gemma/` (0 MB APK growth, untouched by `_purgeCache`). Supports streaming Hugging Face download (optional Bearer token) and local `FilePicker` `.tflite`/tokenizer import with atomic `.part` staging (G39), 5-min idle unload (`< 6 GB` RAM), `MainActivity.onTrimMemory`, and `FFmpegExecutor.beforeExecuteHook` automatic unload before FFmpeg/Whisper jobs when free RAM `< 650 MB`.
+> - **Semantic Library & LRC Vector Index (`GhostVectorIndex` + `GhostBrain` v2.1)**: Persists 256-D track + embedded `LYRICS`/`GENRE`/`COMMENT` + `.lrc`/`.txt` sidecar vectors in `ghost_vectors.bin` (`GVEC` binary format, vector-space locked by `engineId` per G48), enabling vibe/mood playlists, lyric-line song lookup, multi-clause chained commands, live `GEMMA`/`256D` badge in `GhostChatOverlay`, and full model/index controls in `SettingsScreen`.
 >
 > **Phase 32 deltas (Hybrid Animated Cyberpunk Backdrops):**
 > - **Tab Occlusion Fix (G47)**: Unblocked `MainShell`'s `CyberBackdrop` across all 5 tabs (`TabGrabber`, `TabForge`, `TabPipeline`, `TabWorkbench`, `TabLibrary`) by switching root `Colors.black` wrappers to `Colors.transparent` (preserving wrapper types per G32) with translucent dark-glass (`0.80–0.82`) cards/inputs.

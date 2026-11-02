@@ -3,6 +3,7 @@
 // The Future Dictates the Past and the Past is Always Present.
 // ============================================================
 
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
@@ -13,10 +14,17 @@ import '../core/cyber_tap_feedback.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter_colorpicker/flutter_colorpicker.dart';
 import 'package:ffmpeg_kit_extended_flutter/ffmpeg_kit_extended_flutter.dart';
+import '../core/embedding_model.dart';
+import '../core/embedding_service.dart';
 import '../core/ffmpeg_executor.dart';
 import '../core/ghost_settings.dart';
 import '../core/feedback_settings.dart';
+import '../core/model_lifecycle.dart';
+import '../core/storage_client.dart';
 import '../screens/main_shell.dart';
+import '../services/ghost_brain.dart';
+import '../services/ghost_vector_index.dart';
+import '../tabs/tab_library.dart';
 import '../widgets/cyber_backdrop.dart';
 import '../widgets/machine_rain.dart';
 
@@ -32,6 +40,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   final TextEditingController _acrHostCtrl = TextEditingController();
   final TextEditingController _acrKeyCtrl = TextEditingController();
   final TextEditingController _acrSecretCtrl = TextEditingController();
+  final TextEditingController _hfTokenCtrl = TextEditingController();
 
   bool _isSaving = false;
   bool _isUpdating = false;
@@ -50,16 +59,20 @@ class _SettingsScreenState extends State<SettingsScreen> {
   @override
   void initState() {
     super.initState();
+    ModelLifecycle.instance.ensureInitialized();
+    unawaited(GhostVectorIndex.instance.loadFromDiskIfNeeded());
     _loadKeys();
   }
 
   Future<void> _loadKeys() async {
     final prefs = await SharedPreferences.getInstance();
+    if (!mounted) return;
     setState(() {
       _geniusKeyCtrl.text = prefs.getString('genius_key') ?? "";
       _acrHostCtrl.text = prefs.getString('acr_host') ?? "";
       _acrKeyCtrl.text = prefs.getString('acr_key') ?? "";
       _acrSecretCtrl.text = prefs.getString('acr_secret') ?? "";
+      _hfTokenCtrl.text = prefs.getString('hf_token') ?? "";
     });
     // Load Ghost Tutorial settings
     GhostSettings.load(prefs);
@@ -73,6 +86,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     await prefs.setString('acr_host', _acrHostCtrl.text.trim());
     await prefs.setString('acr_key', _acrKeyCtrl.text.trim());
     await prefs.setString('acr_secret', _acrSecretCtrl.text.trim());
+    await prefs.setString('hf_token', _hfTokenCtrl.text.trim());
 
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: const Text('> KEYS SECURELY WRITTEN TO KERNEL PREFS.', style: TextStyle(fontFamily: 'ShareTechMono')), backgroundColor: Colors.black, shape: RoundedRectangleBorder(side: BorderSide(color: SovereignState.accentColor.value))));
@@ -309,6 +323,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           'acr_host': prefs.getString('acr_host') ?? "",
           'acr_key': prefs.getString('acr_key') ?? "",
           'acr_secret': prefs.getString('acr_secret') ?? "",
+          'hf_token': prefs.getString('hf_token') ?? "",
           'crossfade_duration': prefs.getDouble('crossfade_duration') ?? 0.0,
           'gapless_enabled': prefs.getBool('gapless_enabled') ?? true,
           'accent_color': prefs.getInt('accent_color') ?? 0xFFFF003C,
@@ -382,6 +397,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
         await prefs.setString('acr_host', settings['acr_host'] ?? "");
         await prefs.setString('acr_key', settings['acr_key'] ?? "");
         await prefs.setString('acr_secret', settings['acr_secret'] ?? "");
+        if (settings['hf_token'] != null) {
+          await prefs.setString('hf_token', settings['hf_token'].toString());
+        }
         await prefs.setDouble('crossfade_duration', settings['crossfade_duration'] ?? 0.0);
         await prefs.setBool('gapless_enabled', settings['gapless_enabled'] ?? true);
         if (settings['accent_color'] != null) {
@@ -499,7 +517,404 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _acrHostCtrl.dispose();
     _acrKeyCtrl.dispose();
     _acrSecretCtrl.dispose();
+    _hfTokenCtrl.dispose();
     super.dispose();
+  }
+
+  Future<void> _downloadEmbeddingGemma() async {
+    TapFeedback.machineTap();
+    final token = _hfTokenCtrl.text.trim();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('hf_token', token);
+    if (!mounted) return;
+    await ModelLifecycle.instance.downloadAndActivate(hfToken: token);
+  }
+
+  Future<void> _importEmbeddingFile({required bool isTokenizer}) async {
+    TapFeedback.machineTap();
+    final picked = await FilePicker.pickFile(type: FileType.any);
+    if (!mounted || picked == null || picked.path == null) return;
+    await ModelLifecycle.instance.importLocalFile(
+      path: picked.path!,
+      isTokenizer: isTokenizer,
+    );
+  }
+
+  Future<void> _rebuildVectorIndex() async {
+    TapFeedback.machineTap();
+    if (GhostVectorIndex.instance.state.value.isIndexing) {
+      GhostVectorIndex.instance.cancelIndexing();
+      return;
+    }
+    try {
+      final rows = await StorageClient.queryAudio();
+      if (!mounted) return;
+      final tracks = rows
+          .map(LibTrack.fromMap)
+          .where((t) => t.path.isNotEmpty)
+          .map(
+            (t) => GhostTrack(
+              path: t.path,
+              title: t.title,
+              artist: t.artist,
+              album: t.album,
+              trackNo: t.track,
+              discNo: t.disc,
+            ),
+          )
+          .toList();
+      await GhostVectorIndex.instance.ensureIndexed(
+        tracks,
+        forceRebuild: true,
+        readEmbeddedLyrics: true,
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('> ERR: VECTOR INDEX FAULT: $e', style: const TextStyle(fontFamily: 'ShareTechMono')),
+          backgroundColor: Colors.black,
+          shape: const RoundedRectangleBorder(side: BorderSide(color: Colors.redAccent)),
+        ),
+      );
+    }
+  }
+
+  Widget _buildEmbeddingGemmaCard(Color themeColor) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        GestureDetector(
+          onTap: () => _openRegistration(EmbeddingModel.repoUrl),
+          child: const Row(
+            children: [
+              Expanded(
+                child: Text(
+                  "> GHOSTBRAIN EMBEDDINGGEMMA [256-D AI]",
+                  style: TextStyle(
+                    fontFamily: 'ShareTechMono',
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.cyanAccent,
+                  ),
+                ),
+              ),
+              SizedBox(width: 8),
+              Icon(Icons.open_in_new, size: 15, color: Colors.cyanAccent),
+            ],
+          ),
+        ),
+        const SizedBox(height: 6),
+        const Text(
+          "GOOGLE AI EDGE LITERT 256-D MATRYOSHKA SEMANTIC ROUTER + OFFLINE LIBRARY & LRC LYRIC VECTOR SEARCH. WEIGHTS LIVE OUTSIDE APK (0 MB BLOAT) AND AUTO-UNLOAD ON IDLE/LOW RAM.",
+          style: TextStyle(fontFamily: 'ShareTechMono', color: Colors.white54, fontSize: 11),
+        ),
+        const SizedBox(height: 14),
+        Container(
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            color: Colors.black.withValues(alpha: 0.85),
+            border: Border.all(color: Colors.cyanAccent.withValues(alpha: 0.45)),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              ValueListenableBuilder<EmbeddingRuntimeState>(
+                valueListenable: ModelLifecycle.instance.state,
+                builder: (context, rt, _) {
+                  final badgeColor = rt.loaded
+                      ? Colors.greenAccent
+                      : (rt.filesReady ? Colors.cyanAccent : Colors.amberAccent);
+                  final badgeLabel = rt.loaded
+                      ? "LITE-RT ACTIVE"
+                      : (rt.filesReady ? "STANDBY" : "FALLBACK 256-D");
+                  final isErr = rt.statusText.startsWith('ERR') ||
+                      rt.statusText.contains('HTTP') ||
+                      rt.statusText.contains('failed');
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Row(
+                        children: [
+                          const Icon(Icons.psychology, color: Colors.cyanAccent, size: 18),
+                          const SizedBox(width: 8),
+                          const Expanded(
+                            child: Text(
+                              "EMBEDDINGGEMMA-300M KERNEL",
+                              style: TextStyle(
+                                fontFamily: 'ShareTechMono',
+                                fontSize: 12,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.white,
+                              ),
+                            ),
+                          ),
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                            decoration: BoxDecoration(
+                              color: badgeColor.withValues(alpha: 0.14),
+                              border: Border.all(color: badgeColor.withValues(alpha: 0.7)),
+                            ),
+                            child: Text(
+                              badgeLabel,
+                              style: TextStyle(
+                                fontFamily: 'ShareTechMono',
+                                fontSize: 10,
+                                fontWeight: FontWeight.bold,
+                                color: badgeColor,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      if (rt.totalRamMb > 0) ...[
+                        const SizedBox(height: 6),
+                        Text(
+                          "DEVICE RAM: ${rt.availRamMb} MB FREE / ${rt.totalRamMb} MB TOTAL${rt.lowMemory ? ' [LOW MEMORY GUARD]' : ''}",
+                          style: TextStyle(
+                            fontFamily: 'ShareTechMono',
+                            fontSize: 10,
+                            color: rt.lowMemory ? Colors.redAccent : Colors.white38,
+                          ),
+                        ),
+                      ],
+                      const SizedBox(height: 8),
+                      Text(
+                        "> ${rt.statusText}",
+                        style: TextStyle(
+                          fontFamily: 'VT323',
+                          fontSize: 14,
+                          color: isErr ? Colors.redAccent : Colors.white70,
+                        ),
+                      ),
+                      if (rt.isDownloading) ...[
+                        const SizedBox(height: 8),
+                        LinearProgressIndicator(
+                          value: rt.progress > 0 ? rt.progress : null,
+                          minHeight: 4,
+                          backgroundColor: Colors.white12,
+                          valueColor: const AlwaysStoppedAnimation<Color>(Colors.cyanAccent),
+                        ),
+                      ],
+                      const SizedBox(height: 12),
+                      TextField(
+                        controller: _hfTokenCtrl,
+                        obscureText: true,
+                        style: const TextStyle(fontFamily: 'ShareTechMono', color: Colors.cyanAccent, fontSize: 12),
+                        decoration: InputDecoration(
+                          labelText: 'HF READ TOKEN (OPTIONAL FOR GATED GEMMA REPO)',
+                          labelStyle: const TextStyle(fontFamily: 'ShareTechMono', color: Colors.white54, fontSize: 10),
+                          isDense: true,
+                          enabledBorder: OutlineInputBorder(
+                            borderSide: BorderSide(color: Colors.cyanAccent.withValues(alpha: 0.3)),
+                          ),
+                          focusedBorder: const OutlineInputBorder(
+                            borderSide: BorderSide(color: Colors.cyanAccent),
+                          ),
+                          filled: true,
+                          fillColor: Colors.black,
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      OutlinedButton.icon(
+                        onPressed: rt.isDownloading
+                            ? () => ModelLifecycle.instance.cancelDownload()
+                            : (rt.isBusy ? null : _downloadEmbeddingGemma),
+                        icon: rt.isDownloading
+                            ? const Icon(Icons.close, color: Colors.redAccent, size: 16)
+                            : (rt.isBusy
+                                ? const SizedBox(
+                                    width: 15,
+                                    height: 15,
+                                    child: CircularProgressIndicator(strokeWidth: 2, color: Colors.cyanAccent),
+                                  )
+                                : const Icon(Icons.cloud_download, color: Colors.cyanAccent, size: 16)),
+                        label: Text(
+                          rt.isDownloading
+                              ? "CANCEL DOWNLOAD"
+                              : (rt.filesReady ? "VERIFY / ACTIVATE GEMMA" : "DOWNLOAD GEMMA-300M (~184 MB)"),
+                          style: TextStyle(
+                            fontFamily: 'ShareTechMono',
+                            fontSize: 12,
+                            fontWeight: FontWeight.bold,
+                            color: rt.isDownloading ? Colors.redAccent : Colors.cyanAccent,
+                          ),
+                        ),
+                        style: OutlinedButton.styleFrom(
+                          side: BorderSide(color: rt.isDownloading ? Colors.redAccent : Colors.cyanAccent),
+                          backgroundColor: Colors.black,
+                          padding: const EdgeInsets.symmetric(vertical: 14),
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: OutlinedButton.icon(
+                              onPressed: rt.isBusy ? null : () => _importEmbeddingFile(isTokenizer: false),
+                              icon: const Icon(Icons.folder_open, color: Colors.amberAccent, size: 15),
+                              label: const Text(
+                                "IMPORT .TFLITE",
+                                style: TextStyle(fontFamily: 'ShareTechMono', fontSize: 11, color: Colors.amberAccent),
+                              ),
+                              style: OutlinedButton.styleFrom(
+                                side: BorderSide(color: Colors.amberAccent.withValues(alpha: 0.7)),
+                                backgroundColor: Colors.black,
+                                padding: const EdgeInsets.symmetric(vertical: 12),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: OutlinedButton.icon(
+                              onPressed: rt.isBusy ? null : () => _importEmbeddingFile(isTokenizer: true),
+                              icon: const Icon(Icons.translate, color: Colors.amberAccent, size: 15),
+                              label: const Text(
+                                "IMPORT TOKENIZER",
+                                style: TextStyle(fontFamily: 'ShareTechMono', fontSize: 11, color: Colors.amberAccent),
+                              ),
+                              style: OutlinedButton.styleFrom(
+                                side: BorderSide(color: Colors.amberAccent.withValues(alpha: 0.7)),
+                                backgroundColor: Colors.black,
+                                padding: const EdgeInsets.symmetric(vertical: 12),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      if (rt.filesReady) ...[
+                        const SizedBox(height: 8),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: OutlinedButton.icon(
+                                onPressed: rt.isBusy
+                                    ? null
+                                    : () => rt.loaded
+                                        ? ModelLifecycle.instance.unloadFromRam()
+                                        : ModelLifecycle.instance.loadIntoRam(),
+                                icon: Icon(
+                                  rt.loaded ? Icons.memory : Icons.bolt,
+                                  color: rt.loaded ? Colors.orangeAccent : Colors.greenAccent,
+                                  size: 15,
+                                ),
+                                label: Text(
+                                  rt.loaded ? "UNLOAD RAM" : "LOAD IN RAM",
+                                  style: TextStyle(
+                                    fontFamily: 'ShareTechMono',
+                                    fontSize: 11,
+                                    color: rt.loaded ? Colors.orangeAccent : Colors.greenAccent,
+                                  ),
+                                ),
+                                style: OutlinedButton.styleFrom(
+                                  side: BorderSide(color: rt.loaded ? Colors.orangeAccent : Colors.greenAccent),
+                                  backgroundColor: Colors.black,
+                                  padding: const EdgeInsets.symmetric(vertical: 12),
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: OutlinedButton.icon(
+                                onPressed: rt.isBusy ? null : () => ModelLifecycle.instance.deleteWeights(),
+                                icon: const Icon(Icons.delete_outline, color: Colors.redAccent, size: 15),
+                                label: const Text(
+                                  "DELETE WEIGHTS",
+                                  style: TextStyle(fontFamily: 'ShareTechMono', fontSize: 11, color: Colors.redAccent),
+                                ),
+                                style: OutlinedButton.styleFrom(
+                                  side: BorderSide(color: Colors.redAccent.withValues(alpha: 0.7)),
+                                  backgroundColor: Colors.black,
+                                  padding: const EdgeInsets.symmetric(vertical: 12),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ],
+                  );
+                },
+              ),
+              const Divider(color: Colors.white24, height: 24),
+              ValueListenableBuilder<GhostVectorIndexState>(
+                valueListenable: GhostVectorIndex.instance.state,
+                builder: (context, idx, _) {
+                  final isGemmaIdx = idx.engineId == EmbeddingGemmaService.nativeEngineId;
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Row(
+                        children: [
+                          Icon(Icons.hub, color: themeColor, size: 17),
+                          const SizedBox(width: 8),
+                          const Expanded(
+                            child: Text(
+                              "LIBRARY + LRC VECTOR INDEX",
+                              style: TextStyle(
+                                fontFamily: 'ShareTechMono',
+                                fontSize: 12,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.white,
+                              ),
+                            ),
+                          ),
+                          Text(
+                            isGemmaIdx ? "GEMMA 256-D" : "N-GRAM 256-D",
+                            style: TextStyle(
+                              fontFamily: 'ShareTechMono',
+                              fontSize: 10,
+                              color: isGemmaIdx ? Colors.cyanAccent : Colors.white54,
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        "> ${idx.statusText}",
+                        style: const TextStyle(fontFamily: 'VT323', fontSize: 14, color: Colors.white70),
+                      ),
+                      if (idx.isIndexing) ...[
+                        const SizedBox(height: 8),
+                        LinearProgressIndicator(
+                          value: idx.progress > 0 ? idx.progress : null,
+                          minHeight: 4,
+                          backgroundColor: Colors.white12,
+                          valueColor: AlwaysStoppedAnimation<Color>(themeColor),
+                        ),
+                      ],
+                      const SizedBox(height: 10),
+                      OutlinedButton.icon(
+                        onPressed: _rebuildVectorIndex,
+                        icon: Icon(
+                          idx.isIndexing ? Icons.close : Icons.radar,
+                          color: idx.isIndexing ? Colors.redAccent : themeColor,
+                          size: 16,
+                        ),
+                        label: Text(
+                          idx.isIndexing ? "CANCEL VECTOR INDEXING" : "INDEX LIBRARY + LRC LYRICS",
+                          style: TextStyle(
+                            fontFamily: 'ShareTechMono',
+                            fontSize: 11,
+                            fontWeight: FontWeight.bold,
+                            color: idx.isIndexing ? Colors.redAccent : themeColor,
+                          ),
+                        ),
+                        style: OutlinedButton.styleFrom(
+                          side: BorderSide(color: idx.isIndexing ? Colors.redAccent : themeColor),
+                          backgroundColor: Colors.black,
+                          padding: const EdgeInsets.symmetric(vertical: 13),
+                        ),
+                      ),
+                    ],
+                  );
+                },
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
   }
 
   Future<void> _openRegistration(String url) async {
@@ -867,6 +1282,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 const SizedBox(height: 8),
                 Text("> $_cacheStatus", textAlign: TextAlign.center, style: const TextStyle(fontFamily: 'VT323', fontSize: 14, color: Colors.white70)),
                 const SizedBox(height: 48),
+                const Divider(color: Colors.white24),
+                const SizedBox(height: 24),
+
+                _buildEmbeddingGemmaCard(themeColor),
+
+                const SizedBox(height: 40),
                 const Divider(color: Colors.white24),
                 const SizedBox(height: 24),
 

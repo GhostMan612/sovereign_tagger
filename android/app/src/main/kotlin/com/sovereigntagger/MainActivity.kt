@@ -33,6 +33,7 @@ class MainActivity: AudioServiceActivity() {
     private val WIDGET_CHANNEL = "com.sovereign.tagger/widget"
     private val SFX_CHANNEL = "com.sovereign.tagger/sfx"
     private val WHISTLE_CHANNEL = "com.sovereign.tagger/whistle"
+    private val EMBEDDINGS_CHANNEL = "com.sovereign.tagger/embeddings"
 
     private val REQ_WRITE = 7301
     private val REQ_DELETE = 7302
@@ -44,6 +45,7 @@ class MainActivity: AudioServiceActivity() {
     private val pcmEventChannel = "com.sovereign.tagger/pcm_events"
 
     private val whistleBridge by lazy { WhistleBridge(this) }
+    private val embeddingBridge by lazy { EmbeddingGemmaBridge(this) }
 
     private var eventSink: EventChannel.EventSink? = null
     private var pcmEventSink: EventChannel.EventSink? = null
@@ -102,9 +104,15 @@ class MainActivity: AudioServiceActivity() {
         }.start()
     }
 
+    override fun onTrimMemory(level: Int) {
+        super.onTrimMemory(level)
+        embeddingBridge.onTrimMemory(level)
+    }
+
     override fun onDestroy() {
         sfxEngine?.release()
         sfxEngine = null
+        embeddingBridge.release()
         super.onDestroy()
     }
 
@@ -407,6 +415,53 @@ class MainActivity: AudioServiceActivity() {
                         mainHandler.post {
                             if (text != null) result.success(text)
                             else result.error("WHISTLE_TRANSCRIBE_ERROR", err ?: "Transcription failed", null)
+                        }
+                    }
+                }
+                else -> result.notImplemented()
+            }
+        }
+
+        MethodChannel(messenger, EMBEDDINGS_CHANNEL).setMethodCallHandler { call, result ->
+            when (call.method) {
+                "isAvailable" -> result.success(embeddingBridge.isAvailable())
+                "status" -> result.success(embeddingBridge.getStatus())
+                "loadModel" -> {
+                    val modelPath = call.argument<String>("modelPath")
+                    val tokenizerPath = call.argument<String>("tokenizerPath")
+                    embeddingBridge.loadModel(modelPath, tokenizerPath) { status, err ->
+                        mainHandler.post {
+                            if (status != null) result.success(status)
+                            else result.error("EMBEDDING_LOAD_ERROR", err ?: "Failed to load EmbeddingGemma", null)
+                        }
+                    }
+                }
+                "unloadModel" -> {
+                    embeddingBridge.unloadModel { ok ->
+                        mainHandler.post { result.success(ok) }
+                    }
+                }
+                "embedText" -> {
+                    val text = call.argument<String>("text") ?: ""
+                    val dims = call.argument<Int>("dims") ?: 256
+                    val task = call.argument<String>("task") ?: "query"
+                    val title = call.argument<String>("title")
+                    embeddingBridge.embedText(text, dims, task, title) { vec, err ->
+                        mainHandler.post {
+                            if (vec != null) result.success(vec)
+                            else result.error("EMBEDDING_INFER_ERROR", err ?: "Embedding inference failed", null)
+                        }
+                    }
+                }
+                "embedBatch" -> {
+                    val texts = call.argument<List<String>>("texts") ?: emptyList()
+                    val titles = call.argument<List<String>>("titles")
+                    val dims = call.argument<Int>("dims") ?: 256
+                    val task = call.argument<String>("task") ?: "document"
+                    embeddingBridge.embedBatch(texts, titles, dims, task) { vecs, err ->
+                        mainHandler.post {
+                            if (vecs != null) result.success(vecs)
+                            else result.error("EMBEDDING_BATCH_ERROR", err ?: "Batch embedding failed", null)
                         }
                     }
                 }

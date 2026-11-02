@@ -88,3 +88,9 @@
 -dontwarn com.google.common.util.concurrent.**
 -dontwarn com.google.errorprone.annotations.**
 -dontwarn javax.annotation.**
+
+-keep class org.tensorflow.lite.** { *; }
+-keep interface org.tensorflow.lite.** { *; }
+-keep class com.google.ai.edge.litert.** { *; }
+-dontwarn org.tensorflow.lite.**
+-dontwarn com.google.ai.edge.litert.**
