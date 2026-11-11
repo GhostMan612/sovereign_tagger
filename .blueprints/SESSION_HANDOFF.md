@@ -20,11 +20,12 @@ Session-end law: update rows 2–4 every session (+ row 5 when a new gotcha is l
 
 ## Where we are
 
-**Date:** 2026-11-10
+**Date:** 2026-11-11
 **Phase:** 0–36 implementation, full documentation suite (`README.md`, `LICENSE`, `LICENSES.md`, `SECURITY.md`, `CONTRIBUTING.md`), `impellerc` shader (`GLES`/`Vulkan`/`SkSL`), analyzer, and Android ARM64 APK build gates VERIFIED; zero stubs remaining. F-Droid ready.
 - `flutter analyze --no-pub` -> `No issues found!`.
 - `impellerc` -> `shaders/backdrop.frag` & `shaders/ghost.frag` compile cleanly across GLES, Vulkan, and SkSL.
 - `flutter build apk --debug --target-platform android-arm64` -> `LiteRT 1.4.0` + `EmbeddingGemmaBridge.kt` + `SentencePieceTokenizer.kt` + `shaders/ghost.frag` compile cleanly.
+- **Motorola Moto G (2025) Hardware Smoke Test (Android 16 / API 36, Device ID `ZT4222BMWN`): ALL PASS** — `FlutterTextureView` (`RenderMode.texture`) eliminated BLASTBufferQueue frame saturation; native hardware Equalizer/LoudnessEnhancer attached cleanly without NPE; live 256-D neural self-test verified via LiteRT; GhostBot decoupled `ValueNotifier` chat history verified without red `ErrorWidget` boxes.
 **Branch:** `main` is the single canonical branch.
 
 ## What shipped — Phase 36 Zero-Stub Finalization & Comprehensive Documentation / Licensing Overhaul (2026-11-10)

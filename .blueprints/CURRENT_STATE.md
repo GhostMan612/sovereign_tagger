@@ -1,5 +1,5 @@
 # CURRENT_STATE.md — Sovereign Tagger v2 (post-Phase 36)
-> Snapshot as of 2026-11-10 — Phases 0–36 COMPLETE (`flutter analyze --no-pub` -> `No issues found!`).
+> Snapshot as of 2026-11-11 — Phases 0–36 COMPLETE (`flutter analyze --no-pub` -> `No issues found!`; Moto G 2025 hardware smoke test ALL PASS).
 >
 > **Phase 36 deltas (Zero-Stub & Full-Breath Finalization):**
 > - **Non-Blocking `EmbeddingGemma-300M` Inference, Background Router Warm-Up & Live Self-Test (`EG2`/G54)**: Eliminated synchronous 71-pass LiteRT CPU lockup in `GhostBrain.respond()` and `GhostVectorIndex.search()`, added gentle 2-item-per-220ms background warmers (`_warmExemplarsInBackground`, `_warmKbInBackground`), reused direct `ByteBuffer`s in `EmbeddingGemmaBridge.kt`, fixed BPE fallback merge rank in `SentencePieceTokenizer.kt`, added a 6s timeout on `embedText`, and wired native `selfTest` + a 1-tap `TEST LIVE 256-D INFERENCE` button & `SnackBar` in `SettingsScreen`.
