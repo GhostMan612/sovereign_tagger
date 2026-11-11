@@ -198,11 +198,17 @@ class MainActivity: AudioServiceActivity() {
                 "searchMedia" -> {
                     val query = call.argument<String>("query") ?: ""
                     val source = call.argument<String>("source") ?: "youtube"
-                    runAsync(result, "PYTHON_ERROR") { ytBridgeModule.callAttr("search_media", query, source, 15).toString() }
+                    val cookiefile = call.argument<String>("cookiefile")
+                    runAsync(result, "PYTHON_ERROR") { ytBridgeModule.callAttr("search_media", query, source, 15, cookiefile).toString() }
                 }
                 "getFormats" -> {
                     val url = call.argument<String>("url")
-                    runAsync(result, "PYTHON_ERROR") { ytBridgeModule.callAttr("get_available_formats", url).toString() }
+                    val cookiefile = call.argument<String>("cookiefile")
+                    runAsync(result, "PYTHON_ERROR") { ytBridgeModule.callAttr("get_available_formats", url, cookiefile).toString() }
+                }
+                "identifyUrl" -> {
+                    val url = call.argument<String>("url") ?: ""
+                    runAsync(result, "PYTHON_ERROR") { ytBridgeModule.callAttr("identify_url", url).toString() }
                 }
                 "getCapabilities" -> {
                     runAsync(result, "PYTHON_ERROR") { ytBridgeModule.callAttr("capabilities").toString() }

@@ -52,8 +52,8 @@ def _info_block(info):
     }
 
 
-def _base_opts():
-    return {
+def _base_opts(cookiefile=None):
+    opts = {
         "quiet": True,
         "no_warnings": True,
         "noprogress": True,
@@ -62,6 +62,9 @@ def _base_opts():
         "fragment_retries": 3,
         "concurrent_fragments": 4,
     }
+    if cookiefile:
+        opts["cookiefile"] = cookiefile
+    return opts
 
 
 _FFMPEGKIT = {"classes": None, "installed": False, "attempted": False, "version": ""}
@@ -191,9 +194,59 @@ def capabilities():
     })
 
 
-def search_media(query, source, limit=15):
+_EXTRACTOR_CACHE = None
+
+_SITE_FAMILY = {
+    "Youtube": "YOUTUBE",
+    "Soundcloud": "SOUNDCLOUD",
+    "Bandcamp": "BANDCAMP",
+    "Vimeo": "VIMEO",
+    "Twitter": "X",
+    "Reddit": "REDDIT",
+    "Facebook": "FACEBOOK",
+    "Generic": "DIRECT LINK",
+}
+
+
+def _site_label(key):
+    if not key:
+        return "UNKNOWN"
+    if key in _SITE_FAMILY:
+        return _SITE_FAMILY[key]
+    for prefix, label in _SITE_FAMILY.items():
+        if key.startswith(prefix):
+            return label
+    return key.upper()
+
+
+def _extractor_list():
+    global _EXTRACTOR_CACHE
+    if _EXTRACTOR_CACHE is None:
+        from yt_dlp.extractor import gen_extractors
+        _EXTRACTOR_CACHE = list(gen_extractors())
+    return _EXTRACTOR_CACHE
+
+
+def identify_url(url):
     try:
-        opts = _base_opts()
+        target = (url or "").strip()
+        if not target.startswith("http"):
+            return json.dumps({"status": "success", "site": "UNKNOWN", "extractor": "", "is_url": False})
+        for ie in _extractor_list():
+            try:
+                if ie.suitable(target):
+                    key = ie.ie_key()
+                    return json.dumps({"status": "success", "site": _site_label(key), "extractor": key, "is_url": True})
+            except Exception:
+                continue
+        return json.dumps({"status": "success", "site": "UNKNOWN", "extractor": "", "is_url": True})
+    except Exception as e:
+        return json.dumps({"status": "error", "message": str(e)})
+
+
+def search_media(query, source, limit=15, cookiefile=None):
+    try:
+        opts = _base_opts(cookiefile)
         opts["extract_flat"] = True
         if source == "soundcloud":
             target = f"scsearch{limit}:{query}"
@@ -220,9 +273,9 @@ def search_media(query, source, limit=15):
         return json.dumps({"status": "error", "message": str(e)})
 
 
-def get_available_formats(url):
+def get_available_formats(url, cookiefile=None):
     try:
-        opts = _base_opts()
+        opts = _base_opts(cookiefile)
         opts["extract_flat"] = "in_playlist"
         opts["noplaylist"] = True
         with yt_dlp.YoutubeDL(opts) as ydl:
@@ -337,6 +390,8 @@ def download(url, options_json, job_id, out_dir, progress_callback):
                 o["playlist_items"] = str(options["playlistItems"])
             if options.get("playlistReverse"):
                 o["playlistreverse"] = True
+            if options.get("cookiefile"):
+                o["cookiefile"] = str(options["cookiefile"])
             if options.get("embedSubs"):
                 o["writesubtitles"] = True
                 o["writeautomaticsub"] = False

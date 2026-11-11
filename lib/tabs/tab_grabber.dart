@@ -10,6 +10,8 @@ import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:ffmpeg_kit_extended_flutter/ffmpeg_kit_extended_flutter.dart';
+import 'package:file_picker/file_picker.dart';
+import 'package:path_provider/path_provider.dart';
 import '../core/tap_feedback.dart';
 import '../core/ffmpeg_executor.dart';
 import '../core/cyber_tap_feedback.dart';
@@ -127,6 +129,10 @@ class _TabGrabberState extends State<TabGrabber> {
   _SponsorBlockMode _sponsorBlock = _SponsorBlockMode.off;
   bool _ffmpegAvailable = false;
   String _lastMergeDiagnostics = "";
+  String? _siteBadge;
+  Timer? _identifyTimer;
+  bool _cookiesInstalled = false;
+  String? _cookiePath;
 
   String _newJobId() => "${DateTime.now().millisecondsSinceEpoch}_${Random().nextInt(900000) + 100000}";
 
@@ -139,6 +145,8 @@ class _TabGrabberState extends State<TabGrabber> {
     WidgetsBinding.instance.addPostFrameCallback((_) => _onSharedUrl());
     WidgetsBinding.instance.addPostFrameCallback((_) => _onGhostGrabCommand());
     unawaited(_loadCapabilities());
+    _urlController.addListener(_onUrlChanged);
+    unawaited(_loadCookieState());
   }
 
   Future<void> _loadCapabilities() async {
@@ -150,8 +158,111 @@ class _TabGrabberState extends State<TabGrabber> {
     } catch (_) {}
   }
 
+  Future<String> _cookieFilePath() async {
+    final dir = await getApplicationSupportDirectory();
+    return '${dir.path}/cookies.txt';
+  }
+
+  Future<void> _loadCookieState() async {
+    try {
+      final path = await _cookieFilePath();
+      if (!mounted) return;
+      setState(() {
+        _cookiePath = path;
+        _cookiesInstalled = File(path).existsSync();
+      });
+    } catch (_) {}
+  }
+
+  void _onUrlChanged() {
+    _identifyTimer?.cancel();
+    final text = _urlController.text.trim();
+    if (!text.startsWith('http')) {
+      if (_siteBadge != null) setState(() => _siteBadge = null);
+      return;
+    }
+    _identifyTimer = Timer(const Duration(milliseconds: 700), () => unawaited(_identifySite(text)));
+  }
+
+  Future<void> _identifySite(String url) async {
+    try {
+      final raw = await _ytChannel.invokeMethod('identifyUrl', {'url': url});
+      final data = jsonDecode(raw.toString()) as Map<String, dynamic>;
+      if (!mounted || _urlController.text.trim() != url) return;
+      if (data['status'] == 'success') {
+        setState(() => _siteBadge = (data['site'] as String?) ?? 'UNKNOWN');
+      }
+    } catch (_) {}
+  }
+
+  bool _looksLikeCookiesTxt(String text) {
+    if (text.contains('Netscape HTTP Cookie File')) return true;
+    for (final line in text.split('\n')) {
+      final t = line.trim();
+      if (t.isEmpty || t.startsWith('#')) continue;
+      if (t.split('\t').length >= 6) return true;
+    }
+    return false;
+  }
+
+  Future<void> _importCookies() async {
+    TapFeedback.machineTap();
+    FilePickerResult? result;
+    try {
+      result = await FilePicker.pickFiles(type: FileType.custom, allowedExtensions: ['txt']);
+    } on PlatformException catch (e) {
+      _setStatus("ERR: File Picker Fault: ${e.message}");
+      return;
+    } catch (e) {
+      _setStatus("ERR: File Picker Fault: $e");
+      return;
+    }
+    final picked = (result?.files ?? const []).firstOrNull;
+    if (picked == null || picked.path == null) return;
+    try {
+      final source = File(picked.path!);
+      if (await source.length() > 1024 * 1024) {
+        _setStatus("ERR: Cookie file too large (max 1 MB).");
+        return;
+      }
+      final bytes = await source.readAsBytes();
+      final text = utf8.decode(bytes, allowMalformed: true);
+      if (!_looksLikeCookiesTxt(text)) {
+        _setStatus("ERR: That file does not look like a cookies.txt (Netscape format). Export one from your browser and try again.");
+        return;
+      }
+      final path = await _cookieFilePath();
+      await File(path).writeAsBytes(bytes, flush: true);
+      if (!mounted) return;
+      setState(() {
+        _cookiePath = path;
+        _cookiesInstalled = true;
+        _statusMessage = "Cookies Installed. Logged-in / age-gated downloads will use them. File stays on this device.";
+      });
+    } catch (e) {
+      if (!mounted) return;
+      _setStatus("ERR: Cookie import failed: $e");
+    }
+  }
+
+  Future<void> _removeCookies() async {
+    TapFeedback.machineTap();
+    try {
+      final path = await _cookieFilePath();
+      final file = File(path);
+      if (await file.exists()) await file.delete();
+    } catch (_) {}
+    if (!mounted) return;
+    setState(() {
+      _cookiesInstalled = false;
+      _statusMessage = "Cookies Removed. Logged-in / age-gated downloads will fail until you import again.";
+    });
+  }
+
   @override
   void dispose() {
+    _identifyTimer?.cancel();
+    _urlController.removeListener(_onUrlChanged);
     _eventSub?.cancel();
     SovereignState.pendingGrabberUrl.removeListener(_onSharedUrl);
     GhostCommandBus.pendingGrabberCommand.removeListener(_onGhostGrabCommand);
@@ -252,6 +363,7 @@ class _TabGrabberState extends State<TabGrabber> {
       'embedMetadata': _embedMetadata,
       'embedThumbnail': _embedThumbnail,
       'sponsorblock': _sponsorBlock.name,
+      if (_cookiesInstalled && _cookiePath != null) 'cookiefile': _cookiePath!,
     };
   }
 
@@ -774,7 +886,7 @@ class _TabGrabberState extends State<TabGrabber> {
       _statusMessage = "Hunting On ${_searchSource.toUpperCase()}...";
     });
     try {
-      final result = await _ytChannel.invokeMethod('searchMedia', {'query': query, 'source': _searchSource});
+      final result = await _ytChannel.invokeMethod('searchMedia', {'query': query, 'source': _searchSource, if (_cookiesInstalled && _cookiePath != null) 'cookiefile': _cookiePath!});
       final data = jsonDecode(result.toString());
       if (!mounted) return;
       if (data['status'] == 'success') {
@@ -924,7 +1036,7 @@ class _TabGrabberState extends State<TabGrabber> {
       _statusMessage = "Analyzing Target Multiplex...";
     });
     try {
-      final result = await _ytChannel.invokeMethod('getFormats', {'url': url});
+      final result = await _ytChannel.invokeMethod('getFormats', {'url': url, if (_cookiesInstalled && _cookiePath != null) 'cookiefile': _cookiePath!});
       final data = jsonDecode(result.toString());
       if (!mounted) return;
       if (data['status'] == 'error') {
@@ -1263,6 +1375,36 @@ class _TabGrabberState extends State<TabGrabber> {
           ),
           if (!_ffmpegAvailable)
             const Text("FFMPEG POST-PROCESSING UNAVAILABLE ON THIS BUILD — CHAPTERS / METADATA / THUMBNAIL / SPONSORBLOCK STAY OFF. SUBTITLES STILL SAVE AS SIDECAR FILES.", style: TextStyle(fontFamily: 'ShareTechMono', fontSize: 11, color: Colors.amberAccent)),
+          const SizedBox(height: 12),
+          const Divider(color: Colors.white24, height: 1),
+          const SizedBox(height: 8),
+          Text("> COOKIE LOGIN", style: TextStyle(fontFamily: 'ShareTechMono', fontSize: 13, fontWeight: FontWeight.bold, color: themeColor)),
+          const SizedBox(height: 4),
+          Text(_cookiesInstalled ? "COOKIES INSTALLED (cookies.txt). LOGGED-IN / AGE-GATED DOWNLOADS WILL USE THEM." : "NO COOKIES INSTALLED. LOGGED-IN OR AGE-GATED VIDEOS WILL FAIL WITHOUT THEM.", style: const TextStyle(fontFamily: 'ShareTechMono', fontSize: 11, color: Colors.white70)),
+          const SizedBox(height: 6),
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: _importCookies,
+                  icon: Icon(Icons.cookie, color: themeColor, size: 16),
+                  label: const Text("IMPORT COOKIES.TXT", style: TextStyle(fontFamily: 'ShareTechMono', fontSize: 11, color: Colors.white, fontWeight: FontWeight.bold)),
+                  style: OutlinedButton.styleFrom(side: BorderSide(color: themeColor.withValues(alpha: 0.6)), backgroundColor: Colors.black, padding: const EdgeInsets.symmetric(vertical: 10)),
+                ),
+              ),
+              if (_cookiesInstalled) ...[
+                const SizedBox(width: 8),
+                OutlinedButton.icon(
+                  onPressed: _removeCookies,
+                  icon: const Icon(Icons.delete_outline, color: Colors.redAccent, size: 16),
+                  label: const Text("REMOVE", style: TextStyle(fontFamily: 'ShareTechMono', fontSize: 11, color: Colors.redAccent, fontWeight: FontWeight.bold)),
+                  style: OutlinedButton.styleFrom(side: const BorderSide(color: Colors.redAccent), backgroundColor: Colors.black, padding: const EdgeInsets.symmetric(vertical: 10)),
+                ),
+              ],
+            ],
+          ),
+          const SizedBox(height: 4),
+          const Text("EXPORT A COOKIES.TXT (NETSCAPE FORMAT) FROM YOUR BROWSER AND IMPORT IT HERE. THE FILE STAYS IN APP-PRIVATE STORAGE ON THIS DEVICE — NEVER UPLOADED, NEVER LOGGED.", style: TextStyle(fontFamily: 'ShareTechMono', fontSize: 11, color: Colors.amberAccent)),
         ],
       ),
     );
@@ -1301,12 +1443,14 @@ class _TabGrabberState extends State<TabGrabber> {
                   _b("M4A ORIGINAL (default): grabs the AAC stream the site already serves — no re-encode, no quality loss, fully taggable.\nMP3 320K: re-encodes for old car stereos. Bigger file, not better sound (sources are ~128-160 kbps).\nAS-IS: keeps whatever the site served (often .webm/.opus). Can't hold tags in this app."),
                   _h("DOWNLOAD OPTIONS"),
                   _b("AUDIO QUALITY: BEST grabs the highest-bitrate audio the site serves. OPUS 160K picks the Opus stream (best quality per byte). AAC 128K picks the AAC stream for widest compatibility.\nEMBED SUBTITLES: saves subtitles in your language — embedded in the file when the build has ffmpeg, otherwise as a sidecar .vtt file next to it.\nEMBED CHAPTERS / METADATA / THUMBNAIL: writes chapters, tags and cover art into the file at download time (needs ffmpeg — this build runs it through the bundled FFmpegKit library, so it is available on device).\nSPONSORBLOCK: MARK adds sponsor/intro/outro as chapters; REMOVE cuts them out entirely (needs ffmpeg).\nPLAYLIST RANGES: FETCH ALL FORMATS on a playlist lets you harvest only tracks FROM–TO, in normal or reverse order."),
+                  _h("COOKIE LOGIN"),
+                  _b("Import a cookies.txt (Netscape format, exported from your browser) to download logged-in, age-gated, or members-only videos. The file stays in app-private storage on this device, is never uploaded or logged, and can be removed any time from DOWNLOAD OPTIONS. Browser-cookie import is not offered — bring your own file."),
                   _h("COVER ART"),
                   _b("The video thumbnail is center-cropped to a square and offered as cover art. Turn it off on the card if you'd rather use the Forge's catalog art."),
                   _h("SITES"),
-                  _b("YouTube • SoundCloud • Bandcamp • Vimeo • X • Reddit • Facebook (silent videos auto-heal) • direct media links — 1000+ sites via yt-dlp."),
+                  _b("YouTube • SoundCloud • Bandcamp • Vimeo • X • Reddit • Facebook (silent videos auto-heal) • direct media links — 1000+ sites via yt-dlp. Hunt searches YouTube and SoundCloud only: Bandcamp and Vimeo have no search in yt-dlp, so paste their links directly."),
                   _h("WHEN IT BREAKS"),
-                  _b("- Bot-walls/403s: SETTINGS > CHECK FOR YT-DLP UPDATE.\n- Still broken: ON-BOARD PYTHON DOCTOR, then FULL STACK REFRESH.\n- DRM (Spotify/Netflix) and login-only content are not supported."),
+                  _b("- Bot-walls/403s: SETTINGS > CHECK FOR YT-DLP UPDATE.\n- Still broken: ON-BOARD PYTHON DOCTOR, then FULL STACK REFRESH.\n- Login-only content needs a cookies.txt import (COOKIE LOGIN in DOWNLOAD OPTIONS). DRM (Spotify/Netflix) is not supported."),
                   const SizedBox(height: 12),
                 ],
               ),
@@ -1487,6 +1631,17 @@ class _TabGrabberState extends State<TabGrabber> {
                 ),
                 const SizedBox(height: 14),
                 _field('LINK (PASTE OR SHARE INTO APP)', _urlController, themeColor),
+                if (_siteBadge != null) ...[
+                  const SizedBox(height: 8),
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                      decoration: BoxDecoration(color: Colors.black, border: Border.all(color: themeColor.withValues(alpha: 0.6)), borderRadius: BorderRadius.circular(4)),
+                      child: Text("SITE: $_siteBadge", style: TextStyle(fontFamily: 'ShareTechMono', fontSize: 11, fontWeight: FontWeight.bold, color: themeColor)),
+                    ),
+                  ),
+                ],
                 const SizedBox(height: 10),
                 Row(
                   children: [
