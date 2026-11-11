@@ -11,6 +11,7 @@ import 'package:ffmpeg_kit_extended_flutter/ffmpeg_kit_extended_flutter.dart';
 class FFmpegExecutor {
   static final Queue<_Job> _queue = Queue<_Job>();
   static bool _busy = false;
+  static bool get isBusy => _busy;
   static FFmpegSession? _currentSession;
   static String? _currentDescription;
   static final Set<String> _canceledDescriptions = <String>{};
