@@ -125,7 +125,9 @@ class _SentinelScreenState extends State<SentinelScreen> {
     for (final entry in _albumGroups.entries) {
       entries.add(_GroupEntry(entry.key, entry.value));
       if (!_collapsedGroups.contains(entry.key)) {
-        for (final hit in entry.value) entries.add(_HitEntry(hit));
+        for (final hit in entry.value) {
+          entries.add(_HitEntry(hit));
+        }
       }
     }
     return entries;
@@ -325,14 +327,21 @@ class _SentinelScreenState extends State<SentinelScreen> {
           content: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              for (final reason in reasons)
-                RadioListTile<String>(
-                  title: Text(reason, style: const TextStyle(fontFamily: 'ShareTechMono', color: Colors.white, fontSize: 12)),
-                  value: reason,
-                  groupValue: choice,
-                  activeColor: themeColor,
-                  onChanged: (v) => setDialogState(() => choice = v!),
+              RadioGroup<String>(
+                groupValue: choice,
+                onChanged: (v) => setDialogState(() => choice = v ?? ''),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    for (final reason in reasons)
+                      RadioListTile<String>(
+                        title: Text(reason, style: const TextStyle(fontFamily: 'ShareTechMono', color: Colors.white, fontSize: 12)),
+                        value: reason,
+                        activeColor: themeColor,
+                      ),
+                  ],
                 ),
+              ),
               TextField(
                 controller: noteCtrl,
                 style: const TextStyle(fontFamily: 'ShareTechMono', color: Colors.white),

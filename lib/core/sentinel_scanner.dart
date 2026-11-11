@@ -363,8 +363,8 @@ class SentinelScanner {
     final existing = store.byId(id);
     final keepStatus = existing != null &&
         (existing.status == SentinelStatus.ignored || existing.status == SentinelStatus.uncompletable);
-    final stickyStatus = keepStatus ? existing!.status : SentinelStatus.open;
-    final stickyReason = keepStatus ? existing!.statusReason : '';
+    final stickyStatus = keepStatus ? existing.status : SentinelStatus.open;
+    final stickyReason = keepStatus ? existing.statusReason : '';
     if (row.path.isEmpty) {
       final snapshot = <String, String>{
         'TITLE': row.title,
