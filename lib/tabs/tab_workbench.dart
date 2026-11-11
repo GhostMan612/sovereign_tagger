@@ -344,7 +344,6 @@ class _TabWorkbenchState extends State<TabWorkbench> {
       final samples = RegExp(r'\bn:\s*(\d+)').firstMatch(output);
       if (!mounted) return;
       if (mean != null && max != null) {
-        final meanDb = double.tryParse(mean.group(1) ?? "") ?? 0.0;
         final headroom = -1.0 - (double.tryParse(max.group(1) ?? "") ?? 0.0);
         setState(() => _volumeReport = "Mean Volume: ${mean.group(1)} dB\nMax Volume: ${max.group(1)} dB\nHeadroom To -1 dBTP: ${headroom.toStringAsFixed(1)} dB${samples != null ? '\nSamples: ${samples.group(1)}' : ''}");
       } else {
@@ -2590,7 +2589,7 @@ class _PcmWavePainter extends CustomPainter {
 class _MixTrack {
   final String path;
   final int? durationMs;
-  double gain;
-  double pan;
-  _MixTrack({required this.path, this.durationMs, this.gain = 1.0, this.pan = 0.0});
+  double gain = 1.0;
+  double pan = 0.0;
+  _MixTrack({required this.path, this.durationMs});
 }
