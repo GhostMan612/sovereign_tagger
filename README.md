@@ -272,16 +272,17 @@ Sovereign Tagger incorporates a dedicated media forensics suite accessible via *
 
 ---
 
-## 7. Subsystem 9: Cryptographic Vault & Security Architecture
+## 7. Subsystem 9: Backup & Credential Handling
 
-### 7.1 Encrypted Vault Backup (`.bin`)
-- **Payload:** Backs up application preferences, custom 15-band EQ presets, favorite playlists, and third-party API credentials.
-- **Encryption Scheme:** Encrypted binary packaging using a symmetric XOR cipher keyed against fixed project salt `0x53` with Base64 framing and strict version checking.
-- **Portability:** Restores seamlessly across fresh installations with one tap.
+### 7.1 Legacy Reversible Backup (`.bin`) — NOT ENCRYPTED
+- **Payload:** Exports application preferences, EQ presets, queue/playlists, and third-party API credentials into Downloads.
+- **Current encoding:** Single-byte XOR with a fixed public byte (`0x53`), followed by Base64. This is reversible obfuscation, **not cryptographic encryption**. Anyone with the backup file can recover the credentials.
+- **Safety:** Treat exported `sovereign_config.bin` files as secrets. Do not share, upload, or sync them to untrusted destinations. Existing files remain exposed until securely destroyed or replaced.
+- **Portability:** The current backup is restorable across installations; a future authenticated-encryption format must include an explicit migration plan.
 
 ### 7.2 API Credentials Governance
-- Commercial API credentials (Genius Access Tokens, ACRCloud Host/Key/Secret pairs, Hugging Face Tokens) are stored strictly in device-private `SharedPreferences`.
-- Credentials never leave the device and are never committed to version control.
+- Genius, ACRCloud, and Hugging Face credentials currently live in app-private `SharedPreferences` and are also included in user-exported, reversibly obfuscated `.bin` backups in shared Downloads.
+- No credentials should be committed to source control. SharedPreferences and legacy exports are **not** substitutes for an authenticated encrypted vault.
 
 ---
 
