@@ -21,12 +21,26 @@ Session-end law: update rows 2–4 every session (+ row 5 when a new gotcha is l
 ## Where we are
 
 **Date:** 2026-11-11
-**Phase:** 0–36 implementation, full documentation suite (`README.md`, `LICENSE`, `LICENSES.md`, `SECURITY.md`, `CONTRIBUTING.md`), `impellerc` shader (`GLES`/`Vulkan`/`SkSL`), analyzer, and Android ARM64 APK build gates VERIFIED; zero stubs remaining. F-Droid ready.
+**Phase:** 0–36 implementation + PR #1–#4 MERGED (Sentinel Slice 1 included), full documentation suite (`README.md`, `LICENSE`, `LICENSES.md`, `SECURITY.md`, `CONTRIBUTING.md`), `impellerc` shader (`GLES`/`Vulkan`/`SkSL`), analyzer, and Android ARM64 APK build gates VERIFIED; zero stubs remaining. F-Droid ready.
 - `flutter analyze --no-pub` -> `No issues found!`.
+- `flutter test` -> `All 6 tests passed!`.
 - `impellerc` -> `shaders/backdrop.frag` & `shaders/ghost.frag` compile cleanly across GLES, Vulkan, and SkSL.
 - `flutter build apk --debug --target-platform android-arm64` -> `LiteRT 1.4.0` + `EmbeddingGemmaBridge.kt` + `SentencePieceTokenizer.kt` + `shaders/ghost.frag` compile cleanly.
 - **Motorola Moto G (2025) Hardware Smoke Test (Android 16 / API 36, Device ID `ZT4222BMWN`): ALL PASS** — `FlutterTextureView` (`RenderMode.texture`) eliminated BLASTBufferQueue frame saturation; native hardware Equalizer/LoudnessEnhancer attached cleanly without NPE; live 256-D neural self-test verified via LiteRT; GhostBot decoupled `ValueNotifier` chat history verified without red `ErrorWidget` boxes.
 **Branch:** `main` is the single canonical branch.
+
+## What shipped — PR #4 Sentinel Slice 1: Policy Engine, Two-Tier Scanner, Hit-List Store, Scan UI (2026-11-11)
+
+1. **Policy Engine (`lib/core/sentinel_policy.dart`, `lib/core/sentinel_names.dart`)**:
+   - Canonical locked filename format `TT - Album Artist · Song Title.ext` with formal name dictionary (`SentinelNames`), Title Case normalization with formal-name exceptions, canonical `ft. X & Y`, and 16-issue audit (`NAME_MISMATCH`, `TITLE_CASE_DRIFT`, `FEAT_NOT_CANONICAL`, `MISSING_*`).
+2. **Two-Tier Scanner (`lib/core/sentinel_scanner.dart`)**:
+   - MediaStore triage to TagIO verdict with 5% sample of clean files, artwork/lyrics confirmation for candidates only, batches of 10, cancel/resume, incremental skip, and collision detection pass.
+3. **Store & Issue Architecture (`lib/services/sentinel_store.dart`)**:
+   - Unified `SentinelNamingPolicy` delegation to `SentinelPolicy`, expanded `SentinelIssue` constants (`artistAlbumArtistMismatch`, `nameCollision`, `unreadableTags`, `featNotCanonical`, `titleCaseDrift`), atomic persistence (`sentinel_hits.json`), and status transitions (`in_forge`, `in_pipeline`, `uncompletable`, `ignored`, `stale`).
+4. **Scan Screen & Library Entry (`lib/screens/sentinel_screen.dart`, `lib/tabs/tab_library.dart`)**:
+   - Dedicated cyber-styled Sentinel screen with severity + issue counts, scan/resume/cancel controls, and 1-tap "Open in Forge" routing; shield action button in `TabLibrary` header.
+5. **Test Suite Verification (`test/ghost_foundations_test.dart`)**:
+   - Aligned unit tests with the canonical middle-dot formatting and verified clean test suite (`6/6 passed`) and static analysis (`No issues found!`).
 
 ## What shipped — Phase 36 Zero-Stub Finalization & Comprehensive Documentation / Licensing Overhaul (2026-11-10)
 

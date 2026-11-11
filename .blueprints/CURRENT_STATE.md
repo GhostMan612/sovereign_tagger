@@ -1,5 +1,12 @@
 # CURRENT_STATE.md — Sovereign Tagger v2 (post-Phase 36)
-> Snapshot as of 2026-11-11 — Phases 0–36 COMPLETE (`flutter analyze --no-pub` -> `No issues found!`; Moto G 2025 hardware smoke test ALL PASS).
+> Snapshot as of 2026-11-11 — Phases 0–36 + PR #1–#4 COMPLETE (`flutter analyze --no-pub` -> `No issues found!`; `flutter test` -> 6/6 passed; Moto G 2025 hardware smoke test ALL PASS).
+>
+> **PR #4 deltas (Sentinel Slice 1 — Policy Engine, Two-Tier Scanner, Store, Scan UI):**
+> - **Policy Engine (`lib/core/sentinel_policy.dart`, `lib/core/sentinel_names.dart`)**: Canonical locked filename format `TT - Album Artist · Song Title.ext` with formal name dictionary (`SentinelNames`), Title Case normalization with formal-name exceptions, canonical `ft. X & Y`, and 16-issue audit (`NAME_MISMATCH`, `TITLE_CASE_DRIFT`, `FEAT_NOT_CANONICAL`, `MISSING_*`).
+> - **Two-Tier Scanner (`lib/core/sentinel_scanner.dart`)**: MediaStore triage to TagIO verdict with 5% sample of clean files, artwork/lyrics confirmation for candidates only, batches of 10, cancel/resume, incremental skip, and collision detection pass.
+> - **Store & Issue Architecture (`lib/services/sentinel_store.dart`)**: Unified `SentinelNamingPolicy` delegation to `SentinelPolicy`, expanded `SentinelIssue` constants (`artistAlbumArtistMismatch`, `nameCollision`, `unreadableTags`, `featNotCanonical`, `titleCaseDrift`), atomic persistence (`sentinel_hits.json`), and status transitions (`in_forge`, `in_pipeline`, `uncompletable`, `ignored`, `stale`).
+> - **Scan Screen & Library Entry (`lib/screens/sentinel_screen.dart`, `lib/tabs/tab_library.dart`)**: Dedicated cyber-styled Sentinel screen with severity + issue counts, scan/resume/cancel controls, and 1-tap "Open in Forge" routing; shield action button in `TabLibrary` header.
+>
 >
 > **Phase 36 deltas (Zero-Stub & Full-Breath Finalization):**
 > - **Non-Blocking `EmbeddingGemma-300M` Inference, Background Router Warm-Up & Live Self-Test (`EG2`/G54)**: Eliminated synchronous 71-pass LiteRT CPU lockup in `GhostBrain.respond()` and `GhostVectorIndex.search()`, added gentle 2-item-per-220ms background warmers (`_warmExemplarsInBackground`, `_warmKbInBackground`), reused direct `ByteBuffer`s in `EmbeddingGemmaBridge.kt`, fixed BPE fallback merge rank in `SentencePieceTokenizer.kt`, added a 6s timeout on `embedText`, and wired native `selfTest` + a 1-tap `TEST LIVE 256-D INFERENCE` button & `SnackBar` in `SettingsScreen`.
