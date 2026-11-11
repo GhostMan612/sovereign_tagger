@@ -107,7 +107,7 @@ class AppGhostWorld implements GhostWorld {
       final tracks = rows
           .map(LibTrack.fromMap)
           .where((t) => t.path.isNotEmpty)
-          .map((t) => GhostTrack(path: t.path, title: t.title, artist: t.artist, album: t.album, trackNo: t.track, discNo: t.disc))
+          .map((t) => GhostTrack(path: t.path, title: t.title, artist: t.artist, album: t.album, trackNo: t.track, discNo: t.disc, dateAdded: t.dateAdded))
           .toList();
       _cache = tracks;
       _cachedAt = DateTime.now();
@@ -207,6 +207,24 @@ class AppGhostWorld implements GhostWorld {
     }
     for (final t in tracks.reversed) {
       await AudioService.playNext(File(t.path));
+    }
+  }
+
+  @override
+  Future<List<GhostTrack>> favorites() async {
+    final tracks = await library();
+    return tracks.where((t) => PlaylistStore.isFavorite(t.path)).toList();
+  }
+
+  @override
+  Future<void> clearQueueExceptCurrent() async {
+    final current = _currentPath;
+    if (current == null || current.isEmpty) return;
+    for (var i = AudioService.playlist.value.length - 1; i >= 0; i--) {
+      final list = AudioService.playlist.value;
+      if (i >= list.length) continue;
+      if (list[i].path == current) continue;
+      await AudioService.removeFromPlaylist(i);
     }
   }
 
