@@ -15,6 +15,7 @@ import '../core/ffmpeg_executor.dart';
 import '../core/cyber_tap_feedback.dart';
 import '../core/forge_request.dart';
 import '../core/media_probe.dart';
+import '../core/sentinel_policy.dart';
 import '../core/storage_client.dart';
 import '../core/tag_io.dart';
 import '../core/title_cleaner.dart';
@@ -487,7 +488,7 @@ class _TabGrabberState extends State<TabGrabber> {
       a: g.artist,
       al: (info['album'] ?? '').toString(),
       tr: g.track,
-      name: TitleCleaner.buildFileName(artist: g.artist, title: g.title, trackNo: g.track, ext: ext),
+      name: SentinelPolicy.expectedFileName({'TITLE': g.title, 'ARTIST': g.artist, 'TRACK': g.track}, displayName: path.split('/').last),
     );
     if (!mounted) return;
     setState(() {
@@ -1443,7 +1444,9 @@ class _TabGrabberState extends State<TabGrabber> {
 
   void _autoCardName(_GrabCard card) {
     if (card.fileNameTouched) return;
-    card.fileName.text = TitleCleaner.buildFileName(artist: card.artist.text.trim(), title: card.title.text.trim(), trackNo: card.track.text.trim(), ext: card.ext);
+    card.fileName.text = card.isVideo
+        ? TitleCleaner.buildFileName(artist: card.artist.text.trim(), title: card.title.text.trim(), trackNo: card.track.text.trim(), ext: card.ext)
+        : SentinelPolicy.expectedFileName(card.tags(), displayName: card.path.split('/').last);
   }
 
   Widget _cardButton(IconData icon, String label, Color color, VoidCallback? onPressed) {

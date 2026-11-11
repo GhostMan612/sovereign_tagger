@@ -32,6 +32,7 @@ class _SentinelScreenState extends State<SentinelScreen> {
   String _filterIssue = 'all';
   String _search = '';
   bool _groupByAlbum = false;
+  bool _filterMigration = false;
   final Set<String> _selected = <String>{};
   final Set<String> _collapsedGroups = <String>{};
 
@@ -70,6 +71,11 @@ class _SentinelScreenState extends State<SentinelScreen> {
   List<SentinelHit> get _visibleHits {
     final q = _search.trim().toLowerCase();
     final filtered = _hits.where((h) {
+      if (_filterMigration) {
+        if (!h.issues.contains(SentinelIssue.nameMismatch)) return false;
+        if (h.issues.contains(SentinelIssue.nameCollision)) return false;
+        if (h.status != SentinelStatus.open && h.status != SentinelStatus.inForge && h.status != SentinelStatus.inPipeline) return false;
+      }
       if (_filterStatus != 'all' && h.status != _filterStatus) return false;
       if (_filterSeverity != 'all' && h.severity != _filterSeverity) return false;
       if (_filterIssue != 'all' && !h.issues.contains(_filterIssue)) return false;
@@ -493,6 +499,15 @@ class _SentinelScreenState extends State<SentinelScreen> {
               labelStyle: TextStyle(color: _groupByAlbum ? Colors.black : Colors.white70),
               onSelected: (_) => setState(() => _groupByAlbum = !_groupByAlbum),
             ),
+            const SizedBox(width: 6),
+            ChoiceChip(
+              label: const Text('MIGRATION', style: TextStyle(fontFamily: 'ShareTechMono', fontSize: 11)),
+              selected: _filterMigration,
+              selectedColor: themeColor,
+              backgroundColor: Colors.white12,
+              labelStyle: TextStyle(color: _filterMigration ? Colors.black : Colors.white70),
+              onSelected: (_) => setState(() => _filterMigration = !_filterMigration),
+            ),
           ],
         ),
       ),
@@ -724,6 +739,14 @@ class _SentinelScreenState extends State<SentinelScreen> {
               ),
               _chipRow(themeColor),
               _severityRow(themeColor),
+              if (_filterMigration)
+                const Padding(
+                  padding: EdgeInsets.fromLTRB(16, 4, 16, 0),
+                  child: Text(
+                    'MIGRATION: OLD-FORM NAMES → POLICY FORM "TT - ALBUM ARTIST · TITLE". RENAMES HAPPEN IN FORGE / PIPELINE ONLY — SENTINEL NEVER RENAMES. IGNORED AND UNCOMPLETABLE FILES ARE NOT LISTED; NAME COLLISIONS NEED A MANUAL FIX FIRST. A FILE THAT MATCHES THE POLICY DROPS OUT ON THE NEXT SCAN.',
+                    style: TextStyle(fontFamily: 'ShareTechMono', fontSize: 11, color: Colors.white54),
+                  ),
+                ),
               if (_status.isNotEmpty)
                 Padding(
                   padding: const EdgeInsets.fromLTRB(16, 4, 16, 4),

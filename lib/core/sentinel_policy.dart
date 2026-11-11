@@ -169,12 +169,7 @@ class SentinelPolicy {
     final title = titleMain.isEmpty ? '' : titleCase(titleMain) + canonicalFeat(feats);
     final track = trackNumber(tags['TRACK']);
     final ext = TitleCleaner.extensionOf(displayName);
-    final artistPart = TitleCleaner.sanitizeFileName(albumArtist);
-    final titlePart = TitleCleaner.sanitizeFileName(title);
-    var base = [if (artistPart.isNotEmpty) artistPart, if (titlePart.isNotEmpty) titlePart].join(' · ');
-    if (base.isEmpty) base = 'Untitled';
-    final named = '$track - $base';
-    return ext.isEmpty ? named : '$named.$ext';
+    return TitleCleaner.buildSentinelFileName(albumArtist: albumArtist, title: title, trackNo: track, ext: ext);
   }
 
   static String severityFor(List<String> issues) {
