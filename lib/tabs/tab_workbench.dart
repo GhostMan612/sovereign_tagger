@@ -84,6 +84,15 @@ class _TabWorkbenchState extends State<TabWorkbench> {
   String _toneType = "SINE";
   String _secondFilePath = "";
   int? _wbDurationMs;
+  double _splitMinSegmentSec = 2.0;
+  String _splitReport = "";
+  final List<String> _chainOps = [];
+  final TextEditingController _chainNameCtrl = TextEditingController();
+  String? _selectedChain;
+  Map<String, List<String>> _savedChains = {};
+  String _chainAddOp = "Normalize Audio (LUFS -14)";
+  final List<String> _batchFiles = [];
+  String _batchReport = "";
 
   String _pitchMode = "VARISPEED (pitch+tempo)";
   String _normMode = "TWO-PASS LOUDNORM";
@@ -192,6 +201,7 @@ class _TabWorkbenchState extends State<TabWorkbench> {
     "Scan ReplayGain (EBU R128)",
     "Scan Volume (volumedetect)",
     "Scan Silence (silencedetect)",
+    "Split On Silence (silencedetect)",
     "Transcribe (Whisper AI)",
     "Insert Silence",
     "Delete Region",
@@ -212,6 +222,31 @@ class _TabWorkbenchState extends State<TabWorkbench> {
   ];
 
   final List<String> _formats = ["mp3", "wav", "flac", "ogg", "m4a"];
+
+  static const List<String> _chainableOps = [
+    "Normalize Audio (LUFS -14)",
+    "Granular Audio DSP (Speed/Reverb)",
+    "Apply Fades",
+    "Fold To Mono",
+    "Trim Silence",
+    "Trim To Silence (Precise)",
+    "AI Denoise (afftdn)",
+    "Parametric EQ",
+    "Compress Dynamics",
+    "15-Band Equalizer (AutoEq)",
+    "Insert Silence",
+    "Delete Region",
+    "Click/Pop Repair (adeclick)",
+    "De-Esser",
+    "Limiter",
+    "Multiband Compress (mcompand)",
+    "Chorus (spatial)",
+    "Compand (dynamic shaping)",
+    "Firequalizer Curve EQ",
+    "DC/Rumble Fix (highpass)",
+  ];
+
+  bool _isBatchable(String op) => _chainableOps.contains(op) || op == "Convert Format" || op == "Extract Audio (Video to MP3)";
 
   Future<void> _scanLufs() async {
     if (_selectedFilePath.isEmpty || _isProcessing) return;
@@ -397,6 +432,263 @@ class _TabWorkbenchState extends State<TabWorkbench> {
     }
   }
 
+  List<({double start, double? end})> _parseSilences(String output) {
+    final starts = RegExp(r'silence_start:\s*([\d.]+)').allMatches(output).map((m) => double.tryParse(m.group(1) ?? "") ?? 0.0).toList();
+    final ends = RegExp(r'silence_end:\s*([\d.]+)\s*\|\s*silence_duration:\s*([\d.]+)').allMatches(output).map((m) => double.tryParse(m.group(1) ?? "") ?? 0.0).toList();
+    final out = <({double start, double? end})>[];
+    for (int i = 0; i < starts.length; i++) {
+      out.add((start: starts[i], end: i < ends.length ? ends[i] : null));
+    }
+    return out;
+  }
+
+  List<({double start, double end})> _splitSegmentsFromSilence(String output, int? durationMs) {
+    final silences = _parseSilences(output);
+    double? totalSec;
+    if (durationMs != null && durationMs > 0) {
+      totalSec = durationMs / 1000.0;
+    } else if (silences.isNotEmpty && silences.last.end != null) {
+      totalSec = silences.last.end;
+    } else if (silences.isNotEmpty) {
+      totalSec = silences.last.start;
+    }
+    if (totalSec == null || totalSec <= 0) return [];
+    final segments = <({double start, double end})>[];
+    double cursor = 0.0;
+    for (final s in silences) {
+      if (s.start - cursor >= _splitMinSegmentSec) {
+        segments.add((start: cursor, end: s.start));
+      }
+      if (s.end == null) return segments;
+      cursor = s.end!;
+    }
+    if (totalSec - cursor >= _splitMinSegmentSec) {
+      segments.add((start: cursor, end: totalSec));
+    }
+    return segments;
+  }
+
+  Future<void> _executeSplitOnSilence() async {
+    if (_selectedFilePath.isEmpty || _isProcessing) return;
+    setState(() { _isProcessing = true; _opProgress = 0.0; _splitReport = ""; _statusMessage = "Scanning Silence For Split Points..."; });
+    try {
+      final durationMs = await probeDurationMs(_selectedFilePath);
+      if (!mounted) return;
+      final session = await FFmpegExecutor.execute('-y -i "$_selectedFilePath" -af silencedetect=noise=-45dB:d=0.3 -f null -');
+      final output = session.getOutput() ?? "";
+      final fault = _filterFaultHint(output);
+      if (!mounted) return;
+      if (fault != null) {
+        setState(() => _isProcessing = false);
+        await _reportFilterFault(fault, output);
+        return;
+      }
+      final silences = _parseSilences(output);
+      if (silences.isEmpty) {
+        setState(() { _isProcessing = false; _statusMessage = "No Silence Found (threshold -45dB, min 0.3s). Nothing To Split."; });
+        return;
+      }
+      var segments = _splitSegmentsFromSilence(output, durationMs);
+      if (segments.isEmpty) {
+        setState(() { _isProcessing = false; _statusMessage = "Silence Found, But No Segment Meets The Minimum Length (${_splitMinSegmentSec.toStringAsFixed(1)}s). Lower The Minimum Or Check The Source."; });
+        return;
+      }
+      if (segments.length == 1) {
+        setState(() { _isProcessing = false; _statusMessage = "Only One Segment Found — No Splittable Silence. Nothing Written."; });
+        return;
+      }
+      const maxSegments = 200;
+      final capped = segments.length > maxSegments;
+      if (capped) segments = segments.sublist(0, maxSegments);
+      final parts = _selectedFilePath.split('.');
+      final srcExt = parts.length > 1 ? parts.last.toLowerCase() : "";
+      final ext = _preservedContainers.contains(srcExt) ? srcExt : "flac";
+      final tempDir = await _storageChannel.invokeMethod('getTempDirectory');
+      final timestamp = DateTime.now().millisecondsSinceEpoch;
+      final baseName = _baseNameOf(_selectedFilePath);
+      final lines = <String>[];
+      int ok = 0;
+      for (int i = 0; i < segments.length; i++) {
+        final seg = segments[i];
+        final outPath = "$tempDir/workbench_split_${timestamp}_$i.$ext";
+        final command = '-y -i "$_selectedFilePath" -ss ${seg.start.toStringAsFixed(2)} -to ${seg.end.toStringAsFixed(2)} -vn ${_audioCodecArgs(ext)} "$outPath"';
+        if (!mounted) return;
+        setState(() { _opProgress = i / segments.length; _statusMessage = "Splitting Segment ${i + 1}/${segments.length} (${seg.start.toStringAsFixed(1)}s - ${seg.end.toStringAsFixed(1)}s)..."; });
+        final segSession = await FFmpegExecutor.execute(command);
+        if (!ReturnCode.isSuccess(segSession.getReturnCode())) {
+          final segOut = segSession.getOutput() ?? "";
+          final segTail = segOut.length > 200 ? segOut.substring(segOut.length - 200) : segOut;
+          lines.add("FAIL ${i + 1}: rc=${segSession.getReturnCode()} $segTail");
+          continue;
+        }
+        final title = "${baseName}_split_${(i + 1).toString().padLeft(2, '0')}";
+        try {
+          final uriString = await _storageChannel.invokeMethod('addToMediaStore', {'filePath': outPath, 'title': title});
+          lines.add("OK ${i + 1}: ${seg.start.toStringAsFixed(1)}s-${seg.end.toStringAsFixed(1)}s -> $uriString");
+          File(outPath).delete().ignore();
+          ok++;
+        } catch (_) {
+          lines.add("CACHE ONLY ${i + 1}: $outPath");
+          ok++;
+        }
+      }
+      if (!mounted) return;
+      TapFeedback.machineConfirm();
+      setState(() {
+        _isProcessing = false;
+        _opProgress = 1.0;
+        _splitReport = "Split Done: $ok/${segments.length} OK${capped ? ' (capped at $maxSegments — raise the minimum segment length for long files)' : ''}.\n${lines.join('\n')}";
+        _statusMessage = "Split Complete: $ok/${segments.length} Segments Written. See SPLIT report.";
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() { _isProcessing = false; _statusMessage = "ERR: Split Fault: $e"; });
+    }
+  }
+
+  List<String> _filtersForOperation(String op, int? durationMs) {
+    final filters = <String>[];
+    switch (op) {
+      case "Apply Fades":
+        if (durationMs == null) throw StateError("ERR: Cannot Determine Duration For Fade Out Point.");
+        final totalSec = durationMs / 1000.0;
+        if (_fadeInSec > 0) filters.add("afade=t=in:st=0:d=${_fadeInSec.toStringAsFixed(2)}");
+        if (_fadeOutSec > 0) {
+          final outStart = (totalSec - _fadeOutSec).clamp(0.0, totalSec).toStringAsFixed(2);
+          filters.add("afade=t=out:st=$outStart:d=${_fadeOutSec.toStringAsFixed(2)}");
+        }
+        break;
+      case "Fold To Mono":
+        filters.add("pan=mono|c0=0.5*c0+0.5*c1");
+        break;
+      case "Insert Silence": {
+        final ms = (_silenceSec * 1000).round();
+        filters.add(_silenceAtStart ? "adelay=$ms:all=1" : "apad=pad_dur=${_silenceSec.toStringAsFixed(2)}");
+        break;
+      }
+      case "Delete Region": {
+        final sMs = _waveSelInMs ?? _parseHmsSafe(_startCtrl.text).inMilliseconds;
+        final eMs = _waveSelOutMs ?? _parseHmsSafe(_endCtrl.text).inMilliseconds;
+        final sSec = sMs / 1000.0;
+        final eSec = eMs / 1000.0;
+        if (eSec <= sSec) throw StateError("ERR: END Must Exceed START (use wave selection).");
+        filters.add("aselect='not(between(t,$sSec,$eSec))',asetpts=N/SR/TB");
+        break;
+      }
+      case "Click/Pop Repair (adeclick)":
+        filters.add("adeclick");
+        break;
+      case "De-Esser":
+        filters.add("deesser=i=${_deessIntensity.toStringAsFixed(2)}:m=0.5:f=0.5");
+        break;
+      case "Limiter":
+        filters.add("alimiter=limit=${_limitLevel.toStringAsFixed(2)}:attack=5:release=50");
+        break;
+      case "Multiband Compress (mcompand)":
+        filters.add("mcompand");
+        break;
+      case "DC/Rumble Fix (highpass)":
+        filters.add("highpass=f=10");
+        break;
+      case "Trim Silence":
+        filters.add("silenceremove=start_periods=1:start_duration=0.3:start_threshold=-45dB:stop_periods=-1:stop_duration=0.8:stop_threshold=-45dB");
+        break;
+      case "Trim To Silence (Precise)":
+        filters.add("silenceremove=start_periods=1:start_threshold=-50dB:start_silence=0.05:stop_periods=-1:stop_threshold=-50dB:stop_silence=0.05");
+        break;
+      case "Chorus (spatial)":
+        filters.add("chorus=0.7:0.9:55:0.4:0.25:${_chorusDepthMs.toStringAsFixed(1)}");
+        break;
+      case "Compand (dynamic shaping)":
+        filters.add("compand=attacks=0.05:decays=0.3:points=-80/-80|-60/-50|-30/-25|-10/-8|0/0:gain=${_compandGainDb.toStringAsFixed(1)}");
+        break;
+      case "Firequalizer Curve EQ": {
+        final curve = "firequalizer=gain_entry='entry(100,${_eqBass.toStringAsFixed(1)});entry(320,${_eqLowMid.toStringAsFixed(1)});entry(1000,${_eqMid.toStringAsFixed(1)});entry(3500,${_eqHighMid.toStringAsFixed(1)});entry(8000,${_eqTreble.toStringAsFixed(1)})'";
+        if (_eqBass == 0 && _eqLowMid == 0 && _eqMid == 0 && _eqHighMid == 0 && _eqTreble == 0) {
+          throw StateError("ERR: All EQ Bands At Zero. Nothing To Apply.");
+        }
+        filters.add(curve);
+        break;
+      }
+      case "Granular Audio DSP (Speed/Reverb)":
+        if (_isReversed) filters.add("areverse");
+        if (_audioSpeed != 1.0) {
+          final s = _audioSpeed.toStringAsFixed(2);
+          switch (_pitchMode) {
+            case "RUBBERBAND (pitch only)":
+              filters.add("rubberband=pitch=$s");
+              break;
+            case "ATEMPO (tempo only)":
+              filters.add("atempo=${_audioSpeed.clamp(0.5, 2.0).toStringAsFixed(2)}");
+              break;
+            default:
+              filters.add("asetrate=44100*$s,aresample=44100");
+          }
+        }
+        if (_reverbIntensity > 0) {
+          final delay = 60 + (_reverbIntensity * 40);
+          final decay = 0.2 + (_reverbIntensity * 0.4);
+          filters.add("aecho=0.8:0.88:$delay:$decay");
+        }
+        break;
+      case "AI Denoise (afftdn)":
+        filters.add("afftdn=nf=-25");
+        break;
+      case "Parametric EQ":
+        if (_eqBass != 0) filters.add("bass=g=${_eqBass.toStringAsFixed(1)}:f=100");
+        if (_eqLowMid != 0) filters.add("equalizer=f=320:t=q:w=1.2:g=${_eqLowMid.toStringAsFixed(1)}");
+        if (_eqMid != 0) filters.add("equalizer=f=1000:t=q:w=1.2:g=${_eqMid.toStringAsFixed(1)}");
+        if (_eqHighMid != 0) filters.add("equalizer=f=3500:t=q:w=1.2:g=${_eqHighMid.toStringAsFixed(1)}");
+        if (_eqTreble != 0) filters.add("treble=g=${_eqTreble.toStringAsFixed(1)}:f=8000");
+        if (filters.isEmpty) throw StateError("ERR: All EQ Bands At Zero. Nothing To Apply.");
+        break;
+      case "Compress Dynamics":
+        filters.add("acompressor=threshold=0.1:ratio=${_compRatio.toStringAsFixed(1)}:attack=50:release=500");
+        break;
+      case "15-Band Equalizer (AutoEq)":
+        for (int i = 0; i < 15; i++) {
+          if (_eq15Bands[i] != 0) {
+            final freq = _eq15Freqs[i];
+            filters.add("equalizer=f=$freq:t=q:w=1.2:g=${_eq15Bands[i].toStringAsFixed(1)}");
+          }
+        }
+        if (filters.isEmpty) throw StateError("ERR: All EQ Bands At Zero. Nothing To Apply.");
+        break;
+      case "Normalize Audio (LUFS -14)":
+        break;
+      default:
+        throw StateError("ERR: OP '$op' HAS NO FILTER CHAIN.");
+    }
+    return filters;
+  }
+
+  String _baseNameOf(String path) {
+    final name = path.split('/').last;
+    return name.contains('.') ? name.substring(0, name.lastIndexOf('.')) : name;
+  }
+
+  Future<String> _injectToMediaStore(String outPath, String title) async {
+    try {
+      final uriString = await _storageChannel.invokeMethod('addToMediaStore', {'filePath': outPath, 'title': title});
+      File(outPath).delete().ignore();
+      return "Success. Payload Written To:\n$uriString";
+    } catch (_) {
+      return "Injected To Cache Only (MediaStore Fault):\n$outPath";
+    }
+  }
+
+  Future<void> _handleRenderFailure(FFmpegSession session) async {
+    final output = session.getOutput() ?? "";
+    final fault = _filterFaultHint(output);
+    if (fault != null) {
+      setState(() => _isProcessing = false);
+      await _reportFilterFault(fault, output);
+    } else {
+      final tail = output.length > 300 ? output.substring(output.length - 300) : output;
+      setState(() { _isProcessing = false; _statusMessage = "ERR: FFmpeg Failed (rc=${session.getReturnCode()}). Last output:\n$tail"; });
+    }
+  }
+
   Future<void> _pickMixTrack() async {
     if (_isProcessing || _isRecording) return;
     try {
@@ -442,6 +734,7 @@ class _TabWorkbenchState extends State<TabWorkbench> {
     _recorderController = RecorderController();
     GhostCommandBus.pendingWorkbenchCommand.addListener(_onGhostWorkbenchCommand);
     WidgetsBinding.instance.addPostFrameCallback((_) => _onGhostWorkbenchCommand());
+    _loadChains();
   }
 
   @override
@@ -451,6 +744,7 @@ class _TabWorkbenchState extends State<TabWorkbench> {
     _recorderController.dispose();
     _startCtrl.dispose();
     _endCtrl.dispose();
+    _chainNameCtrl.dispose();
     super.dispose();
   }
 
@@ -852,6 +1146,10 @@ class _TabWorkbenchState extends State<TabWorkbench> {
       await _scanSilence();
       return;
     }
+    if (_selectedOperation == "Split On Silence (silencedetect)") {
+      await _executeSplitOnSilence();
+      return;
+    }
     if (_selectedOperation == "Lossless Audio Extract (-c:a copy)" ||
         _selectedOperation == "Split Chapters Losslessly (-c copy)" ||
         _selectedOperation == "Fake-Lossless & DR Audit") {
@@ -973,9 +1271,15 @@ class _TabWorkbenchState extends State<TabWorkbench> {
       } else if (_selectedOperation == "Convert Format") {
         command = '-y -i "$_selectedFilePath" -vn ${_audioCodecArgs(_targetFormat)} "$outPath"';
       } else if (preserveOp) {
-        List<String> filters = [];
+        List<String> filters;
+        try {
+          filters = _filtersForOperation(_selectedOperation, durationMs);
+        } on StateError catch (e) {
+          setState(() { _isProcessing = false; _statusMessage = e.message; });
+          return;
+        }
         final resampleFilter = _resampleFilter();
-        if (resampleFilter.isNotEmpty) filters.add(resampleFilter);
+        if (resampleFilter.isNotEmpty) filters.insert(0, resampleFilter);
 
         String? loudnormFilter;
         if (_selectedOperation == "Normalize Audio (LUFS -14)") {
@@ -996,127 +1300,6 @@ class _TabWorkbenchState extends State<TabWorkbench> {
               }
             }
           }
-        }
-
-        switch (_selectedOperation) {
-          case "Apply Fades":
-            if (durationMs == null) {
-              setState(() { _isProcessing = false; _statusMessage = "ERR: Cannot Determine Duration For Fade Out Point."; });
-              return;
-            }
-            final totalSec = durationMs / 1000.0;
-            if (_fadeInSec > 0) filters.add("afade=t=in:st=0:d=${_fadeInSec.toStringAsFixed(2)}");
-            if (_fadeOutSec > 0) {
-              final outStart = (totalSec - _fadeOutSec).clamp(0.0, totalSec).toStringAsFixed(2);
-              filters.add("afade=t=out:st=$outStart:d=${_fadeOutSec.toStringAsFixed(2)}");
-            }
-            break;
-          case "Fold To Mono":
-            filters.add("pan=mono|c0=0.5*c0+0.5*c1");
-            break;
-          case "Insert Silence": {
-            final ms = (_silenceSec * 1000).round();
-            filters.add(_silenceAtStart ? "adelay=$ms:all=1" : "apad=pad_dur=${_silenceSec.toStringAsFixed(2)}");
-            break;
-          }
-          case "Delete Region": {
-            final sMs = _waveSelInMs ?? _parseHmsSafe(_startCtrl.text).inMilliseconds;
-            final eMs = _waveSelOutMs ?? _parseHmsSafe(_endCtrl.text).inMilliseconds;
-            final sSec = sMs / 1000.0;
-            final eSec = eMs / 1000.0;
-            if (eSec <= sSec) {
-              setState(() { _isProcessing = false; _statusMessage = "ERR: END Must Exceed START (use wave selection)."; });
-              return;
-            }
-            filters.add("aselect='not(between(t,$sSec,$eSec))',asetpts=N/SR/TB");
-            break;
-          }
-          case "Click/Pop Repair (adeclick)":
-            filters.add("adeclick");
-            break;
-          case "De-Esser":
-            filters.add("deesser=i=${_deessIntensity.toStringAsFixed(2)}:m=0.5:f=0.5");
-            break;
-          case "Limiter":
-            filters.add("alimiter=limit=${_limitLevel.toStringAsFixed(2)}:attack=5:release=50");
-            break;
-          case "Multiband Compress (mcompand)":
-            filters.add("mcompand");
-            break;
-          case "DC/Rumble Fix (highpass)":
-            filters.add("highpass=f=10");
-            break;
-          case "Trim Silence":
-            filters.add("silenceremove=start_periods=1:start_duration=0.3:start_threshold=-45dB:stop_periods=-1:stop_duration=0.8:stop_threshold=-45dB");
-            break;
-          case "Trim To Silence (Precise)":
-            filters.add("silenceremove=start_periods=1:start_threshold=-50dB:start_silence=0.05:stop_periods=-1:stop_threshold=-50dB:stop_silence=0.05");
-            break;
-          case "Chorus (spatial)":
-            filters.add("chorus=0.7:0.9:55:0.4:0.25:${_chorusDepthMs.toStringAsFixed(1)}");
-            break;
-          case "Compand (dynamic shaping)":
-            filters.add("compand=attacks=0.05:decays=0.3:points=-80/-80|-60/-50|-30/-25|-10/-8|0/0:gain=${_compandGainDb.toStringAsFixed(1)}");
-            break;
-          case "Firequalizer Curve EQ": {
-            final curve = "firequalizer=gain_entry='entry(100,${_eqBass.toStringAsFixed(1)});entry(320,${_eqLowMid.toStringAsFixed(1)});entry(1000,${_eqMid.toStringAsFixed(1)});entry(3500,${_eqHighMid.toStringAsFixed(1)});entry(8000,${_eqTreble.toStringAsFixed(1)})'";
-            if (_eqBass == 0 && _eqLowMid == 0 && _eqMid == 0 && _eqHighMid == 0 && _eqTreble == 0) {
-              setState(() { _isProcessing = false; _statusMessage = "ERR: All EQ Bands At Zero. Nothing To Apply."; });
-              return;
-            }
-            filters.add(curve);
-            break;
-          }
-          case "Granular Audio DSP (Speed/Reverb)":
-            if (_isReversed) filters.add("areverse");
-            if (_audioSpeed != 1.0) {
-              final s = _audioSpeed.toStringAsFixed(2);
-              switch (_pitchMode) {
-                case "RUBBERBAND (pitch only)":
-                  filters.add("rubberband=pitch=$s");
-                  break;
-                case "ATEMPO (tempo only)":
-                  filters.add("atempo=${_audioSpeed.clamp(0.5, 2.0).toStringAsFixed(2)}");
-                  break;
-                default:
-                  filters.add("asetrate=44100*$s,aresample=44100");
-              }
-            }
-            if (_reverbIntensity > 0) {
-              final delay = 60 + (_reverbIntensity * 40);
-              final decay = 0.2 + (_reverbIntensity * 0.4);
-              filters.add("aecho=0.8:0.88:$delay:$decay");
-            }
-            break;
-          case "AI Denoise (afftdn)":
-            filters.add("afftdn=nf=-25");
-            break;
-          case "Parametric EQ":
-            if (_eqBass != 0) filters.add("bass=g=${_eqBass.toStringAsFixed(1)}:f=100");
-            if (_eqLowMid != 0) filters.add("equalizer=f=320:t=q:w=1.2:g=${_eqLowMid.toStringAsFixed(1)}");
-            if (_eqMid != 0) filters.add("equalizer=f=1000:t=q:w=1.2:g=${_eqMid.toStringAsFixed(1)}");
-            if (_eqHighMid != 0) filters.add("equalizer=f=3500:t=q:w=1.2:g=${_eqHighMid.toStringAsFixed(1)}");
-            if (_eqTreble != 0) filters.add("treble=g=${_eqTreble.toStringAsFixed(1)}:f=8000");
-            if (filters.length <= (resampleFilter.isNotEmpty ? 1 : 0)) {
-              setState(() { _isProcessing = false; _statusMessage = "ERR: All EQ Bands At Zero. Nothing To Apply."; });
-              return;
-            }
-            break;
-          case "Compress Dynamics":
-            filters.add("acompressor=threshold=0.1:ratio=${_compRatio.toStringAsFixed(1)}:attack=50:release=500");
-            break;
-          case "15-Band Equalizer (AutoEq)":
-            for (int i = 0; i < 15; i++) {
-              if (_eq15Bands[i] != 0) {
-                final freq = _eq15Freqs[i];
-                filters.add("equalizer=f=$freq:t=q:w=1.2:g=${_eq15Bands[i].toStringAsFixed(1)}");
-              }
-            }
-            if (filters.length <= (resampleFilter.isNotEmpty ? 1 : 0)) {
-              setState(() { _isProcessing = false; _statusMessage = "ERR: All EQ Bands At Zero. Nothing To Apply."; });
-              return;
-            }
-            break;
         }
 
         if (loudnormFilter != null) filters.insert(0, loudnormFilter);
@@ -1141,33 +1324,238 @@ class _TabWorkbenchState extends State<TabWorkbench> {
         setState(() => _statusMessage = "Process Complete. Injecting To MediaStore...");
         final originalName = _selectedFilePath.split('/').last;
         final baseName = originalName.contains('.') ? originalName.substring(0, originalName.lastIndexOf('.')) : originalName;
-        String payloadNote;
-        try {
-          final uriString = await _storageChannel.invokeMethod('addToMediaStore', {'filePath': outPath, 'title': "${baseName}_mod"});
-          payloadNote = "Success. Payload Written To:\n$uriString";
-          File(outPath).delete().ignore();
-        } catch (_) {
-          payloadNote = "Injected To Cache Only (MediaStore Fault):\n$outPath";
-        }
+        final payloadNote = await _injectToMediaStore(outPath, "${baseName}_mod");
         if (!mounted) return;
         TapFeedback.machineConfirm();
         setState(() { _isProcessing = false; _statusMessage = payloadNote; });
       } else {
         if (!mounted) return;
-        final output = session.getOutput() ?? "";
-        final fault = _filterFaultHint(output);
-        if (fault != null) {
-          setState(() => _isProcessing = false);
-          await _reportFilterFault(fault, output);
-        } else {
-          final tail = output.length > 300 ? output.substring(output.length - 300) : output;
-          setState(() { _isProcessing = false; _statusMessage = "ERR: FFmpeg Failed (rc=${session.getReturnCode()}). Last output:\n$tail"; });
-        }
+        await _handleRenderFailure(session);
       }
     } catch (e) {
       if (!mounted) return;
       setState(() { _isProcessing = false; _statusMessage = "Critical ERR: $e"; });
     }
+  }
+
+  static const String _chainsPrefsKey = 'workbench_chains';
+
+  Future<void> _loadChains() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final raw = prefs.getString(_chainsPrefsKey);
+      if (raw == null || raw.isEmpty) return;
+      final decoded = jsonDecode(raw);
+      if (decoded is Map<String, dynamic>) {
+        final loaded = <String, List<String>>{};
+        decoded.forEach((k, v) {
+          if (v is List) {
+            loaded[k] = v.map((e) => e.toString()).where((e) => _chainableOps.contains(e)).toList();
+          }
+        });
+        if (!mounted) return;
+        setState(() => _savedChains = loaded);
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _persistChains() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_chainsPrefsKey, jsonEncode(_savedChains));
+    } catch (_) {}
+  }
+
+  void _saveChain() {
+    final name = _chainNameCtrl.text.trim();
+    if (name.isEmpty) {
+      setState(() => _statusMessage = "ERR: NAME THE CHAIN FIRST.");
+      return;
+    }
+    if (_chainOps.isEmpty) {
+      setState(() => _statusMessage = "ERR: CHAIN IS EMPTY. Add at least one op first.");
+      return;
+    }
+    setState(() {
+      _savedChains[name] = List<String>.from(_chainOps);
+      _selectedChain = name;
+      _statusMessage = "Chain Saved: $name (${_chainOps.length} ops).";
+    });
+    _persistChains();
+  }
+
+  void _deleteChain(String name) {
+    setState(() {
+      _savedChains.remove(name);
+      if (_selectedChain == name) _selectedChain = null;
+      _statusMessage = "Chain Deleted: $name.";
+    });
+    _persistChains();
+  }
+
+  List<String> _chainFilters(List<String> ops, int? durationMs) {
+    final out = <String>[];
+    for (final op in ops) {
+      final sub = _filtersForOperation(op, durationMs);
+      if (op == "Normalize Audio (LUFS -14)") {
+        sub.insert(0, _normMode == "DYNAMIC (dynaudnorm)" ? 'dynaudnorm=p=0.9:m=12' : 'loudnorm=I=-14:LRA=11:TP=-1.5');
+      }
+      out.addAll(sub);
+    }
+    final resample = _resampleFilter();
+    if (resample.isNotEmpty) {
+      final at = out.isNotEmpty && (out.first.startsWith('loudnorm=') || out.first.startsWith('dynaudnorm=')) ? 1 : 0;
+      out.insert(at, resample);
+    }
+    return out;
+  }
+
+  Future<void> _executeChain() async {
+    if (_selectedFilePath.isEmpty || _isProcessing || _isRecording) return;
+    if (_chainOps.isEmpty) {
+      setState(() => _statusMessage = "ERR: CHAIN IS EMPTY. Add at least one op first.");
+      return;
+    }
+    setState(() { _isProcessing = true; _opProgress = 0.0; _statusMessage = "Running Chain (${_chainOps.length} ops) In One Pass..."; });
+    try {
+      final tempDir = await _storageChannel.invokeMethod('getTempDirectory');
+      final timestamp = DateTime.now().millisecondsSinceEpoch;
+      final durationMs = await probeDurationMs(_selectedFilePath);
+      if (!mounted) return;
+      final parts = _selectedFilePath.split('.');
+      final srcExt = parts.length > 1 ? parts.last.toLowerCase() : "";
+      final ext = _preservedContainers.contains(srcExt) ? srcExt : "flac";
+      final outPath = "$tempDir/workbench_chain_$timestamp.$ext";
+      List<String> filters;
+      try {
+        filters = _chainFilters(_chainOps, durationMs);
+      } on StateError catch (e) {
+        if (!mounted) return;
+        setState(() { _isProcessing = false; _statusMessage = e.message; });
+        return;
+      }
+      if (filters.isEmpty) {
+        setState(() { _isProcessing = false; _statusMessage = "ERR: CHAIN BUILT NO FILTERS. Check op settings (all EQ at zero, no speed/reverb change)."; });
+        return;
+      }
+      final command = '-y -i "$_selectedFilePath" -af "${filters.join(',')}" -vn ${_audioCodecArgs(ext)} "$outPath"';
+      setState(() => _statusMessage = "Executing Chain: ${_chainOps.join(' > ').toUpperCase()}");
+      final session = await FFmpegExecutor.execute(command, onStatistics: (stats) {
+        if (durationMs == null || durationMs <= 0 || !mounted) return;
+        setState(() => _opProgress = (stats.time / durationMs).clamp(0.0, 1.0));
+      });
+      if (ReturnCode.isSuccess(session.getReturnCode())) {
+        if (!mounted) return;
+        setState(() => _statusMessage = "Chain Complete. Injecting To MediaStore...");
+        final payloadNote = await _injectToMediaStore(outPath, "${_baseNameOf(_selectedFilePath)}_chain");
+        if (!mounted) return;
+        TapFeedback.machineConfirm();
+        setState(() { _isProcessing = false; _statusMessage = "Chain Ran: ${_chainOps.join(' > ')}.\n$payloadNote"; });
+      } else {
+        if (!mounted) return;
+        await _handleRenderFailure(session);
+      }
+    } catch (e) {
+      if (!mounted) return;
+      setState(() { _isProcessing = false; _statusMessage = "Critical ERR: $e"; });
+    }
+  }
+
+  String _outputExtFor(String inputPath, String op) {
+    if (op == "Convert Format") return _targetFormat;
+    if (op == "Extract Audio (Video to MP3)") return "mp3";
+    final parts = inputPath.split('.');
+    final srcExt = parts.length > 1 ? parts.last.toLowerCase() : "";
+    return _preservedContainers.contains(srcExt) ? srcExt : "flac";
+  }
+
+  String _buildTransformCommand(String op, String inputPath, String outPath, int? durationMs) {
+    if (op == "Convert Format") return '-y -i "$inputPath" -vn ${_audioCodecArgs(_targetFormat)} "$outPath"';
+    if (op == "Extract Audio (Video to MP3)") return '-y -i "$inputPath" -vn -c:a libmp3lame -b:a 320k "$outPath"';
+    if (!_chainableOps.contains(op)) throw StateError("ERR: OP '$op' IS NOT BATCHABLE.");
+    final filters = _filtersForOperation(op, durationMs);
+    final resample = _resampleFilter();
+    if (resample.isNotEmpty) filters.insert(0, resample);
+    if (op == "Normalize Audio (LUFS -14)") {
+      filters.insert(0, _normMode == "DYNAMIC (dynaudnorm)" ? 'dynaudnorm=p=0.9:m=12' : 'loudnorm=I=-14:LRA=11:TP=-1.5');
+    }
+    final chain = filters.isNotEmpty ? '-af "${filters.join(',')}"' : "";
+    return '-y -i "$inputPath" $chain -vn ${_audioCodecArgs(_outputExtFor(inputPath, op))} "$outPath"';
+  }
+
+  Future<void> _pickBatchFiles() async {
+    if (_isProcessing) return;
+    List<PlatformFile> picked;
+    try {
+      picked = await FilePicker.pickFiles(type: FileType.audio);
+    } on PlatformException catch (e) {
+      if (!mounted) return;
+      setState(() => _statusMessage = "ERR: File Picker Fault: ${e.message}");
+      return;
+    }
+    if (picked.isEmpty) return;
+    if (!mounted) return;
+    setState(() {
+      for (final f in picked) {
+        if (f.path != null && f.path!.isNotEmpty && !_batchFiles.contains(f.path)) _batchFiles.add(f.path!);
+      }
+    });
+  }
+
+  Future<void> _executeBatch() async {
+    if (_isProcessing || _batchFiles.isEmpty) return;
+    if (!_isBatchable(_selectedOperation)) {
+      setState(() => _statusMessage = "ERR: BATCH ONLY RUNS SINGLE-FILE TRANSFORMS. Select a DSP op, Convert Format, or Extract Audio first — Mix, Join, Duck, scans, Split, and Whisper do not batch.");
+      return;
+    }
+    setState(() { _isProcessing = true; _opProgress = 0.0; _batchReport = "Batch Running: $_selectedOperation over ${_batchFiles.length} file(s)..."; });
+    final lines = <String>[];
+    int ok = 0;
+    try {
+      final tempDir = await _storageChannel.invokeMethod('getTempDirectory');
+      for (int i = 0; i < _batchFiles.length; i++) {
+        final path = _batchFiles[i];
+        if (!mounted) return;
+        setState(() { _opProgress = i / _batchFiles.length; _statusMessage = "Batch ${i + 1}/${_batchFiles.length}: ${path.split('/').last}"; });
+        try {
+          final dur = await probeDurationMs(path);
+          final ext = _outputExtFor(path, _selectedOperation);
+          final outPath = "$tempDir/workbench_batch_${DateTime.now().millisecondsSinceEpoch}_$i.$ext";
+          final command = _buildTransformCommand(_selectedOperation, path, outPath, dur);
+          final session = await FFmpegExecutor.execute(command);
+          if (!ReturnCode.isSuccess(session.getReturnCode())) {
+            final output = session.getOutput() ?? "";
+            final fault = _filterFaultHint(output);
+            lines.add("FAIL ${path.split('/').last}: ${fault != null ? "FILTER '$fault' UNAVAILABLE IN THIS BUILD" : "rc=${session.getReturnCode()}"}");
+            continue;
+          }
+          try {
+            final uriString = await _storageChannel.invokeMethod('addToMediaStore', {'filePath': outPath, 'title': "${_baseNameOf(path)}_mod"});
+            lines.add("OK ${path.split('/').last} -> $uriString");
+            File(outPath).delete().ignore();
+            ok++;
+          } catch (_) {
+            lines.add("CACHE ONLY ${path.split('/').last}: $outPath");
+            ok++;
+          }
+        } on StateError catch (e) {
+          lines.add("SKIP ${path.split('/').last}: ${e.message}");
+        } catch (e) {
+          lines.add("FAIL ${path.split('/').last}: $e");
+        }
+      }
+    } catch (e) {
+      if (!mounted) return;
+      setState(() { _isProcessing = false; _statusMessage = "ERR: Batch Fault: $e"; });
+      return;
+    }
+    if (!mounted) return;
+    setState(() {
+      _isProcessing = false;
+      _opProgress = 1.0;
+      _batchReport = "Batch Done: $ok/${_batchFiles.length} OK.\n${lines.join('\n')}";
+      _statusMessage = "Batch Complete: $ok/${_batchFiles.length} OK. See BATCH QUEUE report.";
+    });
   }
 
   void _showWorkbenchManual() {
@@ -1207,6 +1595,12 @@ class _TabWorkbenchState extends State<TabWorkbench> {
                   _wmb('SCAN VOLUME (volumedetect) reports mean/max volume and headroom to -1 dBTP. SCAN SILENCE (silencedetect) lists every silence at -45dB / 0.3s with start, end, and duration. Both are read-only.'),
                   _wmh('NEW DSP'),
                   _wmb('SIDECHAIN DUCK: main file is the music to duck, second file is the voice sidechain — threshold/ratio/attack/release. CHORUS: spatial depth in ms. COMPAND: gentle dynamic curve with makeup gain. FIREQUALIZER: smooth curve EQ driven by the 5 Parametric EQ sliders. TRIM TO SILENCE (PRECISE): 50ms windows at -50dB, tighter than TRIM SILENCE.'),
+                  _wmh('SPLIT ON SILENCE'),
+                  _wmb('Cuts the mounted file at every detected silence (-45dB, min 0.3s) into numbered tracks (<name>_split_01, _split_02...). Segments shorter than the minimum length are dropped. Same container, re-encoded for sample-accurate cuts. If no splittable silence is found, nothing is written.'),
+                  _wmh('OP CHAINS'),
+                  _wmb('Build an ordered chain from the 20 single-file DSP ops and save it by name. RUN CHAIN applies every op in ONE ffmpeg pass (filters concatenated) and writes one file. Normalize inside a chain is single-pass loudnorm — the two-pass analysis only runs when Normalize is executed directly. Mix/Join/Duck/Clip/Convert cannot be chained — they need a second file or a different shape.'),
+                  _wmh('BATCH QUEUE'),
+                  _wmb('Runs the currently selected operation over every file in the queue, one at a time, with the current slider and settings values. Each file gets its own OK/FAIL line in the report. Only single-file transforms batch — Mix, Join, Duck, scans, Split, and Whisper do not.'),
                   _wmh('MULTITRACK MIX'),
                   _wmb('MIX WITH FILE layers the main file with up to 6 extra tracks, each with gain and pan. Tracks resample to 48k stereo (soxr) and mix through amix with a 0.95 limiter. Over 3 tracks or 15 minutes total is flagged HEAVY — the RAM guard unloads EmbeddingGemma first. GAPLESS JOIN butt-joins two files with no crossfade and no gap.'),
                   _wmh('WAVE SELECTION'),
@@ -1737,6 +2131,46 @@ class _TabWorkbenchState extends State<TabWorkbench> {
                         padding: const EdgeInsets.all(8),
                         decoration: BoxDecoration(color: Colors.black, border: Border.all(color: Colors.amberAccent.withAlpha(76))),
                         child: Text("> $_silenceReport", style: const TextStyle(fontFamily: 'VT323', fontSize: 14, color: Colors.white70, height: 1.3)),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ],
+
+            if (_selectedOperation == "Split On Silence (silencedetect)") ...[
+              Container(
+                margin: const EdgeInsets.only(top: 12),
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.black,
+                  border: Border.all(color: Colors.amberAccent.withAlpha(127)),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    const Text("SPLIT ON SILENCE (SILENCEDETECT)", style: TextStyle(fontFamily: 'ShareTechMono', fontSize: 12, fontWeight: FontWeight.bold, color: Colors.amberAccent)),
+                    const SizedBox(height: 6),
+                    const Text("Cuts the file at every silence (threshold -45dB, min 0.3s) into numbered tracks. Segments shorter than the minimum are dropped. Same container, re-encoded for sample-accurate cuts.", style: TextStyle(fontFamily: 'ShareTechMono', fontSize: 10, color: Colors.white54)),
+                    const SizedBox(height: 12),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        const Text("MIN SEGMENT", style: TextStyle(fontFamily: 'ShareTechMono', fontWeight: FontWeight.bold, color: Colors.amberAccent)),
+                        Text("${_splitMinSegmentSec.toStringAsFixed(1)}s", style: const TextStyle(fontFamily: 'ShareTechMono', color: Colors.white)),
+                      ],
+                    ),
+                    Slider(
+                      value: _splitMinSegmentSec, min: 0.5, max: 10, divisions: 19,
+                      activeColor: Colors.amberAccent, inactiveColor: Colors.white24,
+                      onChanged: _isProcessing ? null : (val) => setState(() => _splitMinSegmentSec = val),
+                    ),
+                    if (_splitReport.isNotEmpty) ...[
+                      const SizedBox(height: 8),
+                      Container(
+                        padding: const EdgeInsets.all(8),
+                        decoration: BoxDecoration(color: Colors.black, border: Border.all(color: Colors.amberAccent.withAlpha(76))),
+                        child: Text("> $_splitReport", style: const TextStyle(fontFamily: 'VT323', fontSize: 14, color: Colors.white70, height: 1.3)),
                       ),
                     ],
                   ],
@@ -2548,6 +2982,212 @@ class _TabWorkbenchState extends State<TabWorkbench> {
                         backgroundColor: themeColor,
                         disabledBackgroundColor: themeColor.withAlpha(51),
                       ),
+                    ),
+                  ),
+                  const SizedBox(height: 24),
+                  Container(
+                    margin: const EdgeInsets.only(top: 12),
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(color: Colors.black, border: Border.all(color: themeColor.withAlpha(127))),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        const Text("OP CHAINS (SAVED PRESETS)", style: TextStyle(fontFamily: 'ShareTechMono', fontSize: 12, fontWeight: FontWeight.bold, color: Colors.white70)),
+                        const SizedBox(height: 4),
+                        const Text("Stack the 20 single-file DSP ops in order and run them in ONE ffmpeg pass. Normalize inside a chain is single-pass loudnorm. Mix/Join/Duck/Clip/Convert cannot chain.", style: TextStyle(fontFamily: 'ShareTechMono', fontSize: 10, color: Colors.white54)),
+                        const SizedBox(height: 12),
+                        if (_chainOps.isEmpty)
+                          const Padding(
+                            padding: EdgeInsets.only(bottom: 8),
+                            child: Text("Chain is empty — pick an op below and ADD TO CHAIN.", style: TextStyle(fontFamily: 'ShareTechMono', fontSize: 10, color: Colors.white38)),
+                          ),
+                        for (int i = 0; i < _chainOps.length; i++) ...[
+                          Row(
+                            children: [
+                              Text("${i + 1}. ", style: TextStyle(fontFamily: 'ShareTechMono', fontSize: 11, color: themeColor)),
+                              Expanded(child: Text(_chainOps[i].toUpperCase(), style: const TextStyle(fontFamily: 'ShareTechMono', fontSize: 11, color: Colors.white70))),
+                              IconButton(
+                                icon: const Icon(Icons.arrow_upward, size: 16),
+                                tooltip: "MOVE UP",
+                                constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+                                padding: EdgeInsets.zero,
+                                onPressed: _isProcessing || i == 0 ? null : () => setState(() { final op = _chainOps.removeAt(i); _chainOps.insert(i - 1, op); }),
+                              ),
+                              IconButton(
+                                icon: const Icon(Icons.arrow_downward, size: 16),
+                                tooltip: "MOVE DOWN",
+                                constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+                                padding: EdgeInsets.zero,
+                                onPressed: _isProcessing || i == _chainOps.length - 1 ? null : () => setState(() { final op = _chainOps.removeAt(i); _chainOps.insert(i + 1, op); }),
+                              ),
+                              IconButton(
+                                icon: const Icon(Icons.close, size: 16, color: Colors.redAccent),
+                                tooltip: "REMOVE",
+                                constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+                                padding: EdgeInsets.zero,
+                                onPressed: _isProcessing ? null : () => setState(() => _chainOps.removeAt(i)),
+                              ),
+                            ],
+                          ),
+                        ],
+                        const SizedBox(height: 8),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                                decoration: BoxDecoration(color: Colors.black, border: Border.all(color: themeColor.withAlpha(76))),
+                                child: DropdownButtonHideUnderline(
+                                  child: DropdownButton<String>(
+                                    value: _chainAddOp,
+                                    isExpanded: true,
+                                    dropdownColor: Colors.black,
+                                    icon: Icon(Icons.arrow_drop_down, color: themeColor),
+                                    items: _chainableOps.map((op) => DropdownMenuItem<String>(value: op, child: Text(op.toUpperCase(), style: const TextStyle(fontFamily: 'ShareTechMono', fontSize: 11, color: Colors.white)))).toList(),
+                                    onChanged: _isProcessing ? null : (v) { if (v != null) setState(() => _chainAddOp = v); },
+                                  ),
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            OutlinedButton(
+                              onPressed: _isProcessing ? null : () => setState(() => _chainOps.add(_chainAddOp)),
+                              style: OutlinedButton.styleFrom(side: BorderSide(color: themeColor), padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12)),
+                              child: Text("ADD", style: TextStyle(fontFamily: 'ShareTechMono', fontSize: 11, color: themeColor, fontWeight: FontWeight.bold)),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 12),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: TextField(
+                                controller: _chainNameCtrl,
+                                style: TextStyle(fontFamily: 'ShareTechMono', color: themeColor),
+                                decoration: InputDecoration(
+                                  labelText: 'CHAIN NAME',
+                                  labelStyle: const TextStyle(fontFamily: 'ShareTechMono', color: Colors.white54),
+                                  enabledBorder: OutlineInputBorder(borderSide: BorderSide(color: themeColor.withAlpha(76))),
+                                  focusedBorder: OutlineInputBorder(borderSide: BorderSide(color: themeColor)),
+                                  filled: true,
+                                  fillColor: Colors.black,
+                                ),
+                                enabled: !_isProcessing,
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            OutlinedButton(
+                              onPressed: _isProcessing ? null : _saveChain,
+                              style: OutlinedButton.styleFrom(side: BorderSide(color: themeColor), padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12)),
+                              child: Text("SAVE", style: TextStyle(fontFamily: 'ShareTechMono', fontSize: 11, color: themeColor, fontWeight: FontWeight.bold)),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 12),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                                decoration: BoxDecoration(color: Colors.black, border: Border.all(color: themeColor.withAlpha(76))),
+                                child: DropdownButtonHideUnderline(
+                                  child: DropdownButton<String>(
+                                    value: _selectedChain,
+                                    isExpanded: true,
+                                    dropdownColor: Colors.black,
+                                    hint: const Text("SAVED CHAINS", style: TextStyle(fontFamily: 'ShareTechMono', fontSize: 11, color: Colors.white38)),
+                                    icon: Icon(Icons.arrow_drop_down, color: themeColor),
+                                    items: _savedChains.keys.map((name) => DropdownMenuItem<String>(value: name, child: Text("$name (${_savedChains[name]!.length} OPS)", style: const TextStyle(fontFamily: 'ShareTechMono', fontSize: 11, color: Colors.white)))).toList(),
+                                    onChanged: _isProcessing ? null : (v) {
+                                      if (v != null) setState(() { _selectedChain = v; _chainOps.clear(); _chainOps.addAll(_savedChains[v]!); });
+                                    },
+                                  ),
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            IconButton(
+                              icon: const Icon(Icons.delete_outline, color: Colors.redAccent),
+                              tooltip: "DELETE SAVED CHAIN",
+                              onPressed: _isProcessing || _selectedChain == null ? null : () => _deleteChain(_selectedChain!),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 12),
+                        OutlinedButton.icon(
+                          onPressed: _isProcessing || _chainOps.isEmpty ? null : _executeChain,
+                          icon: Icon(Icons.playlist_play, color: themeColor, size: 18),
+                          label: Text("RUN CHAIN (${_chainOps.length} OPS)", style: TextStyle(fontFamily: 'ShareTechMono', fontSize: 12, color: themeColor, fontWeight: FontWeight.bold)),
+                          style: OutlinedButton.styleFrom(side: BorderSide(color: themeColor), padding: const EdgeInsets.symmetric(vertical: 12)),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 24),
+                  Container(
+                    margin: const EdgeInsets.only(top: 12),
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(color: Colors.black, border: Border.all(color: themeColor.withAlpha(127))),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        const Text("BATCH QUEUE", style: TextStyle(fontFamily: 'ShareTechMono', fontSize: 12, fontWeight: FontWeight.bold, color: Colors.white70)),
+                        const SizedBox(height: 4),
+                        const Text("Runs the currently selected operation over every file below, one at a time, with the current slider and settings values. Each file gets its own OK/FAIL line.", style: TextStyle(fontFamily: 'ShareTechMono', fontSize: 10, color: Colors.white54)),
+                        const SizedBox(height: 12),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: OutlinedButton.icon(
+                                onPressed: _isProcessing ? null : _pickBatchFiles,
+                                icon: Icon(Icons.library_add, color: themeColor, size: 18),
+                                label: Text("ADD FILES", style: TextStyle(fontFamily: 'ShareTechMono', fontSize: 12, color: themeColor, fontWeight: FontWeight.bold)),
+                                style: OutlinedButton.styleFrom(side: BorderSide(color: themeColor), padding: const EdgeInsets.symmetric(vertical: 12)),
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            OutlinedButton(
+                              onPressed: _isProcessing || _batchFiles.isEmpty ? null : () => setState(() { _batchFiles.clear(); _batchReport = ""; }),
+                              style: OutlinedButton.styleFrom(side: const BorderSide(color: Colors.redAccent), padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12)),
+                              child: const Text("CLEAR", style: TextStyle(fontFamily: 'ShareTechMono', fontSize: 11, color: Colors.redAccent, fontWeight: FontWeight.bold)),
+                            ),
+                          ],
+                        ),
+                        if (_batchFiles.isEmpty)
+                          const Padding(
+                            padding: EdgeInsets.only(top: 8),
+                            child: Text("Queue is empty — ADD FILES to batch the selected operation.", style: TextStyle(fontFamily: 'ShareTechMono', fontSize: 10, color: Colors.white38)),
+                          ),
+                        for (int i = 0; i < _batchFiles.length; i++) ...[
+                          Row(
+                            children: [
+                              Expanded(child: Text("${i + 1}. ${_batchFiles[i].split('/').last}", style: const TextStyle(fontFamily: 'ShareTechMono', fontSize: 11, color: Colors.white70))),
+                              IconButton(
+                                icon: const Icon(Icons.close, size: 16, color: Colors.redAccent),
+                                tooltip: "REMOVE",
+                                constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+                                padding: EdgeInsets.zero,
+                                onPressed: _isProcessing ? null : () => setState(() => _batchFiles.removeAt(i)),
+                              ),
+                            ],
+                          ),
+                        ],
+                        const SizedBox(height: 12),
+                        OutlinedButton.icon(
+                          onPressed: _isProcessing || _batchFiles.isEmpty ? null : _executeBatch,
+                          icon: Icon(Icons.play_arrow, color: themeColor, size: 18),
+                          label: Text("RUN BATCH (${_batchFiles.length} FILES)", style: TextStyle(fontFamily: 'ShareTechMono', fontSize: 12, color: themeColor, fontWeight: FontWeight.bold)),
+                          style: OutlinedButton.styleFrom(side: BorderSide(color: themeColor), padding: const EdgeInsets.symmetric(vertical: 12)),
+                        ),
+                        if (_batchReport.isNotEmpty) ...[
+                          const SizedBox(height: 8),
+                          Container(
+                            padding: const EdgeInsets.all(8),
+                            decoration: BoxDecoration(color: Colors.black, border: Border.all(color: themeColor.withAlpha(76))),
+                            child: Text("> $_batchReport", style: const TextStyle(fontFamily: 'VT323', fontSize: 14, color: Colors.white70, height: 1.3)),
+                          ),
+                        ],
+                      ],
                     ),
                   ),
                   const SizedBox(height: 24),
