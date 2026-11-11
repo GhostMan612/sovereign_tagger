@@ -41,6 +41,7 @@ class MainActivity: AudioServiceActivity() {
     private val WHISTLE_CHANNEL = "com.sovereign.tagger/whistle"
     private val EMBEDDINGS_CHANNEL = "com.sovereign.tagger/embeddings"
     private val AUDIO_FX_CHANNEL = "com.sovereign.tagger/audio_fx"
+    private val PCLOUD_AUTH_CHANNEL = "com.sovereign.tagger/pcloud_auth"
 
     private var hwEqualizer: Equalizer? = null
     private var hwLoudness: LoudnessEnhancer? = null
@@ -62,6 +63,7 @@ class MainActivity: AudioServiceActivity() {
     private var pcmEventSink: EventChannel.EventSink? = null
     private var shareSink: EventChannel.EventSink? = null
     private var pendingShare: String? = null
+    private var pendingAuthRedirect: String? = null
     private val storageBridge by lazy { StorageBridge(this) }
     private var sfxEngine: SfxEngine? = null
 
@@ -84,12 +86,21 @@ class MainActivity: AudioServiceActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         captureShare(intent)
+        captureAuthRedirect(intent)
     }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
         captureShare(intent)
+        captureAuthRedirect(intent)
+    }
+
+    private fun captureAuthRedirect(intent: Intent?) {
+        if (intent == null || intent.action != Intent.ACTION_VIEW) return
+        val data = intent.data ?: return
+        if (data.scheme != "sovereigntagger" || data.host != "pcloud") return
+        pendingAuthRedirect = data.toString()
     }
 
     private fun captureShare(intent: Intent?) {
@@ -170,6 +181,17 @@ class MainActivity: AudioServiceActivity() {
                 }
             }
         )
+
+        MethodChannel(messenger, PCLOUD_AUTH_CHANNEL).setMethodCallHandler { call, result ->
+            when (call.method) {
+                "takePendingRedirect" -> {
+                    val redirect = pendingAuthRedirect
+                    pendingAuthRedirect = null
+                    result.success(redirect)
+                }
+                else -> result.notImplemented()
+            }
+        }
 
         MethodChannel(messenger, YTDLP_CHANNEL).setMethodCallHandler { call, result ->
             when (call.method) {

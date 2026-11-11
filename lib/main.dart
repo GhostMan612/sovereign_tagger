@@ -9,6 +9,7 @@ import 'package:flutter/services.dart';
 import 'package:ffmpeg_kit_extended_flutter/ffmpeg_kit_extended_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'screens/main_shell.dart';
+import 'core/cloud_settings.dart';
 import 'core/feedback_settings.dart';
 import 'core/sfx.dart';
 import 'widgets/cyber_backdrop.dart';
@@ -26,6 +27,7 @@ void main() async {
     SovereignState.accentColor.value = Color(savedColor);
   }
 await FeedbackSettings.load(prefs);
+  await CloudSettings.load(prefs);
     Sfx.init();
 
   runApp(const SovereignApp());

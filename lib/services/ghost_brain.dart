@@ -8,6 +8,7 @@ import 'dart:async';
 import 'dart:math' as math;
 import 'dart:typed_data';
 import '../core/embedding_service.dart';
+import '../core/cloud_settings.dart';
 import '../core/ghost_commands.dart';
 import 'ghost_vector_index.dart';
 
@@ -70,6 +71,11 @@ abstract class GhostWorld {
   void openTab(int index);
   void openPlayer();
   void openSettings();
+  Future<List<GhostTrack>> cloudLibrary() async => const [];
+  Future<void> playCloudTracks(List<GhostTrack> tracks, {bool shuffle = false}) async {}
+  Future<bool> downloadCurrentToMusic() async => false;
+  bool get currentIsCloud => false;
+  void openCloudFolder() {}
   void openEq();
   void openPlaybackEngine();
   void openMediaInspector({String? path, bool autoRunForensics = false}) {}
@@ -574,14 +580,14 @@ class GhostBrain {
       ['Save & fix original']),
     _KbEntry('pcloud', 'pCloud in the player', 'pcloud cloud drive storage folder connect oauth account app',
       [
-        "pCloud is NOT wired into the player yet. The plan is a cloud folder in the LIBRARY that streams straight from your pCloud - no download first.",
+        "pCloud IS wired into the player now. The LIBRARY has a CLOUD view that streams straight from your pCloud - no download first.",
         "It needs a pCloud OAuth app first. pCloud paused new self-service apps, so if you don't already have one, ask pCloud support to provision it - then connect it in SETTINGS.",
-        "Your music folder, US vs EU account, and stream-vs-download are the choices that shape the build.",
+        "Your music folder, US vs EU account, and stream-vs-download are all runtime settings in SETTINGS - change them any time, no rebuild.",
       ],
       ['Open settings', 'What can you do?']),
     _KbEntry('cloud', 'The cloud folder', 'cloud folder remote drive online stream download music',
       [
-        "The cloud folder will browse a remote folder like a LIBRARY folder - tap a track, it streams. Long-press to DOWNLOAD TO MUSIC.",
+        "The cloud folder browses a remote folder like a LIBRARY folder - tap a track, it streams. Long-press to DOWNLOAD TO MUSIC.",
         "A downloaded track becomes a normal local file: Sentinel can audit it and FORGE can tag it. A streamed track can't be tagged in place - it has to be downloaded first.",
         "Mixed local + cloud queues play through; a cloud track that can't be reached is skipped, never stalls the queue.",
       ],
@@ -660,7 +666,7 @@ class GhostBrain {
       case 3:
         return const ['Open MediaInfo', 'Is this true lossless?', 'ReplayGain scan', 'Transcribe with Whisper'];
       case 4:
-        return const ['Shuffle everything', 'Play something dark', "What's playing?", 'Extract metadata & lyrics', 'Play my favorites', 'Play recently added'];
+        return const ['Shuffle everything', 'Play something dark', "What's playing?", 'Extract metadata & lyrics', 'Play my favorites', 'Play recently added', 'Play from pCloud'];
       default:
         return const ['What can you do?', "What's playing?", 'Extract metadata & lyrics'];
     }
@@ -1305,6 +1311,23 @@ class GhostBrain {
       return GhostReply(on ? 'Shuffle ON. Chaos engaged.' : 'Shuffle OFF. Order restored.', tone: GhostTone.happy);
     }
 
+    if ((text.contains(' download ') || text.contains(' save ')) && (text.contains(' this ') || text.contains(' current ') || text.contains(' it ')) && (text.contains(' music ') || text.contains(' local ') || text.contains(' offline '))) {
+      if (!world.hasMedia) return const GhostReply("Nothing's playing to download.");
+      if (!world.currentIsCloud) return const GhostReply("This track is already local — nothing to download.");
+      final ok = await world.downloadCurrentToMusic();
+      return GhostReply(ok ? 'Saved to MUSIC — it shows in the LIBRARY and FORGE can tag it now.' : "Couldn't pull it down from pCloud — check signal and try again.", tone: ok ? GhostTone.happy : GhostTone.sarcastic);
+    }
+
+    final mentionsCloud = text.contains(' pcloud ') || text.contains(' cloud ');
+    if (mentionsCloud && playVerb) {
+      if (!CloudSettings.hasToken) return const GhostReply("pCloud isn't connected yet. Open SETTINGS, add your OAuth client ID, and connect.", chips: ['Open settings']);
+      final tracks = await world.cloudLibrary();
+      if (tracks.isEmpty) return const GhostReply("The cloud folder is empty — or pCloud didn't answer. Check the CLOUD view in the LIBRARY.", chips: ['Open cloud folder']);
+      final shuffle = set.contains('shuffle') || q.rawSet.contains('shuffle');
+      await world.playCloudTracks(tracks, shuffle: shuffle);
+      return GhostReply("Playing your pCloud folder — ${tracks.length} tracks${shuffle ? ', shuffled' : ''}.", tone: GhostTone.happy, chips: const ['Open cloud folder', "What's playing?"]);
+    }
+
     if (playVerb && q.rawWords.length > 1) {
       final result = await _playSomething(q, rawInput: rawInput);
       if (result != null) return result;
@@ -1382,6 +1405,10 @@ class GhostBrain {
     if (set.contains('settings')) {
       world.openSettings();
       return const GhostReply('Opening SETTINGS.');
+    }
+    if (set.contains('cloud') || text.contains(' pcloud ')) {
+      world.openCloudFolder();
+      return const GhostReply('Opening the CLOUD folder in the LIBRARY.', chips: ['Play from pCloud']);
     }
     if (set.contains('player') || set.contains('queue') || text.contains(' now playing ')) {
       world.openPlayer();

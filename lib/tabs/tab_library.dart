@@ -15,6 +15,7 @@ import '../screens/main_shell.dart';
 import '../screens/media_inspector_screen.dart';
 import '../screens/photos_screen.dart';
 import '../screens/sentinel_screen.dart';
+import '../widgets/cloud_folder_view.dart';
 import '../widgets/playlist_picker.dart';
 
 class LibTrack {
@@ -131,7 +132,7 @@ class _ArtThumb extends StatelessWidget {
   }
 }
 
-enum _View { songs, albums, artists, folders, playlists, recent }
+enum _View { songs, albums, artists, folders, playlists, recent, cloud }
 
 enum _Sort { title, artist, album, added, duration }
 
@@ -172,6 +173,7 @@ class _TabLibraryState extends State<TabLibrary> with AutomaticKeepAliveClientMi
     _searchCtrl.addListener(() => setState(() {}));
     StorageClient.libraryRevision.addListener(_scheduleRefresh);
     SovereignState.currentTab.addListener(_onTab);
+    SovereignState.cloudViewRequest.addListener(_onCloudRequest);
     PlaylistStore.load().then((_) {
       if (mounted) setState(() {});
     });
@@ -183,8 +185,17 @@ class _TabLibraryState extends State<TabLibrary> with AutomaticKeepAliveClientMi
     _refreshDebounce?.cancel();
     StorageClient.libraryRevision.removeListener(_scheduleRefresh);
     SovereignState.currentTab.removeListener(_onTab);
+    SovereignState.cloudViewRequest.removeListener(_onCloudRequest);
     _searchCtrl.dispose();
     super.dispose();
+  }
+
+  void _onCloudRequest() {
+    if (!mounted) return;
+    setState(() {
+      _view = _View.cloud;
+      _detail = null;
+    });
   }
 
   void _onTab() {
@@ -659,6 +670,7 @@ class _TabLibraryState extends State<TabLibrary> with AutomaticKeepAliveClientMi
   }
 
   Widget _body(Color themeColor) {
+    if (_view == _View.cloud && _detail == null) return const CloudFolderView();
     if (_permissionDenied) {
       return Center(
         child: Padding(
@@ -709,6 +721,8 @@ class _TabLibraryState extends State<TabLibrary> with AutomaticKeepAliveClientMi
             Expanded(child: ListView.builder(itemCount: list.length, itemBuilder: (context, i) => _trackTile(list[i], list, i, themeColor))),
           ],
         );
+      case _View.cloud:
+        return const CloudFolderView();
     }
   }
 
@@ -719,6 +733,7 @@ class _TabLibraryState extends State<TabLibrary> with AutomaticKeepAliveClientMi
         _View.folders => "FOLDERS",
         _View.playlists => "PLAYLISTS",
         _View.recent => "NEW",
+        _View.cloud => "CLOUD",
       };
 
   String _sortLabel(_Sort s) => switch (s) {

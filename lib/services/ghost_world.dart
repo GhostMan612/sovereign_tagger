@@ -8,6 +8,10 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import '../core/cloud_download.dart';
+import '../core/cloud_pcloud.dart';
+import '../core/cloud_settings.dart';
+import '../core/cloud_source.dart';
 import '../core/forge_request.dart';
 import '../core/ghost_commands.dart';
 import '../core/metadata_sources.dart';
@@ -226,6 +230,59 @@ class AppGhostWorld implements GhostWorld {
       if (list[i].path == current) continue;
       await AudioService.removeFromPlaylist(i);
     }
+  }
+
+  @override
+  Future<List<GhostTrack>> cloudLibrary() async {
+    if (!CloudSettings.hasToken) return const [];
+    try {
+      final entries = await PCloudProvider.instance.listFolder(
+        folderId: CloudSettings.rootFolderId == 0 ? null : CloudSettings.rootFolderId.toString(),
+        folderPath: CloudSettings.rootFolderPath,
+      );
+      final audio = entries.where((e) => !e.isFolder && e.isAudio).toList();
+      AudioService.registerCloudEntries(audio);
+      return audio.map((e) => GhostTrack(path: AudioService.cloudPathFor(e.id), title: CloudDownload.displayName(e.name), artist: 'pCloud', album: '')).toList();
+    } catch (_) {
+      return const [];
+    }
+  }
+
+  @override
+  Future<void> playCloudTracks(List<GhostTrack> tracks, {bool shuffle = false}) async {
+    final entries = <CloudEntry>[];
+    for (final t in tracks) {
+      final entry = AudioService.cloudEntryFor(t.path);
+      if (entry != null) entries.add(entry);
+    }
+    if (entries.isEmpty) return;
+    await AudioService.playCloudEntries(entries, shuffle: shuffle);
+  }
+
+  @override
+  Future<bool> downloadCurrentToMusic() async {
+    final path = _currentPath;
+    if (path == null || !AudioService.isCloudPath(path)) return false;
+    final entry = AudioService.cloudEntryFor(path);
+    if (entry == null) return false;
+    try {
+      await CloudDownload.downloadEntry(entry);
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  @override
+  bool get currentIsCloud {
+    final path = _currentPath;
+    return path != null && AudioService.isCloudPath(path);
+  }
+
+  @override
+  void openCloudFolder() {
+    openTab(4);
+    SovereignState.cloudViewRequest.value++;
   }
 
   @override

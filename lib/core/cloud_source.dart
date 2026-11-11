@@ -72,4 +72,6 @@ abstract class CloudSource {
     required String destinationPath,
     void Function(int receivedBytes, int totalBytes)? onProgress,
   });
+
+  Future<void> signOut();
 }

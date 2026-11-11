@@ -10,6 +10,9 @@ import 'package:flutter/material.dart';
 import '../core/tap_feedback.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import '../core/cloud_pcloud.dart';
+import '../core/cloud_settings.dart';
+import '../core/cloud_source.dart';
 import '../core/cyber_tap_feedback.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter_colorpicker/flutter_colorpicker.dart';
@@ -41,6 +44,19 @@ class _SettingsScreenState extends State<SettingsScreen> {
   final TextEditingController _acrKeyCtrl = TextEditingController();
   final TextEditingController _acrSecretCtrl = TextEditingController();
   final TextEditingController _hfTokenCtrl = TextEditingController();
+  final TextEditingController _pcloudClientIdCtrl = TextEditingController();
+  final TextEditingController _pcloudRootCtrl = TextEditingController();
+  final TextEditingController _pcloudCacheCtrl = TextEditingController();
+  final TextEditingController _pcloudTokenCtrl = TextEditingController();
+
+  static const MethodChannel _storageChannel = MethodChannel('com.sovereign.tagger/storage');
+  static const MethodChannel _pcloudAuthChannel = MethodChannel('com.sovereign.tagger/pcloud_auth');
+
+  String _pcloudStatus = '';
+  bool _pcloudBusy = false;
+  CloudScope _pcloudScope = CloudScope.appFolder;
+  CloudPlaybackPolicy _pcloudPolicy = CloudPlaybackPolicy.streamByDefault;
+  String _pcloudAuthHost = CloudSettings.authorizeHostUs;
 
   bool _isSaving = false;
   bool _isUpdating = false;
@@ -67,6 +83,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   Future<void> _loadKeys() async {
     final prefs = await SharedPreferences.getInstance();
+    await CloudSettings.load(prefs);
     if (!mounted) return;
     setState(() {
       _geniusKeyCtrl.text = prefs.getString('genius_key') ?? "";
@@ -75,6 +92,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
       _acrSecretCtrl.text = prefs.getString('acr_secret') ?? "";
       _hfTokenCtrl.text = prefs.getString('hf_token') ?? "";
       _dartSpider = prefs.getBool('dart_spider') ?? false;
+      _pcloudClientIdCtrl.text = CloudSettings.clientId;
+      _pcloudRootCtrl.text = CloudSettings.rootFolderPath;
+      _pcloudCacheCtrl.text = CloudSettings.cacheMb.toString();
+      _pcloudScope = CloudSettings.scope;
+      _pcloudPolicy = CloudSettings.policy;
+      _pcloudAuthHost = CloudSettings.authorizeHost;
+      _pcloudStatus = CloudSettings.hasToken ? 'CONNECTED — REGION ${CloudSettings.apiHostLabel.value}.' : 'NOT CONNECTED.';
     });
 
     GhostSettings.load(prefs);
@@ -89,10 +113,112 @@ class _SettingsScreenState extends State<SettingsScreen> {
     await prefs.setString('acr_key', _acrKeyCtrl.text.trim());
     await prefs.setString('acr_secret', _acrSecretCtrl.text.trim());
     await prefs.setString('hf_token', _hfTokenCtrl.text.trim());
+    await _savePcloudSettings();
 
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: const Text('> KEYS SECURELY WRITTEN TO KERNEL PREFS.', style: TextStyle(fontFamily: 'ShareTechMono')), backgroundColor: Colors.black, shape: RoundedRectangleBorder(side: BorderSide(color: SovereignState.accentColor.value))));
     setState(() => _isSaving = false);
+  }
+
+  Future<void> _savePcloudSettings() async {
+    await CloudSettings.setClientId(_pcloudClientIdCtrl.text.trim());
+    await CloudSettings.setAuthorizeHost(_pcloudAuthHost);
+    final root = _pcloudRootCtrl.text.trim();
+    await CloudSettings.setRootFolder(path: root.isEmpty ? '/' : root, folderId: 0);
+    await CloudSettings.setScope(_pcloudScope);
+    await CloudSettings.setPolicy(_pcloudPolicy);
+    final cacheMb = int.tryParse(_pcloudCacheCtrl.text.trim()) ?? CloudSettings.defaultCacheMb;
+    await CloudSettings.setCacheMb(cacheMb);
+  }
+
+  Future<void> _connectPcloud() async {
+    TapFeedback.machineTap();
+    await CloudSettings.setClientId(_pcloudClientIdCtrl.text.trim());
+    if (CloudSettings.clientId.isEmpty) {
+      setState(() => _pcloudStatus = 'ENTER YOUR PCLOUD OAUTH CLIENT ID FIRST.');
+      return;
+    }
+    final url = PCloudProvider.instance.buildAuthorizeUrl();
+    setState(() {
+      _pcloudBusy = true;
+      _pcloudStatus = 'SIGN IN IN YOUR BROWSER — THE APP CATCHES THE RETURN.';
+    });
+    try {
+      await _storageChannel.invokeMethod('openUrl', {'url': url.toString()});
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _pcloudBusy = false;
+        _pcloudStatus = 'THE BROWSER WOULD NOT OPEN — OPEN THE SIGN-IN LINK BY HAND.';
+      });
+      return;
+    }
+    String? redirect;
+    for (var i = 0; i < 40; i++) {
+      await Future<void>.delayed(const Duration(seconds: 3));
+      if (!mounted) return;
+      try {
+        redirect = await _pcloudAuthChannel.invokeMethod<String>('takePendingRedirect');
+      } catch (_) {
+        redirect = null;
+      }
+      if (redirect != null && redirect.isNotEmpty) break;
+    }
+    if (!mounted) return;
+    setState(() => _pcloudBusy = false);
+    if (redirect == null || redirect.isEmpty) {
+      setState(() => _pcloudStatus = 'NO SIGN-IN CAME BACK — TRY AGAIN.');
+      return;
+    }
+    final auth = PCloudProvider.parseAuthRedirect(redirect);
+    if (auth == null) {
+      setState(() => _pcloudStatus = 'THE SIGN-IN RETURN WAS NOT READABLE — TRY AGAIN.');
+      return;
+    }
+    await CloudSettings.setToken(token: auth.token, apiHost: auth.apiHost, locationId: auth.locationId);
+    final ok = await PCloudProvider.instance.testConnection();
+    if (!mounted) return;
+    setState(() {
+      _pcloudStatus = ok ? 'CONNECTED — REGION ${CloudSettings.apiHostLabel.value}.' : 'SIGNED IN, BUT PCLOUD WOULD NOT ANSWER — CHECK SIGNAL.';
+    });
+  }
+
+  Future<void> _disconnectPcloud() async {
+    TapFeedback.machineTap();
+    setState(() => _pcloudBusy = true);
+    await PCloudProvider.instance.signOut();
+    if (!mounted) return;
+    setState(() {
+      _pcloudBusy = false;
+      _pcloudStatus = 'DISCONNECTED.';
+    });
+  }
+
+  Future<void> _savePastedToken() async {
+    TapFeedback.machineTap();
+    final pasted = _pcloudTokenCtrl.text.trim();
+    if (pasted.isEmpty) {
+      setState(() => _pcloudStatus = 'PASTE THE RETURN LINK OR THE TOKEN FIRST.');
+      return;
+    }
+    PCloudAuthResult? auth;
+    if (pasted.startsWith('sovereigntagger://')) {
+      auth = PCloudProvider.parseAuthRedirect(pasted);
+    } else {
+      final isEu = _pcloudAuthHost == CloudSettings.authorizeHostEu;
+      auth = PCloudAuthResult(token: pasted, apiHost: isEu ? CloudRegion.eu.host : CloudRegion.us.host, locationId: isEu ? 2 : 1);
+    }
+    if (auth == null) {
+      setState(() => _pcloudStatus = 'THAT LINK WAS NOT READABLE — TRY AGAIN.');
+      return;
+    }
+    _pcloudTokenCtrl.clear();
+    await CloudSettings.setToken(token: auth.token, apiHost: auth.apiHost, locationId: auth.locationId);
+    final ok = await PCloudProvider.instance.testConnection();
+    if (!mounted) return;
+    setState(() {
+      _pcloudStatus = ok ? 'CONNECTED — REGION ${CloudSettings.apiHostLabel.value}.' : 'TOKEN SAVED, BUT PCLOUD WOULD NOT ANSWER — CHECK SIGNAL.';
+    });
   }
 
   String _encrypt(String data) {
@@ -529,6 +655,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _acrKeyCtrl.dispose();
     _acrSecretCtrl.dispose();
     _hfTokenCtrl.dispose();
+    _pcloudClientIdCtrl.dispose();
+    _pcloudRootCtrl.dispose();
+    _pcloudCacheCtrl.dispose();
+    _pcloudTokenCtrl.dispose();
     super.dispose();
   }
 
@@ -1006,6 +1136,35 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
+  Widget _buildPcloudDropdown<T>({
+    required String label,
+    required T value,
+    required List<DropdownMenuItem<T>> items,
+    required void Function(T? value) onChanged,
+  }) {
+    return InputDecorator(
+      decoration: InputDecoration(
+        labelText: label,
+        labelStyle: const TextStyle(fontFamily: 'ShareTechMono', color: Colors.white54),
+        enabledBorder: OutlineInputBorder(borderSide: BorderSide(color: Colors.cyanAccent.withValues(alpha: 0.3))),
+        focusedBorder: const OutlineInputBorder(borderSide: BorderSide(color: Colors.cyanAccent)),
+        filled: true,
+        fillColor: Colors.black,
+        contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+      ),
+      child: DropdownButton<T>(
+        value: value,
+        items: items,
+        onChanged: onChanged,
+        isExpanded: true,
+        underline: const SizedBox.shrink(),
+        dropdownColor: Colors.black,
+        iconEnabledColor: Colors.cyanAccent,
+        style: const TextStyle(fontFamily: 'ShareTechMono', color: Colors.cyanAccent),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return ValueListenableBuilder<Color>(
@@ -1211,6 +1370,102 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 _buildSettingsField(_acrKeyCtrl, 'ACCESS KEY', Colors.blueAccent),
                 const SizedBox(height: 12),
                 _buildSettingsField(_acrSecretCtrl, 'ACCESS SECRET', Colors.blueAccent),
+
+                const SizedBox(height: 32),
+
+                GestureDetector(
+                  onTap: () => _openRegistration('https://docs.pcloud.com/methods/oauth_2.0/authorize.html'),
+                  child: const Row(
+                    children: [
+                      Text("> PCLOUD [CLOUD MUSIC]", style: TextStyle(fontFamily: 'ShareTechMono', fontSize: 16, fontWeight: FontWeight.bold, color: Colors.cyanAccent)),
+                      SizedBox(width: 8),
+                      Icon(Icons.open_in_new, size: 15, color: Colors.cyanAccent),
+                    ],
+                  ),
+                ),
+                const Text("tap the title to open the pCloud OAuth docs", style: TextStyle(fontFamily: 'ShareTechMono', fontSize: 10, color: Colors.white38)),
+                const SizedBox(height: 8),
+                const Text("YOU NEED A PCLOUD OAUTH APP FIRST — PCLOUD PAUSED SELF-SERVICE REGISTRATION, SO ASK PCLOUD SUPPORT TO PROVISION ONE. NOTHING HERE WORKS UNTIL THEN. THE SIGN-IN TOKEN STAYS ON THIS DEVICE ONLY AND IS NEVER INCLUDED IN THE .BIN VAULT BACKUP.", style: TextStyle(fontFamily: 'ShareTechMono', fontSize: 11, color: Colors.white54)),
+                const SizedBox(height: 12),
+                ValueListenableBuilder<bool>(
+                  valueListenable: CloudSettings.isConnected,
+                  builder: (context, connected, _) {
+                    return Text(connected ? '> CONNECTED — REGION ${CloudSettings.apiHostLabel.value}' : '> NOT CONNECTED', style: TextStyle(fontFamily: 'ShareTechMono', fontSize: 12, fontWeight: FontWeight.bold, color: connected ? Colors.greenAccent : Colors.redAccent));
+                  },
+                ),
+                if (_pcloudStatus.isNotEmpty) ...[
+                  const SizedBox(height: 6),
+                  Text('> $_pcloudStatus', style: const TextStyle(fontFamily: 'ShareTechMono', fontSize: 11, color: Colors.white70)),
+                ],
+                const SizedBox(height: 12),
+                _buildSettingsField(_pcloudClientIdCtrl, 'OAUTH CLIENT ID', Colors.cyanAccent),
+                const SizedBox(height: 12),
+                Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        onPressed: _pcloudBusy ? null : _connectPcloud,
+                        icon: _pcloudBusy ? const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.cyanAccent)) : const Icon(Icons.cloud, color: Colors.cyanAccent),
+                        label: Text(_pcloudBusy ? 'WAITING FOR SIGN-IN...' : 'CONNECT PCLOUD', style: const TextStyle(fontFamily: 'ShareTechMono', color: Colors.cyanAccent, fontWeight: FontWeight.bold)),
+                        style: OutlinedButton.styleFrom(side: const BorderSide(color: Colors.cyanAccent), backgroundColor: Colors.black, padding: const EdgeInsets.symmetric(vertical: 14)),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        onPressed: _pcloudBusy ? null : _disconnectPcloud,
+                        icon: const Icon(Icons.cloud_off, color: Colors.redAccent),
+                        label: const Text('DISCONNECT', style: TextStyle(fontFamily: 'ShareTechMono', color: Colors.redAccent, fontWeight: FontWeight.bold)),
+                        style: OutlinedButton.styleFrom(side: const BorderSide(color: Colors.redAccent), backgroundColor: Colors.black, padding: const EdgeInsets.symmetric(vertical: 14)),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                _buildPcloudDropdown<String>(
+                  label: 'SIGN-IN REGION',
+                  value: _pcloudAuthHost,
+                  items: const [
+                    DropdownMenuItem(value: 'my.pcloud.com', child: Text('US — MY.PCLOUD.COM', style: TextStyle(fontFamily: 'ShareTechMono', color: Colors.white))),
+                    DropdownMenuItem(value: 'e.pcloud.com', child: Text('EU — E.PCLOUD.COM', style: TextStyle(fontFamily: 'ShareTechMono', color: Colors.white))),
+                  ],
+                  onChanged: (value) => setState(() => _pcloudAuthHost = value ?? CloudSettings.authorizeHostUs),
+                ),
+                const SizedBox(height: 12),
+                _buildSettingsField(_pcloudRootCtrl, 'MUSIC ROOT FOLDER (E.G. / OR /MUSIC)', Colors.cyanAccent),
+                const SizedBox(height: 12),
+                _buildPcloudDropdown<CloudScope>(
+                  label: 'SCOPE',
+                  value: _pcloudScope,
+                  items: const [
+                    DropdownMenuItem(value: CloudScope.appFolder, child: Text('APP FOLDER ONLY', style: TextStyle(fontFamily: 'ShareTechMono', color: Colors.white))),
+                    DropdownMenuItem(value: CloudScope.wholeDrive, child: Text('WHOLE DRIVE', style: TextStyle(fontFamily: 'ShareTechMono', color: Colors.white))),
+                  ],
+                  onChanged: (value) => setState(() => _pcloudScope = value ?? CloudScope.appFolder),
+                ),
+                const SizedBox(height: 6),
+                const Text('the scope is granted by your pCloud app — this only picks the music root shown in the Library', style: TextStyle(fontFamily: 'ShareTechMono', fontSize: 10, color: Colors.white38)),
+                const SizedBox(height: 12),
+                _buildPcloudDropdown<CloudPlaybackPolicy>(
+                  label: 'PLAYBACK',
+                  value: _pcloudPolicy,
+                  items: const [
+                    DropdownMenuItem(value: CloudPlaybackPolicy.streamByDefault, child: Text('STREAM BY DEFAULT', style: TextStyle(fontFamily: 'ShareTechMono', color: Colors.white))),
+                    DropdownMenuItem(value: CloudPlaybackPolicy.downloadByDefault, child: Text('DOWNLOAD BY DEFAULT', style: TextStyle(fontFamily: 'ShareTechMono', color: Colors.white))),
+                  ],
+                  onChanged: (value) => setState(() => _pcloudPolicy = value ?? CloudPlaybackPolicy.streamByDefault),
+                ),
+                const SizedBox(height: 12),
+                _buildSettingsField(_pcloudCacheCtrl, 'OFFLINE CACHE SIZE (MB, DEFAULT 1024)', Colors.cyanAccent),
+                const SizedBox(height: 12),
+                _buildSettingsField(_pcloudTokenCtrl, 'PASTE RETURN LINK OR TOKEN (FALLBACK ONLY)', Colors.cyanAccent),
+                const SizedBox(height: 8),
+                OutlinedButton.icon(
+                  onPressed: _savePastedToken,
+                  icon: const Icon(Icons.paste, color: Colors.cyanAccent),
+                  label: const Text('SAVE PASTED SIGN-IN', style: TextStyle(fontFamily: 'ShareTechMono', color: Colors.cyanAccent, fontWeight: FontWeight.bold)),
+                  style: OutlinedButton.styleFrom(side: const BorderSide(color: Colors.cyanAccent), backgroundColor: Colors.black, padding: const EdgeInsets.symmetric(vertical: 12)),
+                ),
 
                 const SizedBox(height: 32),
 

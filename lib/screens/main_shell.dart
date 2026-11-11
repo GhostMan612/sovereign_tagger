@@ -16,6 +16,10 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:video_player/video_player.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 import '../core/audio_handler.dart';
+import '../core/cloud_cache.dart';
+import '../core/cloud_download.dart';
+import '../core/cloud_pcloud.dart';
+import '../core/cloud_source.dart';
 import '../core/forge_request.dart';
 import '../core/playback_fx.dart';
 import '../core/playlists.dart';
@@ -42,6 +46,7 @@ class SovereignState {
   static final ValueNotifier<ForgeRequest?> pendingForge = ValueNotifier<ForgeRequest?>(null);
   static final ValueNotifier<String?> pendingGrabberUrl = ValueNotifier<String?>(null);
   static final ValueNotifier<int> currentTab = ValueNotifier<int>(0);
+  static final ValueNotifier<int> cloudViewRequest = ValueNotifier<int>(0);
   static final ValueNotifier<Color> accentColor = ValueNotifier<Color>(const Color(0xFFFF003C));
 
   static void sendToForge(ForgeRequest request) {
@@ -105,6 +110,9 @@ class AudioService {
   static final ValueNotifier<double> speedFactor = ValueNotifier<double>(1.0);
   static final ValueNotifier<int> infoRevision = ValueNotifier<int>(0);
   static final Map<String, TrackInfo> _info = {};
+  static final ValueNotifier<String> cloudStatus = ValueNotifier<String>('');
+  static final Map<String, CloudEntry> _cloudByPath = <String, CloudEntry>{};
+  static String _cloudRefetchPath = '';
   static final Map<String, Future<TrackInfo>> _infoInFlight = {};
 
   static Timer? sleepTimer;
@@ -202,7 +210,7 @@ class AudioService {
   static Future<void> initializeGlobalListener() async {
     await PlaybackFx.init(player);
 
-    player.errorStream.listen((e) => dbg('PLAYER ERROR STREAM: $e'));
+    player.errorStream.listen(_onPlayerError);
 
     player.processingStateStream.listen((s) {
       dbg('processingState -> $s (idx=${player.currentIndex} playing=${player.playing} volume=${player.volume})');
@@ -316,6 +324,7 @@ class AudioService {
     coverArtImage.value = null;
     hasMedia.value = true;
     _countedPath = _countedPath == path ? path : "";
+    if (_cloudRefetchPath.isNotEmpty && _cloudRefetchPath != path) _cloudRefetchPath = "";
 
     if (_isVideoPath(path)) {
       isVideo.value = true;
@@ -357,7 +366,7 @@ class AudioService {
       videoController.value = null;
       await old?.dispose();
       if (_wantPlaying && !player.playing) _firePlay();
-      await _readTags(path, token);
+      if (!isCloudPath(path)) await _readTags(path, token);
     }
     _persistPosition();
     _pushWidget();
@@ -426,6 +435,127 @@ class AudioService {
     } catch (_) {}
   }
 
+  static bool isCloudPath(String path) => path.startsWith('pcloud://');
+
+  static String cloudPathFor(String fileId) => 'pcloud://$fileId';
+
+  static CloudEntry? cloudEntryFor(String path) => _cloudByPath[path];
+
+  static void registerCloudEntries(List<CloudEntry> entries) {
+    for (final entry in entries) {
+      final path = cloudPathFor(entry.id);
+      _cloudByPath[path] = entry;
+      _info[path] = TrackInfo(title: CloudDownload.displayName(entry.name), artist: 'pCloud', album: '');
+    }
+  }
+
+  static Future<Set<String>> _queuedCloudCachePaths() async {
+    final paths = <String>{};
+    for (final file in playlist.value) {
+      if (!isCloudPath(file.path)) continue;
+      final entry = _cloudByPath[file.path];
+      if (entry == null) continue;
+      paths.add(await CloudCache.pathFor(entry.id, entry.name));
+    }
+    return paths;
+  }
+
+  static Future<AudioSource?> _sourceFor(File f) async {
+    if (!isCloudPath(f.path)) return _taggedSource(f);
+    final entry = _cloudByPath[f.path];
+    if (entry == null) {
+      cloudStatus.value = 'UNKNOWN CLOUD TRACK — SKIPPED.';
+      return null;
+    }
+    if (CloudDownload.downloadByDefault) {
+      final cached = await CloudCache.get(entry.id, entry.name);
+      if (cached != null) return AudioSource.uri(Uri.file(cached.path), tag: f.path);
+      try {
+        final protected = await _queuedCloudCachePaths();
+        final saved = await CloudDownload.downloadForOffline(entry, protectedCachePaths: protected);
+        return AudioSource.uri(Uri.file(saved.path), tag: f.path);
+      } catch (_) {
+        cloudStatus.value = "COULDN'T FETCH ${entry.name} FROM PCLOUD — SKIPPED.";
+        return null;
+      }
+    }
+    final uri = await PCloudProvider.instance.resolveStreamUri(entry.id);
+    if (uri == null) {
+      cloudStatus.value = "COULDN'T REACH PCLOUD — SKIPPED ${entry.name}.";
+      return null;
+    }
+    return AudioSource.uri(uri, tag: f.path);
+  }
+
+  static Future<({List<AudioSource> sources, List<File> files})> _resolveSources(List<File> files) async {
+    final sources = <AudioSource>[];
+    final kept = <File>[];
+    for (final file in files) {
+      final source = await _sourceFor(file);
+      if (source == null) continue;
+      sources.add(source);
+      kept.add(file);
+    }
+    return (sources: sources, files: kept);
+  }
+
+  static Future<bool> playCloudEntries(List<CloudEntry> entries, {int startIndex = 0, bool shuffle = false}) async {
+    if (entries.isEmpty) return false;
+    final ordered = List<CloudEntry>.from(entries);
+    if (shuffle) ordered.shuffle();
+    registerCloudEntries(ordered);
+    final files = ordered.map((e) => File(cloudPathFor(e.id))).toList();
+    return replacePlaylist(files, startIndex: shuffle ? 0 : startIndex, autoplay: true);
+  }
+
+  static Future<void> addCloudEntriesToQueue(List<CloudEntry> entries, {bool next = false}) async {
+    if (entries.isEmpty) return;
+    registerCloudEntries(entries);
+    final files = entries.map((e) => File(cloudPathFor(e.id))).toList();
+    if (next) {
+      for (final file in files.reversed) {
+        await playNext(file);
+      }
+    } else {
+      await addAllToQueue(files);
+    }
+  }
+
+  static Future<void> _onPlayerError(Object e) async {
+    dbg('PLAYER ERROR STREAM: $e');
+    final idx = player.currentIndex ?? currentIndex.value;
+    if (idx < 0 || idx >= playlist.value.length) return;
+    final path = playlist.value[idx].path;
+    if (!isCloudPath(path)) return;
+    final entry = _cloudByPath[path];
+    if (entry == null) return;
+    if (_cloudRefetchPath == path) {
+      _cloudRefetchPath = '';
+      cloudStatus.value = "COULDN'T REACH PCLOUD — SKIPPED ${entry.name}.";
+      nextTrack();
+      return;
+    }
+    _cloudRefetchPath = path;
+    final uri = await PCloudProvider.instance.resolveStreamUri(entry.id);
+    if (uri == null) {
+      _cloudRefetchPath = '';
+      cloudStatus.value = "COULDN'T REACH PCLOUD — SKIPPED ${entry.name}.";
+      nextTrack();
+      return;
+    }
+    await _withQueueLock(() async {
+      try {
+        await player.removeAudioSourceAt(idx);
+        await player.insertAudioSource(idx, AudioSource.uri(uri, tag: path));
+        await player.seek(Duration.zero, index: idx);
+        if (_wantPlaying) _firePlay();
+      } catch (_) {
+        cloudStatus.value = "COULDN'T REACH PCLOUD — SKIPPED ${entry.name}.";
+        nextTrack();
+      }
+    });
+  }
+
   static AudioSource _taggedSource(File f) => AudioSource.uri(Uri.file(f.path), tag: f.path);
 
   static Future<bool> _loadSources(List<AudioSource> sources, int index, Duration position) async {
@@ -442,15 +572,16 @@ class AudioService {
   static Future<bool> replacePlaylist(List<File> files, {int startIndex = 0, Duration startPosition = Duration.zero, bool autoplay = false}) async {
     return _withQueueLock(() async {
       _wantPlaying = autoplay;
-      playlist.value = files;
-      final sources = files.map(_taggedSource).toList();
+      final resolved = await _resolveSources(files);
+      playlist.value = resolved.files;
+      final sources = resolved.sources;
       var loaded = true;
-      if (files.isNotEmpty) {
-        final idx = startIndex.clamp(0, files.length - 1);
+      if (resolved.files.isNotEmpty) {
+        final idx = startIndex.clamp(0, resolved.files.length - 1);
         _loadedKey = "";
         loaded = await _loadSources(sources, idx, startPosition);
         if (loaded) await _ensureLoaded(idx);
-        if (loaded && autoplay && !_isVideoPath(files[idx].path)) _firePlay();
+        if (loaded && autoplay && !_isVideoPath(resolved.files[idx].path)) _firePlay();
       } else {
         await player.clearAudioSources();
         currentIndex.value = -1;
@@ -465,11 +596,13 @@ class AudioService {
 
   static Future<void> playNext(File file) async {
     return _withQueueLock(() async {
+      final source = await _sourceFor(file);
+      if (source == null) return;
       final currentList = List<File>.from(playlist.value);
       if (currentList.isEmpty) {
         playlist.value = [file];
         _loadedKey = "";
-        await _loadSources([_taggedSource(file)], 0, Duration.zero);
+        await _loadSources([source], 0, Duration.zero);
         await _ensureLoaded(0);
         _persistQueue();
         await _syncHandlerQueue();
@@ -478,7 +611,7 @@ class AudioService {
       final insertIdx = (currentIndex.value + 1).clamp(0, currentList.length);
       currentList.insert(insertIdx, file);
       playlist.value = currentList;
-      await player.insertAudioSource(insertIdx, _taggedSource(file));
+      await player.insertAudioSource(insertIdx, source);
       _persistQueue();
       await _syncHandlerQueue();
     });
@@ -489,15 +622,16 @@ class AudioService {
   static Future<void> addAllToQueue(List<File> files) async {
     if (files.isEmpty) return;
     return _withQueueLock(() async {
+      final resolved = await _resolveSources(files);
+      if (resolved.files.isEmpty) return;
       final wasEmpty = playlist.value.isEmpty;
-      playlist.value = [...playlist.value, ...files];
-      final sources = files.map(_taggedSource).toList();
+      playlist.value = [...playlist.value, ...resolved.files];
       if (wasEmpty) {
         _loadedKey = "";
-        await _loadSources(sources, 0, Duration.zero);
+        await _loadSources(resolved.sources, 0, Duration.zero);
         await _ensureLoaded(0);
       } else {
-        await player.addAudioSources(sources);
+        await player.addAudioSources(resolved.sources);
       }
       _persistQueue();
       await _syncHandlerQueue();
@@ -548,6 +682,14 @@ class AudioService {
     final idx = currentIndex.value;
     if (idx < 0 || idx >= playlist.value.length) return;
     final path = playlist.value[idx].path;
+    if (isCloudPath(path)) {
+      final entry = _cloudByPath[path];
+      if (entry != null) {
+        _info[path] = TrackInfo(title: CloudDownload.displayName(entry.name), artist: 'pCloud', album: '');
+      }
+      infoRevision.value++;
+      return;
+    }
     _info.remove(path);
     _artCacheKey = "";
     if (!_isVideoPath(path)) await _readTags(path, _loadToken);
@@ -592,12 +734,13 @@ class AudioService {
     _lastPersist = DateTime.now();
     try {
       final prefs = await SharedPreferences.getInstance();
-      if (playlist.value.isEmpty) {
+      final paths = playlist.value.map((f) => f.path).where((p) => !isCloudPath(p)).toList();
+      if (paths.isEmpty) {
         await prefs.remove('persist_queue');
         await prefs.remove('persist_queue_pos');
         return;
       }
-      await prefs.setString('persist_queue', jsonEncode({'paths': playlist.value.map((f) => f.path).toList()}));
+      await prefs.setString('persist_queue', jsonEncode({'paths': paths}));
       await _persistPosition();
     } catch (_) {}
   }
