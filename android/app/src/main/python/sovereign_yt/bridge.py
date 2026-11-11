@@ -6,6 +6,7 @@
 import yt_dlp
 import json
 import os
+import shutil
 import urllib.request
 
 active_jobs = {}
@@ -51,7 +52,27 @@ def _info_block(info):
 
 
 def _base_opts():
-    return {"quiet": True, "no_warnings": True, "noprogress": True}
+    return {
+        "quiet": True,
+        "no_warnings": True,
+        "noprogress": True,
+        "extractor_args": {"youtube": {"player_client": ["android", "web", "ios"]}},
+        "extractor_retries": 3,
+        "fragment_retries": 3,
+        "concurrent_fragments": 4,
+    }
+
+
+def _ffmpeg_available():
+    return shutil.which("ffmpeg") is not None
+
+
+def capabilities():
+    try:
+        version = getattr(yt_dlp.version, "__version__", "")
+    except Exception:
+        version = ""
+    return json.dumps({"status": "success", "ffmpeg": _ffmpeg_available(), "ytdlp": version})
 
 
 def search_media(query, source, limit=15):
@@ -160,6 +181,8 @@ def download(url, options_json, job_id, out_dir, progress_callback):
         options = json.loads(options_json)
         format_id = options.get("formatId", "best")
         allow_playlist = bool(options.get("playlist", False))
+        notes = []
+        ffmpeg_ok = _ffmpeg_available()
 
         def create_hook(label):
             def hook(d):
@@ -193,6 +216,40 @@ def download(url, options_json, job_id, out_dir, progress_callback):
                 "progress_hooks": [create_hook(label)],
                 "noplaylist": not allow_playlist,
             })
+            o["extractor_args"] = {"youtube": {"player_client": ["android", "web", "ios"], "player_skip": ["webpage", "configs"]}}
+            if options.get("playlistItems"):
+                o["playlist_items"] = str(options["playlistItems"])
+            if options.get("playlistReverse"):
+                o["playlistreverse"] = True
+            if options.get("embedSubs"):
+                o["writesubtitles"] = True
+                o["writeautomaticsub"] = False
+                o["subtitleslangs"] = [str(options.get("subLang") or "en")]
+                if ffmpeg_ok:
+                    o["embedsubtitles"] = True
+                else:
+                    notes.append("Subtitles saved as sidecar file (no ffmpeg to embed).")
+            if options.get("embedChapters"):
+                if ffmpeg_ok:
+                    o["embedchapters"] = True
+                else:
+                    notes.append("Chapters not embedded (no ffmpeg on device).")
+            if options.get("embedMetadata"):
+                if ffmpeg_ok:
+                    o["embedmetadata"] = True
+                else:
+                    notes.append("Metadata not embedded (no ffmpeg on device).")
+            if options.get("embedThumbnail"):
+                if ffmpeg_ok:
+                    o["embedthumbnail"] = True
+                else:
+                    notes.append("Thumbnail not embedded (no ffmpeg on device).")
+            sb = str(options.get("sponsorblock") or "off")
+            if sb in ("mark", "remove"):
+                if ffmpeg_ok:
+                    o["sponsorblock_mark" if sb == "mark" else "sponsorblock_remove"] = ["sponsor", "intro", "outro"]
+                else:
+                    notes.append("SponsorBlock skipped (no ffmpeg on device).")
             return o
 
         if "+" in format_id:
@@ -218,6 +275,7 @@ def download(url, options_json, job_id, out_dir, progress_callback):
                 "audioPath": audio_file,
                 "isSplit": True,
                 "isPlaylist": False,
+                "notes": notes,
                 "info": _info_block(info_v),
             }))
         else:
@@ -241,6 +299,7 @@ def download(url, options_json, job_id, out_dir, progress_callback):
                         "items": items,
                         "isSplit": False,
                         "isPlaylist": True,
+                        "notes": notes,
                         "info": {"title": info.get("title", "")},
                     }))
                 else:
@@ -250,6 +309,7 @@ def download(url, options_json, job_id, out_dir, progress_callback):
                         "filePath": _requested_path(ydl, info),
                         "isSplit": False,
                         "isPlaylist": False,
+                        "notes": notes,
                         "info": _info_block(info),
                     }))
 

@@ -12,7 +12,7 @@ PATCH_REGISTRY = {
     "youtube_android_blocked": {
         "signature": ["Sign in to confirm you’re not a bot", "android.*player.*not available", "confirm you are not a bot"],
         "field": "youtube.player_client",
-        "current": ["android"],
+        "current": ["android", "web", "ios"],
         "hotfix": ["android,web", "web", "ios"],
         "file": "bridge.py",
         "lines": "extractor_args youtube player_client"

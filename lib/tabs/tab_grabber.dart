@@ -23,6 +23,10 @@ import '../core/ghost_commands.dart';
 
 enum _ExportMode { m4a, mp3, original }
 
+enum _AudioQuality { best, opus160, aac128 }
+
+enum _SponsorBlockMode { off, mark, remove }
+
 class _GrabJob {
   final String id;
   final String url;
@@ -36,6 +40,7 @@ class _GrabJob {
   String? error;
   String? companionForVideo;
   int selfHealAttempts = 0;
+  String notes = "";
   final bool sendToForgeWhenDone;
   final Completer<String>? onResult;
 
@@ -112,6 +117,14 @@ class _TabGrabberState extends State<TabGrabber> {
   String _searchSource = "youtube";
   String _quickVideoRes = "1080";
   _ExportMode _exportMode = _ExportMode.m4a;
+  _AudioQuality _audioQuality = _AudioQuality.best;
+  bool _embedSubs = false;
+  String _subLang = 'en';
+  bool _embedChapters = false;
+  bool _embedMetadata = false;
+  bool _embedThumbnail = false;
+  _SponsorBlockMode _sponsorBlock = _SponsorBlockMode.off;
+  bool _ffmpegAvailable = false;
   String _lastMergeDiagnostics = "";
 
   String _newJobId() => "${DateTime.now().millisecondsSinceEpoch}_${Random().nextInt(900000) + 100000}";
@@ -124,6 +137,16 @@ class _TabGrabberState extends State<TabGrabber> {
     GhostCommandBus.pendingGrabberCommand.addListener(_onGhostGrabCommand);
     WidgetsBinding.instance.addPostFrameCallback((_) => _onSharedUrl());
     WidgetsBinding.instance.addPostFrameCallback((_) => _onGhostGrabCommand());
+    unawaited(_loadCapabilities());
+  }
+
+  Future<void> _loadCapabilities() async {
+    try {
+      final raw = await _ytChannel.invokeMethod('getCapabilities');
+      final data = jsonDecode(raw.toString()) as Map<String, dynamic>;
+      if (!mounted) return;
+      setState(() => _ffmpegAvailable = data['ffmpeg'] == true);
+    } catch (_) {}
   }
 
   @override
@@ -205,7 +228,31 @@ class _TabGrabberState extends State<TabGrabber> {
     return url;
   }
 
-  String _audioFormatFor(_ExportMode mode) => mode == _ExportMode.m4a ? 'bestaudio[ext=m4a]/bestaudio/best' : 'bestaudio/best';
+  String _audioFormatFor(_ExportMode mode) {
+    switch (_audioQuality) {
+      case _AudioQuality.opus160:
+        return 'bestaudio[ext=opus]/bestaudio[acodec=opus]/bestaudio';
+      case _AudioQuality.aac128:
+        return 'bestaudio[ext=m4a]/bestaudio[acodec=aac]/bestaudio';
+      case _AudioQuality.best:
+        return mode == _ExportMode.m4a ? 'bestaudio[ext=m4a]/bestaudio/best' : 'bestaudio/best';
+    }
+  }
+
+  Map<String, dynamic> _downloadOptions(String formatId, {bool playlist = false, String? playlistItems, bool playlistReverse = false}) {
+    return {
+      'formatId': formatId,
+      'playlist': playlist,
+      if (playlistItems != null) 'playlistItems': playlistItems,
+      if (playlistReverse) 'playlistReverse': true,
+      'embedSubs': _embedSubs,
+      'subLang': _subLang,
+      'embedChapters': _embedChapters,
+      'embedMetadata': _embedMetadata,
+      'embedThumbnail': _embedThumbnail,
+      'sponsorblock': _sponsorBlock.name,
+    };
+  }
 
   void _onEvent(dynamic event) {
     if (!mounted) return;
@@ -234,7 +281,7 @@ class _TabGrabberState extends State<TabGrabber> {
     }
   }
 
-  Future<void> _startDownload(String url, String formatId, {required bool isVideo, bool playlist = false, String? label, bool sendToForgeWhenDone = false, Completer<String>? onResult}) async {
+  Future<void> _startDownload(String url, String formatId, {required bool isVideo, bool playlist = false, String? playlistItems, bool playlistReverse = false, String? label, bool sendToForgeWhenDone = false, Completer<String>? onResult}) async {
     TapFeedback.machineTap();
     final jobId = _newJobId();
     final job = _GrabJob(id: jobId, url: url, isVideo: isVideo, isPlaylist: playlist, mode: _exportMode, label: label ?? url, sendToForgeWhenDone: sendToForgeWhenDone, onResult: onResult);
@@ -243,7 +290,7 @@ class _TabGrabberState extends State<TabGrabber> {
       _statusMessage = "Download Started. You Can Keep Browsing — Results Appear Below.";
     });
     try {
-      final raw = await _ytChannel.invokeMethod('downloadMedia', {'url': url, 'formatId': formatId, 'jobId': jobId, 'optionsJson': jsonEncode({'formatId': formatId, 'playlist': playlist})});
+      final raw = await _ytChannel.invokeMethod('downloadMedia', {'url': url, 'formatId': formatId, 'jobId': jobId, 'optionsJson': jsonEncode(_downloadOptions(formatId, playlist: playlist, playlistItems: playlistItems, playlistReverse: playlistReverse))});
       final result = jsonDecode(raw.toString()) as Map<String, dynamic>;
       if (!mounted) return;
       if (result['status'] == 'canceled') {
@@ -276,6 +323,7 @@ class _TabGrabberState extends State<TabGrabber> {
 
   Future<void> _onFinished(_GrabJob job, String eventJobId, Map<String, dynamic> data) async {
     if (!mounted) return;
+    job.notes = ((data['notes'] as List?) ?? const []).whereType<String>().join('\n');
     final info = (data['info'] as Map?)?.cast<String, dynamic>() ?? <String, dynamic>{};
     try {
       if (job.companionForVideo != null && eventJobId != job.id) {
@@ -318,9 +366,10 @@ class _TabGrabberState extends State<TabGrabber> {
   void _finishJob(_GrabJob job, String message) {
     if (!mounted) return;
     TapFeedback.machineConfirm();
+    final msg = job.notes.isEmpty ? message : "$message\n${job.notes}";
     setState(() {
       _jobs.remove(job.id);
-      _statusMessage = message;
+      _statusMessage = msg;
     });
   }
 
@@ -499,7 +548,7 @@ class _TabGrabberState extends State<TabGrabber> {
         job.companionForVideo = videoPath;
         setState(() => job.stage = "Video Is Silent. Fetching Companion Audio...");
         final companionId = "${job.id}_c";
-        final raw = await _ytChannel.invokeMethod('downloadMedia', {'url': job.url, 'formatId': 'bestaudio/best', 'jobId': companionId, 'optionsJson': jsonEncode({'formatId': 'bestaudio/best'})});
+        final raw = await _ytChannel.invokeMethod('downloadMedia', {'url': job.url, 'formatId': 'bestaudio/best', 'jobId': companionId, 'optionsJson': jsonEncode(_downloadOptions('bestaudio/best'))});
         final res = jsonDecode(raw.toString()) as Map<String, dynamic>;
         if (res['status'] != 'success' && mounted) {
           setState(() {
@@ -826,6 +875,45 @@ class _TabGrabberState extends State<TabGrabber> {
     _startDownload(url, "bestvideo[height<=$_quickVideoRes]+bestaudio/best[height<=$_quickVideoRes]/best", isVideo: true);
   }
 
+  int _audioCodecRank(dynamic codec) => switch (codec?.toString()) {
+        'opus' => 0,
+        'aac' => 1,
+        'vorbis' => 2,
+        'mp3' => 3,
+        _ => 4,
+      };
+
+  int _heightOf(Map<String, dynamic> f) {
+    final res = f['resolution']?.toString() ?? '';
+    return int.tryParse(res.split('x').last) ?? 0;
+  }
+
+  int _compareFormats(Map<String, dynamic> a, Map<String, dynamic> b) {
+    final aAudio = a['resolution'] == 'audio only';
+    final bAudio = b['resolution'] == 'audio only';
+    if (aAudio != bAudio) return aAudio ? -1 : 1;
+    if (aAudio) {
+      final abr = ((b['abr'] as num?) ?? 0).compareTo((a['abr'] as num?) ?? 0);
+      if (abr != 0) return abr;
+      return _audioCodecRank(a['acodec']) - _audioCodecRank(b['acodec']);
+    }
+    final height = _heightOf(b).compareTo(_heightOf(a));
+    if (height != 0) return height;
+    return ((b['filesize'] as num?) ?? 0).compareTo((a['filesize'] as num?) ?? 0);
+  }
+
+  List<Map<String, dynamic>> _sortFormats(List<Map<String, dynamic>> formats) {
+    final byId = <String, Map<String, dynamic>>{};
+    for (final f in formats) {
+      final id = f['format_id'].toString();
+      final prev = byId[id];
+      if (prev == null || ((f['filesize'] as num?) ?? 0) > ((prev['filesize'] as num?) ?? 0)) byId[id] = f;
+    }
+    final out = byId.values.where((f) => f['vcodec'] != 'none' || f['acodec'] != 'none').toList();
+    out.sort(_compareFormats);
+    return out;
+  }
+
   Future<void> _fetchAvailableFormats() async {
     TapFeedback.machineTap();
     final url = _requireUrl();
@@ -864,7 +952,7 @@ class _TabGrabberState extends State<TabGrabber> {
         _isBusy = false;
         _statusMessage = "Formats Decrypted: $title";
       });
-      _showFormatPicker(formats, url, title);
+      _showFormatPicker(_sortFormats(formats), url, title);
     } on PlatformException catch (e) {
       if (!mounted) return;
       setState(() {
@@ -876,26 +964,83 @@ class _TabGrabberState extends State<TabGrabber> {
 
   void _showPlaylistDialog(String url, String title, int count) {
     final themeColor = SovereignState.accentColor.value;
+    final startCtrl = TextEditingController(text: '1');
+    final endCtrl = TextEditingController(text: '$count');
+    var reverse = false;
     showDialog(
       context: context,
-      builder: (context) => AlertDialog(
-        backgroundColor: Colors.black,
-        shape: RoundedRectangleBorder(side: BorderSide(color: themeColor), borderRadius: BorderRadius.circular(8)),
-        title: Text("DOWNLOAD PLAYLIST?", style: TextStyle(fontFamily: 'ShareTechMono', color: themeColor)),
-        content: Text("TARGET: $title\nTRACKS: $count\n\nEvery track downloads as audio (${_modeLabel(_exportMode)}) and appears below as its own card. Nothing is saved to Music until you tap SAVE or SAVE ALL.", style: const TextStyle(fontFamily: 'ShareTechMono', color: Colors.white70)),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(context), child: const Text("ABORT", style: TextStyle(fontFamily: 'ShareTechMono', color: Colors.white54))),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(backgroundColor: themeColor, foregroundColor: Colors.black),
-            onPressed: () {
-              Navigator.pop(context);
-              _startDownload(url, _audioFormatFor(_exportMode), isVideo: false, playlist: true, label: title);
-            },
-            child: const Text("HARVEST PLAYLIST", style: TextStyle(fontFamily: 'ShareTechMono', fontWeight: FontWeight.bold)),
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          backgroundColor: Colors.black,
+          shape: RoundedRectangleBorder(side: BorderSide(color: themeColor), borderRadius: BorderRadius.circular(8)),
+          title: Text("DOWNLOAD PLAYLIST?", style: TextStyle(fontFamily: 'ShareTechMono', color: themeColor)),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text("TARGET: $title\nTRACKS: $count\n\nEvery track downloads as audio (${_modeLabel(_exportMode)}) and appears below as its own card. Nothing is saved to Music until you tap SAVE or SAVE ALL.", style: const TextStyle(fontFamily: 'ShareTechMono', color: Colors.white70)),
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  Expanded(
+                    child: TextField(
+                      controller: startCtrl,
+                      keyboardType: TextInputType.number,
+                      style: TextStyle(fontFamily: 'ShareTechMono', color: themeColor, fontSize: 13),
+                      decoration: const InputDecoration(labelText: 'FROM TRACK', labelStyle: TextStyle(fontFamily: 'ShareTechMono', color: Colors.white54), enabledBorder: OutlineInputBorder(borderSide: BorderSide(color: Colors.white24)), focusedBorder: OutlineInputBorder(borderSide: BorderSide(color: Colors.white54)), filled: true, fillColor: Colors.black),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: TextField(
+                      controller: endCtrl,
+                      keyboardType: TextInputType.number,
+                      style: TextStyle(fontFamily: 'ShareTechMono', color: themeColor, fontSize: 13),
+                      decoration: const InputDecoration(labelText: 'TO TRACK', labelStyle: TextStyle(fontFamily: 'ShareTechMono', color: Colors.white54), enabledBorder: OutlineInputBorder(borderSide: BorderSide(color: Colors.white24)), focusedBorder: OutlineInputBorder(borderSide: BorderSide(color: Colors.white54)), filled: true, fillColor: Colors.black),
+                    ),
+                  ),
+                ],
+              ),
+              CheckboxListTile(
+                value: reverse,
+                onChanged: (v) => setDialogState(() => reverse = v ?? false),
+                title: const Text("REVERSE ORDER", style: TextStyle(fontFamily: 'ShareTechMono', color: Colors.white70, fontSize: 12)),
+                controlAffinity: ListTileControlAffinity.leading,
+                contentPadding: EdgeInsets.zero,
+                dense: true,
+                activeColor: themeColor,
+              ),
+            ],
           ),
-        ],
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(context), child: const Text("ABORT", style: TextStyle(fontFamily: 'ShareTechMono', color: Colors.white54))),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(backgroundColor: themeColor, foregroundColor: Colors.black),
+              onPressed: () {
+                var start = int.tryParse(startCtrl.text.trim()) ?? 1;
+                var end = int.tryParse(endCtrl.text.trim()) ?? count;
+                if (start < 1) start = 1;
+                if (start > count) start = count;
+                if (end < 1) end = 1;
+                if (end > count) end = count;
+                if (start > end) {
+                  final t = start;
+                  start = end;
+                  end = t;
+                }
+                final items = start == end ? '$start' : '$start-$end';
+                Navigator.pop(context);
+                _startDownload(url, _audioFormatFor(_exportMode), isVideo: false, playlist: true, playlistItems: items, playlistReverse: reverse, label: title);
+              },
+              child: const Text("HARVEST PLAYLIST", style: TextStyle(fontFamily: 'ShareTechMono', fontWeight: FontWeight.bold)),
+            ),
+          ],
+        ),
       ),
-    );
+    ).then((_) {
+      startCtrl.dispose();
+      endCtrl.dispose();
+    });
   }
 
   String _sizeLabel(Map<String, dynamic> f) {
@@ -905,7 +1050,9 @@ class _TabGrabberState extends State<TabGrabber> {
 
   void _showFormatPicker(List<Map<String, dynamic>> formats, String url, String title) {
     final audioFormats = formats.where((f) => f['resolution'] == 'audio only').toList();
+    final videoFormats = formats.where((f) => f['resolution'] != 'audio only').toList();
     final themeColor = SovereignState.accentColor.value;
+    var filter = 'all';
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -918,41 +1065,65 @@ class _TabGrabberState extends State<TabGrabber> {
         builder: (context, scrollController) => Material(
           color: Colors.black,
           shape: Border.all(color: themeColor.withValues(alpha: 0.5)),
-          child: Column(
-            children: [
-              Padding(padding: const EdgeInsets.all(16.0), child: Text("SELECT STREAM: $title", style: TextStyle(fontFamily: 'ShareTechMono', fontSize: 16, fontWeight: FontWeight.bold, color: themeColor), maxLines: 2, overflow: TextOverflow.ellipsis)),
-              Divider(color: themeColor.withValues(alpha: 0.3), height: 1),
-              Expanded(
-                child: ListView.builder(
-                  controller: scrollController,
-                  itemCount: formats.length,
-                  itemBuilder: (context, index) {
-                    final f = formats[index];
-                    final isAudioOnly = f['resolution'] == 'audio only';
-                    final details = <String>[_sizeLabel(f)];
-                    if (isAudioOnly && f['abr'] is num) details.add("${(f['abr'] as num).toStringAsFixed(0)} KBPS");
-                    if (!isAudioOnly && f['vbr'] is num) details.add("${(f['vbr'] as num).toStringAsFixed(0)} KBPS");
-                    if ((f['acodec'] ?? 'none') != 'none' && !isAudioOnly) details.add("HAS AUDIO");
-                    return ListTile(
-                      leading: Icon(isAudioOnly ? Icons.audiotrack : Icons.video_library, color: isAudioOnly ? themeColor : Colors.cyanAccent, size: 30),
-                      title: Text(isAudioOnly ? "AUDIO ONLY (${f['ext']} • ${f['acodec'] ?? '?'})" : "VIDEO (${f['resolution']} • ${f['ext']})", style: const TextStyle(fontFamily: 'ShareTechMono', color: Colors.white, fontSize: 13)),
-                      subtitle: Text(details.join(" • "), style: const TextStyle(fontFamily: 'ShareTechMono', color: Colors.white54, fontSize: 11)),
-                      trailing: Text(f['format_id'].toString(), style: const TextStyle(fontFamily: 'ShareTechMono', color: Colors.white54, fontSize: 12)),
-                      onTap: () {
-                        Navigator.pop(context);
-                        if (isAudioOnly) {
-                          _startDownload(url, f['format_id'].toString(), isVideo: false, label: title);
-                        } else if ((f['acodec'] ?? 'none') == 'none' && audioFormats.isNotEmpty) {
-                          _showAudioPickerForMerge(audioFormats, url, f['format_id'].toString(), title);
-                        } else {
-                          _startDownload(url, f['format_id'].toString(), isVideo: true, label: title);
-                        }
+          child: StatefulBuilder(
+            builder: (context, setSheetState) {
+              final displayed = filter == 'audio' ? audioFormats : filter == 'video' ? videoFormats : formats;
+              return Column(
+                children: [
+                  Padding(padding: const EdgeInsets.all(16.0), child: Text("SELECT STREAM: $title", style: TextStyle(fontFamily: 'ShareTechMono', fontSize: 16, fontWeight: FontWeight.bold, color: themeColor), maxLines: 2, overflow: TextOverflow.ellipsis)),
+                  Divider(color: themeColor.withValues(alpha: 0.3), height: 1),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                    child: Row(
+                      children: [
+                        for (final entry in {'all': 'ALL (${formats.length})', 'audio': 'AUDIO (${audioFormats.length})', 'video': 'VIDEO (${videoFormats.length})'}.entries)
+                          Padding(
+                            padding: const EdgeInsets.only(right: 8),
+                            child: ChoiceChip(
+                              label: Text(entry.value, style: TextStyle(fontFamily: 'ShareTechMono', fontSize: 11, color: filter == entry.key ? Colors.black : Colors.white70, fontWeight: FontWeight.bold)),
+                              selected: filter == entry.key,
+                              selectedColor: themeColor,
+                              backgroundColor: Colors.black,
+                              side: BorderSide(color: themeColor.withValues(alpha: 0.5)),
+                              onSelected: (_) => setSheetState(() => filter = entry.key),
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                  Expanded(
+                    child: ListView.builder(
+                      controller: scrollController,
+                      itemCount: displayed.length,
+                      itemBuilder: (context, index) {
+                        final f = displayed[index];
+                        final isAudioOnly = f['resolution'] == 'audio only';
+                        final details = <String>[_sizeLabel(f)];
+                        if (isAudioOnly && f['abr'] is num) details.add("${(f['abr'] as num).toStringAsFixed(0)} KBPS");
+                        if (!isAudioOnly && f['vbr'] is num) details.add("${(f['vbr'] as num).toStringAsFixed(0)} KBPS");
+                        if ((f['acodec'] ?? 'none') != 'none' && !isAudioOnly) details.add("HAS AUDIO");
+                        return ListTile(
+                          leading: Icon(isAudioOnly ? Icons.audiotrack : Icons.video_library, color: isAudioOnly ? themeColor : Colors.cyanAccent, size: 30),
+                          title: Text(isAudioOnly ? "AUDIO ONLY (${f['ext']} • ${f['acodec'] ?? '?'})" : "VIDEO (${f['resolution']} • ${f['ext']})", style: const TextStyle(fontFamily: 'ShareTechMono', color: Colors.white, fontSize: 13)),
+                          subtitle: Text(details.join(" • "), style: const TextStyle(fontFamily: 'ShareTechMono', color: Colors.white54, fontSize: 11)),
+                          trailing: Text(f['format_id'].toString(), style: const TextStyle(fontFamily: 'ShareTechMono', color: Colors.white54, fontSize: 12)),
+                          onTap: () {
+                            Navigator.pop(context);
+                            if (isAudioOnly) {
+                              _startDownload(url, f['format_id'].toString(), isVideo: false, label: title);
+                            } else if ((f['acodec'] ?? 'none') == 'none' && audioFormats.isNotEmpty) {
+                              _showAudioPickerForMerge(audioFormats, url, f['format_id'].toString(), title);
+                            } else {
+                              _startDownload(url, f['format_id'].toString(), isVideo: true, label: title);
+                            }
+                          },
+                        );
                       },
-                    );
-                  },
-                ),
-              ),
-            ],
+                    ),
+                  ),
+                ],
+              );
+            },
           ),
         ),
       ),
@@ -1009,6 +1180,93 @@ class _TabGrabberState extends State<TabGrabber> {
         _ExportMode.original => "AS-IS",
       };
 
+  String _qualityLabel(_AudioQuality q) => switch (q) {
+        _AudioQuality.best => "BEST",
+        _AudioQuality.opus160 => "OPUS 160K",
+        _AudioQuality.aac128 => "AAC 128K",
+      };
+
+  String _sponsorBlockLabel(_SponsorBlockMode m) => switch (m) {
+        _SponsorBlockMode.off => "OFF",
+        _SponsorBlockMode.mark => "MARK CHAPTERS",
+        _SponsorBlockMode.remove => "REMOVE SEGMENTS",
+      };
+
+  Widget _optionSwitch(String label, bool value, ValueChanged<bool> onChanged, {bool enabled = true}) {
+    return Row(
+      children: [
+        Expanded(child: Text(label, style: TextStyle(fontFamily: 'ShareTechMono', fontSize: 12, color: enabled ? Colors.white70 : Colors.white24, fontWeight: FontWeight.bold))),
+        Switch(value: value, onChanged: enabled ? onChanged : null, activeColor: SovereignState.accentColor.value),
+      ],
+    );
+  }
+
+  Widget _downloadOptionsPanel(Color themeColor) {
+    const langs = {'en': 'ENGLISH', 'es': 'SPANISH', 'de': 'GERMAN', 'fr': 'FRENCH', 'pt': 'PORTUGUESE', 'ja': 'JAPANESE', 'ko': 'KOREAN', 'zh': 'CHINESE'};
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(color: Colors.black, border: Border.all(color: themeColor.withValues(alpha: 0.5)), borderRadius: BorderRadius.circular(8)),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text("> DOWNLOAD OPTIONS", style: TextStyle(fontFamily: 'ShareTechMono', fontSize: 13, fontWeight: FontWeight.bold, color: themeColor)),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              const Expanded(child: Text("AUDIO QUALITY", style: TextStyle(fontFamily: 'ShareTechMono', fontSize: 12, color: Colors.white70, fontWeight: FontWeight.bold))),
+              DropdownButton<_AudioQuality>(
+                value: _audioQuality,
+                dropdownColor: Colors.black,
+                icon: Icon(Icons.arrow_drop_down, color: themeColor),
+                items: [for (final q in _AudioQuality.values) DropdownMenuItem(value: q, child: Text(_qualityLabel(q), style: const TextStyle(fontFamily: 'ShareTechMono', color: Colors.white, fontWeight: FontWeight.bold, fontSize: 12)))],
+                onChanged: (v) {
+                  if (v != null) setState(() => _audioQuality = v);
+                },
+              ),
+            ],
+          ),
+          _optionSwitch("EMBED SUBTITLES", _embedSubs, (v) => setState(() => _embedSubs = v)),
+          if (_embedSubs)
+            Row(
+              children: [
+                const Expanded(child: Text("SUBTITLE LANGUAGE", style: TextStyle(fontFamily: 'ShareTechMono', fontSize: 12, color: Colors.white70, fontWeight: FontWeight.bold))),
+                DropdownButton<String>(
+                  value: _subLang,
+                  dropdownColor: Colors.black,
+                  icon: Icon(Icons.arrow_drop_down, color: themeColor),
+                  items: [for (final e in langs.entries) DropdownMenuItem(value: e.key, child: Text(e.value, style: const TextStyle(fontFamily: 'ShareTechMono', color: Colors.white, fontWeight: FontWeight.bold, fontSize: 12)))],
+                  onChanged: (v) {
+                    if (v != null) setState(() => _subLang = v);
+                  },
+                ),
+              ],
+            ),
+          _optionSwitch("EMBED CHAPTERS", _embedChapters, (v) => setState(() => _embedChapters = v), enabled: _ffmpegAvailable),
+          _optionSwitch("EMBED METADATA", _embedMetadata, (v) => setState(() => _embedMetadata = v), enabled: _ffmpegAvailable),
+          _optionSwitch("EMBED THUMBNAIL", _embedThumbnail, (v) => setState(() => _embedThumbnail = v), enabled: _ffmpegAvailable),
+          Row(
+            children: [
+              Expanded(child: Text("SPONSORBLOCK", style: TextStyle(fontFamily: 'ShareTechMono', fontSize: 12, color: _ffmpegAvailable ? Colors.white70 : Colors.white24, fontWeight: FontWeight.bold))),
+              DropdownButton<_SponsorBlockMode>(
+                value: _sponsorBlock,
+                dropdownColor: Colors.black,
+                icon: Icon(Icons.arrow_drop_down, color: themeColor),
+                items: [for (final m in _SponsorBlockMode.values) DropdownMenuItem(value: m, child: Text(_sponsorBlockLabel(m), style: const TextStyle(fontFamily: 'ShareTechMono', color: Colors.white, fontWeight: FontWeight.bold, fontSize: 12)))],
+                onChanged: _ffmpegAvailable
+                    ? (v) {
+                        if (v != null) setState(() => _sponsorBlock = v);
+                      }
+                    : null,
+              ),
+            ],
+          ),
+          if (!_ffmpegAvailable)
+            const Text("FFMPEG POST-PROCESSING UNAVAILABLE ON THIS BUILD — CHAPTERS / METADATA / THUMBNAIL / SPONSORBLOCK STAY OFF. SUBTITLES STILL SAVE AS SIDECAR FILES.", style: TextStyle(fontFamily: 'ShareTechMono', fontSize: 11, color: Colors.amberAccent)),
+        ],
+      ),
+    );
+  }
+
   void _showYtDlpHelp() {
     showModalBottomSheet(
       context: context,
@@ -1040,6 +1298,8 @@ class _TabGrabberState extends State<TabGrabber> {
                   _b("1. Paste a link, SHARE one from YouTube/SoundCloud/any app into Sovereign Tagger, or hunt by artist + title.\n2. Downloads run in the background — you can start several.\n3. Each finished track becomes a card. Nothing is saved yet.\n4. Fix the title/artist/file name on the card, then choose: PLAY it, SAVE to Music, SEND to the Forge for a full tag job, or DISCARD."),
                   _h("AUDIO MODES"),
                   _b("M4A ORIGINAL (default): grabs the AAC stream the site already serves — no re-encode, no quality loss, fully taggable.\nMP3 320K: re-encodes for old car stereos. Bigger file, not better sound (sources are ~128-160 kbps).\nAS-IS: keeps whatever the site served (often .webm/.opus). Can't hold tags in this app."),
+                  _h("DOWNLOAD OPTIONS"),
+                  _b("AUDIO QUALITY: BEST grabs the highest-bitrate audio the site serves. OPUS 160K picks the Opus stream (best quality per byte). AAC 128K picks the AAC stream for widest compatibility.\nEMBED SUBTITLES: saves subtitles in your language — embedded in the file when the build has ffmpeg, otherwise as a sidecar .vtt file next to it.\nEMBED CHAPTERS / METADATA / THUMBNAIL: writes chapters, tags and cover art into the file at download time (needs ffmpeg on device; this build reports it as unavailable, so they stay off until then).\nSPONSORBLOCK: MARK adds sponsor/intro/outro as chapters; REMOVE cuts them out entirely (needs ffmpeg).\nPLAYLIST RANGES: FETCH ALL FORMATS on a playlist lets you harvest only tracks FROM–TO, in normal or reverse order."),
                   _h("COVER ART"),
                   _b("The video thumbnail is center-cropped to a square and offered as cover art. Turn it off on the card if you'd rather use the Forge's catalog art."),
                   _h("SITES"),
@@ -1298,6 +1558,8 @@ class _TabGrabberState extends State<TabGrabber> {
                   style: OutlinedButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 14), side: const BorderSide(color: Colors.white24), backgroundColor: Colors.black),
                   child: Text(_isBusy ? 'WORKING...' : 'ADVANCED: FETCH ALL FORMATS / PLAYLIST', style: const TextStyle(fontFamily: 'ShareTechMono', fontSize: 13, color: Colors.white70)),
                 ),
+                const SizedBox(height: 8),
+                _downloadOptionsPanel(themeColor),
                 if (_jobs.isNotEmpty) ...[
                   const SizedBox(height: 18),
                   Text("> ACTIVE DOWNLOADS", style: TextStyle(fontFamily: 'ShareTechMono', fontSize: 13, fontWeight: FontWeight.bold, color: themeColor)),

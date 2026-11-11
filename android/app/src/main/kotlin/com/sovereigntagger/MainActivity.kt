@@ -182,6 +182,9 @@ class MainActivity: AudioServiceActivity() {
                     val url = call.argument<String>("url")
                     runAsync(result, "PYTHON_ERROR") { ytBridgeModule.callAttr("get_available_formats", url).toString() }
                 }
+                "getCapabilities" -> {
+                    runAsync(result, "PYTHON_ERROR") { ytBridgeModule.callAttr("capabilities").toString() }
+                }
                 "cancelDownload" -> {
                     val jobId = call.argument<String>("jobId") ?: "default"
                     runAsync(result, "CANCEL_ERROR") { ytBridgeModule.callAttr("cancel", jobId).toString() }
