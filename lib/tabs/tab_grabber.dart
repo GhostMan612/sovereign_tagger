@@ -207,9 +207,9 @@ class _TabGrabberState extends State<TabGrabber> {
 
   Future<void> _importCookies() async {
     TapFeedback.machineTap();
-    FilePickerResult? result;
+    PlatformFile? picked;
     try {
-      result = await FilePicker.pickFiles(type: FileType.custom, allowedExtensions: ['txt']);
+      picked = await FilePicker.pickFile(type: FileType.custom, allowedExtensions: ['txt']);
     } on PlatformException catch (e) {
       _setStatus("ERR: File Picker Fault: ${e.message}");
       return;
@@ -217,8 +217,7 @@ class _TabGrabberState extends State<TabGrabber> {
       _setStatus("ERR: File Picker Fault: $e");
       return;
     }
-    final picked = (result?.files ?? const []).firstOrNull;
-    if (picked == null || picked.path == null) return;
+    if (picked == null || picked.path == null || picked.path!.isEmpty) return;
     try {
       final source = File(picked.path!);
       if (await source.length() > 1024 * 1024) {
