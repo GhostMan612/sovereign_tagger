@@ -187,6 +187,22 @@ class StorageClient {
     }
   }
 
+  static Future<String?> exportPhotoFileToPictures({required String filePath, String? displayName}) async {
+    try {
+      return await _channel.invokeMethod<String>('exportPhotoFileToPictures', {'filePath': filePath, 'displayName': displayName});
+    } catch (_) {
+      return null;
+    }
+  }
+
+  static Future<int> photoOrientation({required String uri}) async {
+    try {
+      return await _channel.invokeMethod<int>('photoOrientation', {'uri': uri}) ?? 1;
+    } catch (_) {
+      return 1;
+    }
+  }
+
   static Future<bool> sharePhoto({required String uri, String mimeType = 'image/jpeg'}) async {
     try {
       return await _channel.invokeMethod<bool>('sharePhoto', {'uri': uri, 'mimeType': mimeType}) ?? false;

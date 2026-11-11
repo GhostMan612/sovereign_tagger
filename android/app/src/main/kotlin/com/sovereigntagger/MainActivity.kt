@@ -318,6 +318,15 @@ class MainActivity: AudioServiceActivity() {
                     val displayName = call.argument<String>("displayName")
                     runAsync(result, "STORAGE_ERROR") { storageBridge.exportPhotoToPictures(uri, displayName) }
                 }
+                "exportPhotoFileToPictures" -> {
+                    val filePath = call.argument<String>("filePath") ?: ""
+                    val displayName = call.argument<String>("displayName")
+                    runAsync(result, "STORAGE_ERROR") { storageBridge.exportPhotoFileToPictures(filePath, displayName) }
+                }
+                "photoOrientation" -> {
+                    val uri = call.argument<String>("uri") ?: ""
+                    runAsync(result, "STORAGE_ERROR") { storageBridge.photoOrientation(uri) }
+                }
                 "sharePhoto" -> {
                     val uri = call.argument<String>("uri") ?: ""
                     val mime = call.argument<String>("mimeType") ?: "image/jpeg"

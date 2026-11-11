@@ -7,6 +7,7 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import '../core/storage_client.dart';
 import 'main_shell.dart';
+import 'photo_editor_screen.dart';
 
 class PhotoItem {
   final int id;
@@ -119,11 +120,12 @@ class _PhotosScreenState extends State<PhotosScreen> {
     return bytes;
   }
 
-  void _openViewer(int index) {
-    Navigator.push(
+  void _openViewer(int index) async {
+    final saved = await Navigator.push<bool>(
       context,
       MaterialPageRoute(builder: (_) => _PhotosViewerScreen(photos: _photos, initialIndex: index)),
     );
+    if (saved == true && mounted) _load();
   }
 
   @override
@@ -270,6 +272,26 @@ class _PhotosViewerScreenState extends State<_PhotosViewerScreen> {
     );
   }
 
+  Future<void> _openEditor() async {
+    final bytes = await _fullFor(_current);
+    if (bytes == null || !mounted) return;
+    final saved = await Navigator.push<bool>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => PhotoEditorScreen(
+          uri: _current.uri,
+          path: _current.path,
+          displayName: _current.displayName,
+          mime: _current.mime,
+          width: _current.width,
+          height: _current.height,
+          previewBytes: bytes,
+        ),
+      ),
+    );
+    if (saved == true && mounted) Navigator.pop(context, true);
+  }
+
   @override
   Widget build(BuildContext context) {
     final themeColor = SovereignState.accentColor.value;
@@ -284,6 +306,7 @@ class _PhotosViewerScreenState extends State<_PhotosViewerScreen> {
         ),
         iconTheme: IconThemeData(color: themeColor),
         actions: [
+          IconButton(tooltip: 'EDIT', icon: Icon(Icons.edit, color: themeColor), onPressed: _openEditor),
           IconButton(tooltip: 'SHARE', icon: Icon(Icons.share, color: themeColor), onPressed: _shareCurrent),
           IconButton(
             tooltip: 'SAVE COPY',

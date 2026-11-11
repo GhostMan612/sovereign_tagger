@@ -247,6 +247,55 @@ class StorageBridge(private val context: Context) {
         }
     }
 
+    fun photoOrientation(uriString: String): Int {
+        return try {
+            val uri = Uri.parse(uriString)
+            context.contentResolver.openInputStream(uri)?.use { input ->
+                ExifInterface(input).getAttributeInt(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL)
+            } ?: ExifInterface.ORIENTATION_NORMAL
+        } catch (_: Exception) {
+            ExifInterface.ORIENTATION_NORMAL
+        }
+    }
+
+    fun exportPhotoFileToPictures(filePath: String, displayName: String?): String? {
+        val src = File(filePath)
+        if (!src.exists()) return null
+        val safeName = (displayName?.takeIf { it.isNotEmpty() } ?: src.name)
+            .replace(Regex("[\\\\/:*?\"<>|]"), "_").trim().ifEmpty { "sovereign_photo.jpg" }
+        return try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                val values = ContentValues().apply {
+                    put(MediaStore.MediaColumns.DISPLAY_NAME, safeName)
+                    put(MediaStore.MediaColumns.MIME_TYPE, mimeForPhoto(safeName))
+                    put(MediaStore.MediaColumns.RELATIVE_PATH, "${Environment.DIRECTORY_PICTURES}/Sovereign Tagger")
+                    put(MediaStore.MediaColumns.IS_PENDING, 1)
+                }
+                val target = context.contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values) ?: return null
+                try {
+                    context.contentResolver.openOutputStream(target)?.use { out -> src.inputStream().use { it.copyTo(out) } }
+                        ?: throw IllegalStateException("Pictures output refused")
+                } catch (e: Exception) {
+                    context.contentResolver.delete(target, null, null)
+                    throw e
+                }
+                values.clear()
+                values.put(MediaStore.MediaColumns.IS_PENDING, 0)
+                context.contentResolver.update(target, values, null, null)
+                "Pictures/Sovereign Tagger/$safeName"
+            } else {
+                val dir = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES), "Sovereign Tagger")
+                if (!dir.exists()) dir.mkdirs()
+                val file = File(dir, safeName)
+                src.inputStream().use { input -> file.outputStream().use { out -> input.copyTo(out) } }
+                scan(file.absolutePath)
+                file.absolutePath
+            }
+        } catch (_: Exception) {
+            null
+        }
+    }
+
     private fun decodeSampled(uri: Uri, maxEdge: Int): Bitmap? {
         return try {
             val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
