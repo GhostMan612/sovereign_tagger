@@ -30,8 +30,9 @@ class GhostTrack {
   final String album;
   final int trackNo;
   final int discNo;
+  final int dateAdded;
 
-  const GhostTrack({required this.path, required this.title, required this.artist, required this.album, this.trackNo = 0, this.discNo = 0});
+  const GhostTrack({required this.path, required this.title, required this.artist, required this.album, this.trackNo = 0, this.discNo = 0, this.dateAdded = 0});
 }
 
 class GhostForgeOutcome {
@@ -64,6 +65,8 @@ abstract class GhostWorld {
   void setSleepAtEndOfTrack(bool on);
   Future<void> playTracks(List<GhostTrack> tracks, {bool shuffle = false});
   Future<void> queueTracks(List<GhostTrack> tracks, {bool next = false});
+  Future<List<GhostTrack>> favorites();
+  Future<void> clearQueueExceptCurrent();
   void openTab(int index);
   void openPlayer();
   void openSettings();
@@ -259,6 +262,8 @@ class GhostBrain {
       'auto tag the loaded file in forge',
       'pull id3 tags and cover art in forge',
       'find metadata for the current song',
+      'fix the tags on this song and fetch the cover art',
+      'get the cover art for the track playing in forge',
     ],
     _SemanticIntent.forgeFindLyrics: [
       'find the lyrics for the loaded file in forge',
@@ -266,6 +271,7 @@ class GhostBrain {
       'pull the words and karaoke lyrics for this song',
       'get synced lyrics from lrclib or genius in forge',
       'find lyrics for what is playing',
+      'fix this song and find its lyrics',
     ],
     _SemanticIntent.forgeAcrIdentify: [
       'identify this song with acrcloud fingerprint',
@@ -292,6 +298,8 @@ class GhostBrain {
       'find the track in my library that says',
       'queue chill atmospheric late night music',
       'play songs with a moody cyberpunk vibe',
+      'play something with a dark late night mood',
+      'play a song about neon rain',
     ],
     _SemanticIntent.inspectMedia: [
       'show mediainfo codec bitrate sample rate for this song',
@@ -563,6 +571,62 @@ class GhostBrain {
     _KbEntry('duplicate', 'Why duplicates?', 'duplicate duplicates copies twice double copy same song again',
       ["Duplicates came from old builds that saved a new copy every time. Now SAVE & FIX ORIGINAL rewrites in place; a copy only appears if you choose SAVE COPY or deny permission."],
       ['Save & fix original']),
+    _KbEntry('pcloud', 'pCloud in the player', 'pcloud cloud drive storage folder connect oauth account app',
+      [
+        "pCloud is NOT wired into the player yet. The plan is a cloud folder in the LIBRARY that streams straight from your pCloud - no download first.",
+        "It needs a pCloud OAuth app first. pCloud paused new self-service apps, so if you don't already have one, ask pCloud support to provision it - then connect it in SETTINGS.",
+        "Your music folder, US vs EU account, and stream-vs-download are the choices that shape the build.",
+      ],
+      ['Open settings', 'What can you do?']),
+    _KbEntry('cloud', 'The cloud folder', 'cloud folder remote drive online stream download music',
+      [
+        "The cloud folder will browse a remote folder like a LIBRARY folder - tap a track, it streams. Long-press to DOWNLOAD TO MUSIC.",
+        "A downloaded track becomes a normal local file: Sentinel can audit it and FORGE can tag it. A streamed track can't be tagged in place - it has to be downloaded first.",
+        "Mixed local + cloud queues play through; a cloud track that can't be reached is skipped, never stalls the queue.",
+      ],
+      ['The library', 'How do I download?']),
+    _KbEntry('clouddownload', 'Download to Music from the cloud', 'download cloud music local save offline copy folder',
+      [
+        "DOWNLOAD TO MUSIC pulls a cloud track (or a whole cloud folder) onto the phone as a local file in Music.",
+        "Once it's local it behaves like any other song - it shows in the LIBRARY, FORGE can tag it, BATCH can fix it.",
+        "The cache is bounded and clears oldest first; downloaded-to-Music files are real library files, not cache.",
+      ],
+      ['The library', 'Editing tags']),
+    _KbEntry('schedscan', 'Scheduled scans', 'scheduled scan automatic nightly weekly background sentinel watch library',
+      [
+        "Sentinel is the planned library watchdog, and its scans are manual in v1 - you start one, it makes a hit-list. No nightly or weekly schedule, no background service.",
+        "A scheduled scan is a separate decision: it needs a background mechanism the app doesn't have yet, plus a battery cost.",
+        "Until then, run a scan after a big import or a tagging session and work the hit-list in FORGE.",
+      ],
+      ['What can you do?', 'The library']),
+    _KbEntry('albumview', 'Album view', 'album view completeness tracks complete missing grouped',
+      [
+        "LIBRARY -> ALBUMS already groups your songs by album. What it doesn't show yet is completeness - how many tracks of an album are fully tagged.",
+        "That album-level view ('7 of 12 complete') is a planned Sentinel grouping - it reads the same hit-list, grouped by ALBUM.",
+        "Until then, open an album and look for Unknown Artist, missing years, or blank art - those are the tells.",
+      ],
+      ['The library', 'Editing tags']),
+    _KbEntry('genre', 'Genre tags', 'genre tag music style spelling category must have',
+      [
+        "GENRE is a must-have tag under the naming policy - a file without one is incomplete, same as a missing YEAR or ARTIST.",
+        "Fix it in the FORGE: SEARCH METADATA usually fills it from the catalog. There is no canonical genre list yet, so spelling is as-is for now.",
+        "If two spellings of one genre split your library, pick one and fix the strays in BATCH.",
+      ],
+      ['Editing tags', 'Save & fix original']),
+    _KbEntry('formalnames', 'Formal names in Title Case', 'formal proper names mcdonald dmx ac dc title case exception list',
+      [
+        "Title Case capitalises every word except small words - but formal names are ALWAYS fixed to their proper form: DMX, AC/DC, McDonald.",
+        "That lives in an exception list Sentinel keeps. A name not on the list gets plain Title Case - never guessed at.",
+        "If Ghost or Sentinel gets a name wrong, correct it in the FORGE and it can be added to the list.",
+      ],
+      ['Editing tags', 'Why is this file named like that?']),
+    _KbEntry('whyname', 'Why is this file named like that?', 'file name named naming policy format title artist track',
+      [
+        "Today AUTO NAME FROM TAGS builds 'NN - Artist - Title'. The locked policy is 'TT - Album Artist · Title' - two-digit track, album artist, middle dot, title.",
+        "Featured artists go at the end as 'ft. X & Y' in both TITLE and ARTIST; ALBUM ARTIST stays the main artist only. Version noise like (Remastered) is stripped from the file name, kept in the tag.",
+        "When Sentinel lands, it will list every file whose name doesn't match its tags.",
+      ],
+      ['Editing tags', 'Save & fix original']),
     _KbEntry('self', 'What can you do?', 'ghost you your help commands abilities can do what who are',
       [
         "I drive the whole machine by text or voice: 'search grabber for <song>', 'download <artist - title>', 'extract metadata and find lyrics', 'identify with ACR', 'play <artist>', 'shuffle everything', 'sleep in 20 min', or paste a link.",
@@ -589,13 +653,13 @@ class GhostBrain {
       case 0:
         return const ['How do I download?', 'Audio formats', 'Downloads failing', 'What can you do?'];
       case 1:
-        return const ['Extract metadata & lyrics', 'Find lyrics for this song', 'Identify with ACR', 'Save & fix original'];
+        return const ['Extract metadata & lyrics', 'Find lyrics for this song', 'Identify with ACR', 'Save & fix original', 'Fix this song and fetch art'];
       case 2:
         return const ['How does batch work?', 'Permission prompts', 'What can you do?'];
       case 3:
         return const ['Open MediaInfo', 'Is this true lossless?', 'ReplayGain scan', 'Transcribe with Whisper'];
       case 4:
-        return const ['Shuffle everything', 'Play something dark', "What's playing?", 'Extract metadata & lyrics'];
+        return const ['Shuffle everything', 'Play something dark', "What's playing?", 'Extract metadata & lyrics', 'Play my favorites', 'Play recently added'];
       default:
         return const ['What can you do?', "What's playing?", 'Extract metadata & lyrics'];
     }
@@ -899,6 +963,9 @@ class GhostBrain {
     }
 
 
+    final renameToPolicy = text.contains(' rename ') && text.contains(' policy ');
+    if (renameToPolicy) return null;
+
     if ((mentionsForge && (mentionsExtract || mentionsLyrics)) ||
         (mentionsLyrics && mentionsExtract && !librarySemanticHint) ||
         text.contains(' extract metadata ') ||
@@ -1175,12 +1242,28 @@ class GhostBrain {
       if (nav != null) return nav;
     }
 
-    if (text.contains(' fix this ') || text.contains(' tag this ') || text.contains(' edit this ') || text.contains(' forge this ') || text.contains(' fix it ') || text.contains(' fix the tags ') || (set.contains('forge') && (set.contains('this') || set.contains('current') || set.contains('it')))) {
+    if ((text.contains(' fix my library ') || text.contains(' fix everything ') || text.contains(' fix all my ') || text.contains(' fix my music ') || text.contains(' fix the library ')) && !text.contains(' this ')) {
+      return const GhostReply("I won't rewrite the whole library on a paraphrase. Point me at one song - 'fix this song' - or open BATCH, where every match waits in REVIEW before anything is saved.", chips: ['How does batch work?', 'What can you do?']);
+    }
+
+    if (text.contains(' fix this ') || text.contains(' tag this ') || text.contains(' edit this ') || text.contains(' forge this ') || text.contains(' fix it ') || text.contains(' fix the tags ') || (text.contains(' rename ') && text.contains(' policy ')) || (set.contains('forge') && (set.contains('this') || set.contains('current') || set.contains('it')))) {
+      if (text.contains(' rename ') && text.contains(' policy ')) {
+        if (!world.forgeCurrent()) return const GhostReply("Nothing is playing to fix. Mount a file in the FORGE, or play a song first.");
+        return const GhostReply("Mounted in the FORGE. Type the policy name in FILE NAME ON SAVE - 'TT - Album Artist · Title'. The new auto-name lands with Sentinel; until then AUTO NAME still builds the old 'NN - Artist - Title'.", tone: GhostTone.happy, chips: ['Save & fix original']);
+      }
+      if ((text.contains(' fetch ') || text.contains(' get ')) && (set.contains('art') || q.rawSet.contains('cover') || q.rawSet.contains('artwork') || q.rawSet.contains('art'))) {
+        final res = await world.forgeExtract(fetchMetadata: true, fetchLyrics: false);
+        return GhostReply(res.ok ? "${res.summary} Cover art rides along with the metadata match - review it in the FORGE, then SAVE & FIX ORIGINAL." : res.summary, tone: res.ok ? GhostTone.happy : GhostTone.sarcastic, chips: const ['Save & fix original']);
+      }
       if (!world.forgeCurrent()) return const GhostReply("Nothing is playing to fix. Mount a file in the FORGE, or play a song first.");
       return GhostReply(_pick(const ["Sent to the FORGE. Try SEARCH METADATA, review, then SAVE & FIX ORIGINAL.", "It's on the anvil. SEARCH METADATA -> APPLY -> SAVE & FIX ORIGINAL."]), tone: GhostTone.happy);
     }
 
     final pointsAtSong = q.rawSet.intersection(const {'this', 'it', 'current', 'song', 'track', 'tune'}).isNotEmpty;
+    if ((text.contains(' fetch ') || text.contains(' get ') || text.contains(' pull ')) && (set.contains('art') || q.rawSet.contains('cover') || q.rawSet.contains('artwork') || q.rawSet.contains('art')) && pointsAtSong) {
+      final res = await world.forgeExtract(fetchMetadata: true, fetchLyrics: false);
+      return GhostReply(res.ok ? "${res.summary} Cover art rides along with the metadata match - review it in the FORGE, then SAVE & FIX ORIGINAL." : res.summary, tone: res.ok ? GhostTone.happy : GhostTone.sarcastic, chips: const ['Save & fix original']);
+    }
     if (set.contains('favorite') && (pointsAtSong || q.rawWords.length == 1)) {
       if (!world.hasMedia) return const GhostReply("Nothing's playing to favorite.");
       final removing = text.contains(' unfavorite ') || text.contains(' remove ') || text.contains(' unlike ') || text.contains(' unheart ');
@@ -1188,6 +1271,15 @@ class GhostBrain {
       if (!removing && world.currentIsFavorite) return GhostReply("${world.nowTitle} is already a favorite. Say 'unfavorite this' to remove it.");
       if (!world.toggleFavoriteCurrent()) return const GhostReply("COULDN'T REACH THE PLAYER - NOTHING WAS FAVORITED.");
       return GhostReply(removing ? "Removed ${world.nowTitle} from Favorites." : "♥ ${world.nowTitle} added to Favorites.", tone: GhostTone.happy);
+    }
+
+    if ((text.contains(' clear ') || text.contains(' empty ')) && text.contains(' queue ') && text.contains(' except ')) {
+      if (!world.hasMedia) return const GhostReply("The queue is already empty.");
+      final before = world.queueLength;
+      await world.clearQueueExceptCurrent();
+      final removed = before - world.queueLength;
+      if (removed <= 0) return const GhostReply("Only one song in the queue - nothing to clear.", chips: ['What can you do?']);
+      return GhostReply('Cleared $removed from the queue. ${world.nowTitle} keeps playing.', tone: GhostTone.happy);
     }
 
     if (set.contains('repeat')) {
@@ -1329,9 +1421,28 @@ class GhostBrain {
     final library = await world.library();
     if (library.isEmpty) return const GhostReply("I can't see any music yet. Open the LIBRARY once so Android grants access, then ask again.", chips: ['Open library']);
 
+    if (text.contains(' more like this ') || text.contains(' similar to this ')) {
+      return const GhostReply("I don't track play history yet, so I can't tell what 'like this' means. Try 'play more by <artist>' instead.", chips: ['What can you do?']);
+    }
+
     if (wantsEverything) {
       await world.playTracks(List<GhostTrack>.of(library), shuffle: true);
       return GhostReply('Shuffling all ${library.length} songs. Let chaos decide.', tone: GhostTone.happy);
+    }
+
+    if (rawSet.contains('favorite') || rawSet.contains('favorites')) {
+      final favs = await world.favorites();
+      if (favs.isEmpty) return const GhostReply("No favorites yet. Say 'favorite this' while a song plays to heart it.", chips: const ['Shuffle everything']);
+      return _performTracks(verb == _Verb.play ? _Verb.shuffle : verb, favs, '${favs.length} favorites');
+    }
+
+    final wantsRecent = !rest.contains('by') &&
+        (rest.contains('recently') || rest.contains('latest') || (rest.contains('new') && rest.any((w) => const {'music', 'songs', 'tracks', 'song', 'track', 'stuff', 'tunes'}.contains(w))));
+    if (wantsRecent) {
+      final dated = library.where((t) => t.dateAdded > 0).toList()..sort((a, b) => b.dateAdded.compareTo(a.dateAdded));
+      if (dated.isEmpty) return const GhostReply("Nothing here carries an added date yet.", tone: GhostTone.sarcastic);
+      final picked = dated.take(10).toList();
+      return _performTracks(verb, picked, 'your ${picked.length} most recently added songs');
     }
 
     String? mode;
@@ -1344,7 +1455,38 @@ class GhostBrain {
     } else if (rest.length > 2 && const {'songs', 'music', 'stuff', 'anything', 'something', 'tracks', 'tunes'}.contains(rest.first) && const {'by', 'from', 'of'}.contains(rest[1])) {
       mode = 'artist';
       rest = rest.sublist(2);
+    } else if (rest.first == 'more' && rest.length > 2 && rest[1] == 'by') {
+      mode = 'artist';
+      rest = rest.sublist(2);
     }
+
+    if (rest.length <= 2 && rest.contains('this') && rest.contains('album')) {
+      final current = world.activeFilePath;
+      if (current == null || current.isEmpty) return const GhostReply("Nothing's playing. Play a song first, then say 'play this album'.");
+      final here = library.where((t) => t.path == current).toList();
+      if (here.isEmpty || here.first.album.trim().isEmpty) return const GhostReply("I can't tell which album this song is from.", tone: GhostTone.sarcastic);
+      final albumTracks = _byAlbum(library, here.first.album);
+      if (albumTracks.isEmpty) return const GhostReply("I can't find that album in your library.", tone: GhostTone.sarcastic);
+      return _performTracks(verb, albumTracks, 'the album ${albumTracks.first.album}');
+    }
+
+    final byAt = rest.indexOf('by');
+    if (byAt > 0 && byAt < rest.length - 1 && (verb == _Verb.queue || verb == _Verb.next || rest.contains('next'))) {
+      const counts = {'one': 1, 'two': 2, 'three': 3, 'four': 4, 'five': 5, 'six': 6, 'seven': 7, 'eight': 8, 'nine': 9, 'ten': 10};
+      int? count;
+      for (var i = 0; i < byAt; i++) {
+        final n = counts[rest[i]] ?? int.tryParse(rest[i]);
+        if (n != null && n > 0 && n <= 50) count = n;
+      }
+      if (count != null) {
+        final artist = rest.sublist(byAt + 1).join(' ');
+        final artistTracks = _byArtist(library, artist);
+        if (artistTracks.isEmpty) return GhostReply("No songs by '$artist' in your library.", tone: GhostTone.sarcastic, chips: const ['How do I download?']);
+        final picked = artistTracks.take(count).toList();
+        return _performTracks(verb, picked, '${picked.length} by ${artistTracks.first.artist}');
+      }
+    }
+
     final query = rest.join(' ');
     if (query.trim().isEmpty) return null;
 
@@ -1535,6 +1677,10 @@ class GhostBrain {
   Future<GhostReply> _count(_Query q) async {
     final library = await world.library();
     if (library.isEmpty) return const GhostReply("I can't see any music yet - open the LIBRARY once to grant access.");
+    if (q.rawSet.contains('favorite') || q.rawSet.contains('favorites')) {
+      final favs = await world.favorites();
+      return GhostReply('${favs.length} favorites in your library.', chips: const ['Play my favorites']);
+    }
     final raw = q.rawWords;
     final byAt = raw.indexWhere((w) => w == 'by' || w == 'from');
     if (byAt >= 0 && byAt < raw.length - 1) {
