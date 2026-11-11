@@ -83,6 +83,7 @@ class DartSpider {
 
   static String cleanTitle(String? raw) {
     var t = (raw ?? '').trim();
+    t = t.replaceAll(_pipeTail, '');
     var prev = '';
     while (prev != t) {
       prev = t;
@@ -697,12 +698,12 @@ class DartSpider {
     final rawConfidence = best == null ? 0.0 : ((best['score'] as num?)?.toDouble() ?? 0.0);
     final confidence = min(1.0, (rawConfidence * 1000).round() / 1000);
     final useBest = best != null && confidence >= 0.8;
-    final lyrArtist = useBest ? (best!['artist']?.toString() ?? '') : a;
+    final lyrArtist = useBest ? (best['artist']?.toString() ?? '') : a;
     final lyrTitle = useBest
-        ? ((best!['search_title']?.toString() ?? '').isNotEmpty ? best!['search_title'].toString() : (best!['title']?.toString() ?? ''))
+        ? ((best['search_title']?.toString() ?? '').isNotEmpty ? best['search_title'].toString() : (best['title']?.toString() ?? ''))
         : t;
-    final lyrAlbum = useBest ? (best!['album']?.toString() ?? '') : album;
-    final lyrDuration = dur != 0 ? dur : (useBest ? (best!['duration_ms'] as num?)?.toInt() ?? 0 : 0);
+    final lyrAlbum = useBest ? (best['album']?.toString() ?? '') : album;
+    final lyrDuration = dur != 0 ? dur : (useBest ? (best['duration_ms'] as num?)?.toInt() ?? 0 : 0);
     var lyrics = await fetchLyrics(artist: lyrArtist, title: lyrTitle, album: lyrAlbum, durationMs: lyrDuration);
     if (lyrics.plain.isEmpty && geniusToken.isNotEmpty) {
       final plain = await _geniusLyrics(geniusToken, lyrArtist, lyrTitle);
