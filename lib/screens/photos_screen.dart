@@ -365,8 +365,8 @@ class _PhotoPageState extends State<_PhotoPage> {
     } else {
       const scale = 2.5;
       _controller.value = Matrix4.identity()
-        ..translate(-_doubleTapPosition.dx * (scale - 1), -_doubleTapPosition.dy * (scale - 1))
-        ..scale(scale);
+        ..translateByDouble(-_doubleTapPosition.dx * (scale - 1), -_doubleTapPosition.dy * (scale - 1), 0.0, 1.0)
+        ..scaleByDouble(scale, scale, 1.0, 1.0);
     }
     widget.onZoomChanged(!zoomed);
   }
