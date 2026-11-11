@@ -21,13 +21,40 @@ Session-end law: update rows 2–4 every session (+ row 5 when a new gotcha is l
 ## Where we are
 
 **Date:** 2026-11-11
-**Phase:** 0–36 implementation + PR #1–#4 MERGED (Sentinel Slice 1 included), full documentation suite (`README.md`, `LICENSE`, `LICENSES.md`, `SECURITY.md`, `CONTRIBUTING.md`), `impellerc` shader (`GLES`/`Vulkan`/`SkSL`), analyzer, and Android ARM64 APK build gates VERIFIED; zero stubs remaining. F-Droid ready.
+**Phase:** 0–36 implementation + PR #1–#7 MERGED (Sentinel Slice 1, Photo Viewer, Audio Suite Core, Grabber Choices included), full documentation suite (`README.md`, `LICENSE`, `LICENSES.md`, `SECURITY.md`, `CONTRIBUTING.md`), `impellerc` shader (`GLES`/`Vulkan`/`SkSL`), analyzer, and Android ARM64 APK build gates VERIFIED; zero stubs remaining. F-Droid ready.
 - `flutter analyze --no-pub` -> `No issues found!`.
 - `flutter test` -> `All 6 tests passed!`.
 - `impellerc` -> `shaders/backdrop.frag` & `shaders/ghost.frag` compile cleanly across GLES, Vulkan, and SkSL.
 - `flutter build apk --debug --target-platform android-arm64` -> `LiteRT 1.4.0` + `EmbeddingGemmaBridge.kt` + `SentencePieceTokenizer.kt` + `shaders/ghost.frag` compile cleanly.
 - **Motorola Moto G (2025) Hardware Smoke Test (Android 16 / API 36, Device ID `ZT4222BMWN`): ALL PASS** — `FlutterTextureView` (`RenderMode.texture`) eliminated BLASTBufferQueue frame saturation; native hardware Equalizer/LoudnessEnhancer attached cleanly without NPE (`audioSessionId=18945`, 5 bands); live 256-D neural self-test verified via LiteRT; GhostBot decoupled `ValueNotifier` chat history verified without red `ErrorWidget` boxes; Sentinel Slice 1 live run verified with Media3 / AudioTrack 48kHz stereo decode (`c2.android.mp3.decoder`), ID3 tag handling (`00 - Metallica · Until It Sleeps.mp3`), and multi-track playback queue restored cleanly (`ProcessingState.ready`).
-**Branch:** `main` is the single canonical branch.
+**Branch:** `main` is the single canonical branch. All PR branches (`pr-1` through `pr-7`, `sentinel-slice-1`, `photo-viewer`, `audio-core`, `grabber-choices`) merged and pruned.
+
+## What shipped — PR #7 Grabber Choices: Sorted Format Picker, Audio Quality, Embed Toggles, Playlist Range, Player Client (2026-11-11)
+
+1. **Format & Quality Selection (`lib/tabs/tab_grabber.dart`, `android/app/src/main/python/sovereign_yt/bridge.py`)**:
+   - Sorted format picker categorized by audio/video resolution and bitrate.
+   - User-configurable audio quality preference (best, 320k, 256k, 192k, 128k).
+   - Player client override (`android`, `web`, `ios`, `mweb`, `tv`).
+2. **Embed Toggles & Playlist Range (`lib/tabs/tab_grabber.dart`)**:
+   - Toggles for embedding subtitles, chapters, and rich metadata.
+   - Playlist item range selector (`playlist_items` start/end index).
+   - Fixed deprecated Flutter 3.31 `Switch.activeColor` -> `Switch.activeThumbColor`.
+
+## What shipped — PR #6 Workbench Audio Suite Core: Readouts, Ducking, New DSP, Multitrack Mix, Wave-Region Delete (2026-11-11)
+
+1. **Audio DSP Suite Core (`lib/tabs/tab_workbench.dart`)**:
+   - Live waveform and audio readouts (LUFS, RMS, True Peak).
+   - Sidechain audio ducking DSP processor.
+   - Multi-track mixing engine with time offsets and gain staging.
+   - Waveform region deletion and non-destructive slice excision.
+   - Cleaned unused analyzer variables (`meanDb`) and normalized `_MixTrack` constructor.
+
+## What shipped — PR #5 Photo Viewer: MediaStore Grid, Full-Screen Viewer, EXIF, Share/Save (2026-11-11)
+
+1. **Photo Inspection & Viewer (`lib/screens/photos_screen.dart`)**:
+   - Device MediaStore photo asset grid and full-screen viewer.
+   - Double-tap and pinch-to-zoom interactive viewer using upgraded `Matrix4.translateByDouble(..., 0.0, 1.0)` and `Matrix4.scaleByDouble(scale, scale, 1.0, 1.0)`.
+   - Detailed EXIF metadata inspector, image sharing, and direct export.
 
 ## What shipped — PR #4 Sentinel Slice 1: Policy Engine, Two-Tier Scanner, Hit-List Store, Scan UI (2026-11-11)
 

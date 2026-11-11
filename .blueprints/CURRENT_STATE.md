@@ -1,5 +1,15 @@
 # CURRENT_STATE.md — Sovereign Tagger v2 (post-Phase 36)
-> Snapshot as of 2026-11-11 — Phases 0–36 + PR #1–#4 COMPLETE (`flutter analyze --no-pub` -> `No issues found!`; `flutter test` -> 6/6 passed; Moto G 2025 hardware smoke test ALL PASS).
+> Snapshot as of 2026-11-11 — Phases 0–36 + PR #1–#7 COMPLETE (`flutter analyze --no-pub` -> `No issues found!`; `flutter test` -> 6/6 passed; Moto G 2025 hardware smoke test ALL PASS).
+>
+> **PR #7 deltas (Grabber Choices — Sorted Format Picker, Audio Quality, Embed Toggles, Playlist Range, Player Client):**
+> - **Format & Quality Preferences (`lib/tabs/tab_grabber.dart`, `android/app/src/main/python/sovereign_yt/bridge.py`)**: Sorted format picker categorized by audio/video resolution and bitrate; user-selectable audio quality preference (best, 320k, 256k, 192k, 128k); custom player client selection (`android`, `web`, `ios`, `mweb`, `tv`).
+> - **Embed Toggles & Range Control**: Granular toggles for embedding subtitles, chapters, and rich metadata; playlist range item selector (`playlist_items`); updated deprecated `Switch.activeColor` to `Switch.activeThumbColor`.
+>
+> **PR #6 deltas (Workbench Audio Suite Core — Readouts, Ducking, New DSP, Multitrack Mix, Wave-Region Delete):**
+> - **Audio Suite Core DSP (`lib/tabs/tab_workbench.dart`)**: Real-time waveform & level readouts (LUFS, RMS, True Peak); sidechain audio ducking DSP; multitrack audio mixing engine with track offsets and gain staging; wave-region deletion/excision; eliminated unused analyzer variables (`meanDb`) and normalized `_MixTrack` constructor.
+>
+> **PR #5 deltas (Photo Viewer — MediaStore Grid, Full-Screen Viewer, EXIF, Share/Save):**
+> - **Photos Screen (`lib/screens/photos_screen.dart`)**: MediaStore device photo gallery grid with full-screen interactive viewer; double-tap & pinch-to-zoom using upgraded `Matrix4.translateByDouble(..., 0.0, 1.0)` and `Matrix4.scaleByDouble(scale, scale, 1.0, 1.0)`; EXIF metadata inspector, image sharing, and direct export.
 >
 > **PR #4 deltas (Sentinel Slice 1 — Policy Engine, Two-Tier Scanner, Store, Scan UI):**
 > - **Policy Engine (`lib/core/sentinel_policy.dart`, `lib/core/sentinel_names.dart`)**: Canonical locked filename format `TT - Album Artist · Song Title.ext` with formal name dictionary (`SentinelNames`), Title Case normalization with formal-name exceptions, canonical `ft. X & Y`, and 16-issue audit (`NAME_MISMATCH`, `TITLE_CASE_DRIFT`, `FEAT_NOT_CANONICAL`, `MISSING_*`).

@@ -299,6 +299,14 @@
 - [x] **36.3 Complete Cross-Tab Command Wiring & Zero-Stub Audit (`GH11`)** — Wired `TabWorkbench._onGhostWorkbenchCommand` (`transcribeLyricsWhisper`, `analyzeReplayGain`, `openEq`, `onResult`), `TabForge` `ForgeAutoTask.fullAutoTagAndLyrics`, `TabGrabber._onGhostGrabCommand` (`autoDownloadTopResult`, `sendToForgeWhenDone` auto-chaining to `SovereignState.sendToForge`, `onResult`), removed dead channel call in `AppGhostWorld.downloadInGrabber`, and verified zero inline comments after line 4 across touched files.
 - Gate: `flutter analyze --no-pub` -> `No issues found!`; Android ARM64 APK build green; UTF-8/BOM/mojibake/zero-comment audit clean; Motorola Moto G (2025) hardware smoke test ALL PASS (2026-11-11).
 
+## Phase 37 — Pull Request Suite Merge & Branch Hygiene [x]
+- [x] **PR #4: Sentinel Slice 1: Policy Engine, Two-Tier Scanner, Hit-List Store, Scan UI** — Full 16-issue audit, formal naming policy, two-tier TagIO scanner, hit list store, dedicated cyber Sentinel scan UI.
+- [x] **PR #5: Photo Viewer: MediaStore Grid, Full-Screen Viewer, EXIF, Share/Save** — Gallery view, pinch-to-zoom with upgraded `Matrix4` 4D translation/scaling, EXIF extraction, file export/share.
+- [x] **PR #6: Workbench Audio Suite Core: Readouts, Ducking, New DSP, Multitrack Mix, Wave-Region Delete** — Multi-track mixing engine, audio ducking processor, waveform deletion, live level/loudness readouts.
+- [x] **PR #7: Grabber Choices: Sorted Format Picker, Audio Quality, Embed Toggles, Playlist Range, Player Client** — Advanced format sorting, user audio quality preferences, embed flags, playlist slice ranges, player client override. Fixed deprecated `Switch.activeThumbColor`.
+- [x] **Repository Cleanup & Pruning** — Merged PRs #1–#7 into `main`, deleted all feature branches (`sentinel-slice-1`, `photo-viewer`, `audio-core`, `grabber-choices`), and pruned dead remote tracking references.
+- Gate: `flutter analyze --no-pub` -> `No issues found!`; `flutter test` -> `All 6 tests passed!`; `gh pr list --state open` -> 0 open PRs.
+
 ## Phase S0–S4 — SOVEREIGN SDK EDITION [-] PARKED 2026-10-01 — spec only, do not start
 
 > **OPERATOR DECISION 2026-10-01: PARKED.** The operator needs to research the
