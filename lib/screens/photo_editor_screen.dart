@@ -21,6 +21,7 @@ class PhotoEditorScreen extends StatefulWidget {
   final Uint8List previewBytes;
 
   const PhotoEditorScreen({
+    super.key,
     required this.uri,
     required this.path,
     required this.displayName,
@@ -66,7 +67,7 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
     var previewWidth = 0;
     var previewHeight = 0;
     try {
-      final decoded = await ui.decodeImageFromList(widget.previewBytes);
+      final decoded = await decodeImageFromList(widget.previewBytes);
       previewWidth = decoded.width;
       previewHeight = decoded.height;
     } catch (_) {}
@@ -255,8 +256,8 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
     final flipH = geometry.residualFlipH != _flipH;
     final flipV = geometry.residualFlipV != _flipV;
     final angle = totalQuarters * math.pi / 2;
-    final matrix = ui.Matrix4.identity()
-      ..scale(flipH ? -1.0 : 1.0, flipV ? -1.0 : 1.0)
+    final matrix = Matrix4.identity()
+      ..scaleByDouble(flipH ? -1.0 : 1.0, flipV ? -1.0 : 1.0, 1.0, 1.0)
       ..rotateZ(angle);
     final image = Image.memory(widget.previewBytes, fit: BoxFit.fill);
     final filtered = (_brightness != 0 || _contrast != 1 || _saturation != 1)
