@@ -5,7 +5,6 @@
 
 import 'dart:async';
 import 'dart:math';
-import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'ghost_avatar.dart';
 import '../screens/main_shell.dart';
@@ -38,10 +37,13 @@ class GhostChatOverlay extends StatefulWidget {
 }
 
 class _GhostChatOverlayState extends State<GhostChatOverlay> with TickerProviderStateMixin {
+  static final List<_ChatMessage> _sessionMessages = <_ChatMessage>[];
+  static const int _maxSessionMessages = 100;
+
   late final AnimationController _controller;
   late final Animation<double> _panelCurve;
   final Random _rng = Random();
-  late final List<_ChatMessage> _messages;
+  List<_ChatMessage> get _messages => _sessionMessages;
   late final TextEditingController _inputController;
   late final FocusNode _inputFocus;
   late final ScrollController _scrollController;
@@ -102,12 +104,13 @@ class _GhostChatOverlayState extends State<GhostChatOverlay> with TickerProvider
   @override
   void initState() {
     super.initState();
+    _sanitizeSessionMessages();
     _controller = AnimationController(vsync: this, duration: const Duration(milliseconds: 340));
     _panelCurve = CurvedAnimation(parent: _controller, curve: Curves.easeOutBack, reverseCurve: Curves.easeInCubic);
-    _messages = [];
     _inputController = TextEditingController();
     _inputFocus = FocusNode()..addListener(_onFocusChange);
     _scrollController = ScrollController();
+    _voice.addListener(_onVoicePhaseChanged);
 
     _voiceSub = _voice.onTranscript.listen((text) {
       if (!mounted) return;
@@ -122,7 +125,53 @@ class _GhostChatOverlayState extends State<GhostChatOverlay> with TickerProvider
       unawaited(_typewriterSay('HEARD: $trimmed', isGhost: true));
     });
 
+    unawaited(EmbeddingGemmaService.instance.checkNativeAvailability());
     _checkFirstLaunch();
+  }
+
+  void _sanitizeSessionMessages() {
+    for (int i = 0; i < _sessionMessages.length; i++) {
+      final msg = _sessionMessages[i];
+      if (msg.isTyping || msg.typingTextNotifier != null) {
+        final partial = msg.typingTextNotifier?.value ?? '';
+        _sessionMessages[i] = msg.copyWith(
+          text: partial.isNotEmpty ? partial : msg.text,
+          isTyping: false,
+          clearTypingNotifier: true,
+        );
+      }
+    }
+  }
+
+  void _appendMessage(_ChatMessage message) {
+    _sessionMessages.add(message);
+    if (_sessionMessages.length > _maxSessionMessages) {
+      _sessionMessages.removeRange(0, _sessionMessages.length - _maxSessionMessages);
+    }
+  }
+
+  void _finalizeTypingMessage(int id, String finalText) {
+    final index = _sessionMessages.indexWhere((m) => m.id == id);
+    if (index < 0) return;
+    final updated = _sessionMessages[index].copyWith(
+      text: finalText,
+      isTyping: false,
+      clearTypingNotifier: true,
+    );
+    if (mounted) {
+      setState(() {
+        _sessionMessages[index] = updated;
+      });
+    } else {
+      _sessionMessages[index] = updated;
+    }
+  }
+
+  void _disposeNotifierSafely(ValueNotifier<String> notifier) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      notifier.dispose();
+    });
+    WidgetsBinding.instance.scheduleFrame();
   }
 
   Future<void> _checkFirstLaunch() async {
@@ -186,35 +235,37 @@ class _GhostChatOverlayState extends State<GhostChatOverlay> with TickerProvider
       typingTextNotifier: notifier,
     );
     setState(() {
-      _messages.add(message);
+      _appendMessage(message);
       _scrollToBottom();
     });
     if (isGhost) widget.ghostController.setMood(GhostMood.talking);
 
-    for (int i = 1; i <= text.length; i++) {
-      if (!mounted) {
-        notifier.dispose();
-        return;
+    var completed = false;
+    var tickCount = 0;
+    try {
+      for (int i = 1; i <= text.length; i += 2) {
+        if (!mounted) return;
+        final end = min(i + 1, text.length);
+        notifier.value = text.substring(0, end);
+        tickCount++;
+        final chunk = text.substring(i - 1, end);
+        if (isGhost && chunk.trim().isNotEmpty) {
+          if (tickCount.isEven) widget.ghostController.talk();
+          if (tickCount.isEven) Sfx.play(SfxId.type);
+        }
+        await Future.delayed(Duration(milliseconds: 38 + _rng.nextInt(24)));
       }
-      notifier.value = text.substring(0, i);
-      final char = text[i - 1];
-      if (isGhost && char.trim().isNotEmpty) {
-        if (i % 4 == 0) widget.ghostController.talk();
-        if (i % 4 == 0) Sfx.play(SfxId.type);
-      }
-      await Future.delayed(Duration(milliseconds: 22 + _rng.nextInt(34)));
+      if (!mounted) return;
+      completed = true;
+    } finally {
+      final resolved = completed ? text : (notifier.value.isNotEmpty ? notifier.value : text);
+      _finalizeTypingMessage(message.id, resolved);
+      _disposeNotifierSafely(notifier);
     }
-    if (!mounted) {
-      notifier.dispose();
-      return;
-    }
-    final index = _messages.indexWhere((m) => m.id == message.id);
-    if (index >= 0) {
-      setState(() => _messages[index] = _messages[index].copyWith(text: text, isTyping: false));
-    }
-    notifier.dispose();
-    if (isGhost) {
-      widget.ghostController.setMood(_inputFocus.hasFocus && _inputController.text.isNotEmpty ? GhostMood.listening : GhostMood.idle);
+    if (isGhost && mounted) {
+      widget.ghostController.setMood(
+        _inputFocus.hasFocus && _inputController.text.isNotEmpty ? GhostMood.listening : GhostMood.idle,
+      );
       Sfx.play(SfxId.message);
     }
   }
@@ -231,6 +282,31 @@ class _GhostChatOverlayState extends State<GhostChatOverlay> with TickerProvider
     await _voice.toggle();
   }
 
+  void _onVoicePhaseChanged() {
+    if (!mounted) return;
+    switch (_voice.phase) {
+      case VoicePhase.preparing:
+      case VoicePhase.listening:
+        widget.ghostController.setMood(GhostMood.listening);
+        break;
+      case VoicePhase.stopping:
+      case VoicePhase.modelLoading:
+      case VoicePhase.transcribing:
+        widget.ghostController.setMood(GhostMood.thinking);
+        break;
+      case VoicePhase.completed:
+      case VoicePhase.idle:
+      case VoicePhase.failed:
+      case VoicePhase.canceled:
+        if (!_inFlight) {
+          widget.ghostController.setMood(
+            _inputFocus.hasFocus && _inputController.text.trim().isNotEmpty ? GhostMood.listening : GhostMood.idle,
+          );
+        }
+        break;
+    }
+  }
+
   void _onFocusChange() {
     if (!_inputFocus.hasFocus && _inputController.text.trim().isEmpty) {
       widget.ghostController.setMood(GhostMood.idle);
@@ -243,7 +319,7 @@ class _GhostChatOverlayState extends State<GhostChatOverlay> with TickerProvider
 
   void _showSuggestionChips(List<String> chips) {
     setState(() {
-      _messages.add(_ChatMessage(text: '', chips: chips, isGhost: true));
+      _appendMessage(_ChatMessage(text: '', chips: chips, isGhost: true));
       _scrollToBottom();
     });
   }
@@ -276,19 +352,47 @@ class _GhostChatOverlayState extends State<GhostChatOverlay> with TickerProvider
       reply = await _brain.respond(query);
     } catch (e) {
       debugPrint('GHOST: _brain.respond threw: $e');
-      reply = GhostReply("ERROR: $e");
+      reply = GhostReply("ERROR: $e", tone: GhostTone.sarcastic);
     }
     if (!mounted) return;
+    final emotion = switch (reply.tone) {
+      GhostTone.happy => GhostEmotion.happy,
+      GhostTone.sarcastic => GhostEmotion.sarcastic,
+      GhostTone.info => GhostEmotion.serious,
+    };
+    widget.ghostController.setEmotion(emotion);
     await _typewriterSay(reply.text, isGhost: true);
     if (!mounted) return;
+    if (reply.laugh) {
+      await widget.ghostController.glitchLaugh();
+      if (!mounted) return;
+    }
     if (reply.chips.isNotEmpty) {
       _showSuggestionChips(reply.chips);
+    }
+    if (reply.hide) {
+      await _dismissGhost();
+    }
+  }
+
+  Future<void> _dismissGhost() async {
+    ModelLifecycle.instance.onChatCollapsed();
+    if (mounted && _chatState != GhostChatState.collapsed) {
+      setState(() => _chatState = GhostChatState.collapsed);
+      _controller.reverse();
+      _inputFocus.unfocus();
+    }
+    await widget.ghostController.dematerialize();
+    try {
+      await GhostSettings.setVisible(false);
+    } catch (e) {
+      debugPrint('GHOST: could not persist visibility: $e');
     }
   }
 
   void _addMessage(_ChatMessage message) {
     setState(() {
-      _messages.add(message);
+      _appendMessage(message);
       _scrollToBottom();
     });
   }
@@ -307,6 +411,7 @@ class _GhostChatOverlayState extends State<GhostChatOverlay> with TickerProvider
 
   void _toggleCollapse() {
     _userInteracted = true;
+    widget.ghostController.poke();
     final willExpand = _chatState == GhostChatState.collapsed;
     Sfx.play(willExpand ? SfxId.open : SfxId.close);
     setState(() {
@@ -318,6 +423,8 @@ class _GhostChatOverlayState extends State<GhostChatOverlay> with TickerProvider
       widget.ghostController.setMood(_inputController.text.isNotEmpty ? GhostMood.listening : GhostMood.idle);
       if (_messages.isEmpty) {
         _startContextualTutorial();
+      } else {
+        _scrollToBottom();
       }
     } else {
       ModelLifecycle.instance.onChatCollapsed();
@@ -335,7 +442,9 @@ class _GhostChatOverlayState extends State<GhostChatOverlay> with TickerProvider
 
   @override
   void dispose() {
+    _sanitizeSessionMessages();
     ModelLifecycle.instance.onChatCollapsed();
+    _voice.removeListener(_onVoicePhaseChanged);
     _voiceSub?.cancel();
     _voice.dispose();
     _controller.dispose();
@@ -375,7 +484,7 @@ class _GhostChatOverlayState extends State<GhostChatOverlay> with TickerProvider
                     onPanUpdate: _onDrag,
                     child: GhostAvatar(
                       key: widget.ghostKey,
-                      size: 64,
+                      size: 76,
                       accentColor: widget.accentColor,
                       onTap: _toggleCollapse,
                       onLongPress: () => widget.ghostController.glitchLaugh(),
@@ -393,172 +502,167 @@ class _GhostChatOverlayState extends State<GhostChatOverlay> with TickerProvider
   Widget _buildPanel(Color themeColor, double a) {
     final radius = BorderRadius.circular(16);
     final width = min(300.0, MediaQuery.sizeOf(context).width - 32);
-    return ConstrainedBox(
-      constraints: BoxConstraints(minWidth: width, maxWidth: width, maxHeight: 400),
-      child: DecoratedBox(
-        decoration: BoxDecoration(
-          borderRadius: radius,
-          boxShadow: [BoxShadow(color: themeColor.withValues(alpha: 0.28 * a), blurRadius: 22, spreadRadius: 1)],
+    final panelBody = Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(12, 6, 4, 4),
+          child: Row(
+            children: [
+              Icon(Icons.auto_awesome, color: themeColor, size: 16),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text(
+                  "GHOST IN THE MACHINE",
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(fontFamily: 'ShareTechMono', fontSize: 11.5, fontWeight: FontWeight.bold, color: themeColor, letterSpacing: 0.6),
+                ),
+              ),
+              ValueListenableBuilder<bool>(
+                valueListenable: EmbeddingGemmaService.instance.nativeActiveNotifier,
+                builder: (context, nativeActive, _) {
+                  final badgeColor = nativeActive ? Colors.cyanAccent : themeColor.withValues(alpha: 0.7);
+                  return Container(
+                    margin: const EdgeInsets.only(right: 2),
+                    padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: badgeColor.withValues(alpha: 0.14),
+                      borderRadius: BorderRadius.circular(4),
+                      border: Border.all(color: badgeColor.withValues(alpha: 0.65), width: 0.8),
+                    ),
+                    child: Text(
+                      nativeActive ? "GEMMA" : "256D",
+                      style: TextStyle(
+                        fontFamily: 'ShareTechMono',
+                        fontSize: 8.5,
+                        fontWeight: FontWeight.bold,
+                        color: badgeColor,
+                      ),
+                    ),
+                  );
+                },
+              ),
+              IconButton(
+                icon: const Icon(Icons.power_settings_new, color: Colors.redAccent, size: 18),
+                tooltip: "CLOSE GHOST",
+                onPressed: () {
+                  unawaited(_dismissGhost());
+                },
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+              ),
+              IconButton(
+                icon: Icon(Icons.close, color: themeColor, size: 18),
+                tooltip: "MINIMIZE",
+                onPressed: _toggleCollapse,
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+              ),
+            ],
+          ),
         ),
-        child: ClipRRect(
-          borderRadius: radius,
-          child: BackdropFilter(
-            filter: ui.ImageFilter.blur(sigmaX: 0.01 + 16 * a, sigmaY: 0.01 + 16 * a),
+        Container(height: 1, margin: const EdgeInsets.symmetric(horizontal: 12), color: themeColor.withValues(alpha: 0.25)),
+        Flexible(
+          child: RepaintBoundary(
+            child: ListView.builder(
+              controller: _scrollController,
+              reverse: true,
+              shrinkWrap: true,
+              padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
+              itemCount: _messages.length,
+              itemBuilder: (context, index) {
+                final msg = _messages[_messages.length - 1 - index];
+                final child = msg.chips != null ? _buildSuggestionChips(msg.chips!, themeColor) : _buildMessageBubble(msg, themeColor);
+                return _Entrance(key: ValueKey(msg.id), fromLeft: msg.isGhost, child: child);
+              },
+            ),
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(10, 4, 10, 10),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Row(
+                children: [
+                  Expanded(
+                    child: TextField(
+                      controller: _inputController,
+                      focusNode: _inputFocus,
+                      onChanged: _onInputChanged,
+                      cursorColor: themeColor,
+                      style: const TextStyle(fontFamily: 'ShareTechMono', color: Colors.white, fontSize: 13),
+                      decoration: InputDecoration(
+                        hintText: "QUERY THE GHOST...",
+                        hintStyle: const TextStyle(fontFamily: 'VT323', color: Colors.white38, fontSize: 14),
+                        isDense: true,
+                        filled: true,
+                        fillColor: Colors.black.withValues(alpha: 0.45),
+                        contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                        enabledBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(10),
+                          borderSide: BorderSide(color: themeColor.withValues(alpha: 0.45)),
+                        ),
+                        focusedBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(10),
+                          borderSide: BorderSide(color: themeColor, width: 1.6),
+                        ),
+                      ),
+                      onSubmitted: _handleUserInput,
+                      textCapitalization: TextCapitalization.sentences,
+                    ),
+                  ),
+                  const SizedBox(width: 6),
+                  _buildMicButton(themeColor),
+                  const SizedBox(width: 6),
+                  DecoratedBox(
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      border: Border.all(color: themeColor.withValues(alpha: 0.7)),
+                      color: themeColor.withValues(alpha: 0.12),
+                    ),
+                    child: IconButton(
+                      icon: Icon(Icons.send, color: themeColor, size: 18),
+                      onPressed: () => _handleUserInput(_inputController.text),
+                      padding: EdgeInsets.zero,
+                      constraints: const BoxConstraints(minWidth: 38, minHeight: 38),
+                    ),
+                  ),
+                ],
+              ),
+              _buildVoiceStatus(themeColor),
+            ],
+          ),
+        ),
+      ],
+    );
+
+    return RepaintBoundary(
+      child: ConstrainedBox(
+        constraints: BoxConstraints(minWidth: width, maxWidth: width, maxHeight: 400),
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            borderRadius: radius,
+            boxShadow: [BoxShadow(color: themeColor.withValues(alpha: 0.26 * a), blurRadius: 20, spreadRadius: 1)],
+          ),
+          child: ClipRRect(
+            borderRadius: radius,
             child: Container(
               decoration: BoxDecoration(
                 borderRadius: radius,
-                border: Border.all(color: themeColor.withValues(alpha: 0.7 * a), width: 1.2),
+                border: Border.all(color: themeColor.withValues(alpha: 0.72 * a), width: 1.2),
                 gradient: LinearGradient(
                   begin: Alignment.topLeft,
                   end: Alignment.bottomRight,
                   colors: [
-                    themeColor.withValues(alpha: 0.14 * a),
-                    Colors.black.withValues(alpha: 0.38 * a),
-                    Colors.black.withValues(alpha: 0.52 * a),
+                    Color.lerp(const Color(0xFF0A0C12), themeColor, 0.14)!.withValues(alpha: 0.94 * a),
+                    const Color(0xFF07080D).withValues(alpha: 0.95 * a),
+                    const Color(0xFF040508).withValues(alpha: 0.97 * a),
                   ],
                 ),
               ),
-              child: Opacity(
-                opacity: a,
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Padding(
-                      padding: const EdgeInsets.fromLTRB(12, 6, 4, 4),
-                      child: Row(
-                        children: [
-                          Icon(Icons.auto_awesome, color: themeColor, size: 16),
-                          const SizedBox(width: 6),
-                          Expanded(
-                            child: Text(
-                              "GHOST IN THE MACHINE",
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(fontFamily: 'ShareTechMono', fontSize: 11.5, fontWeight: FontWeight.bold, color: themeColor, letterSpacing: 0.6),
-                            ),
-                          ),
-                          ValueListenableBuilder<bool>(
-                            valueListenable: EmbeddingGemmaService.instance.nativeActiveNotifier,
-                            builder: (context, nativeActive, _) {
-                              final badgeColor = nativeActive ? Colors.cyanAccent : themeColor.withValues(alpha: 0.7);
-                              return Container(
-                                margin: const EdgeInsets.only(right: 2),
-                                padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
-                                decoration: BoxDecoration(
-                                  color: badgeColor.withValues(alpha: 0.14),
-                                  borderRadius: BorderRadius.circular(4),
-                                  border: Border.all(color: badgeColor.withValues(alpha: 0.65), width: 0.8),
-                                ),
-                                child: Text(
-                                  nativeActive ? "GEMMA" : "256D",
-                                  style: TextStyle(
-                                    fontFamily: 'ShareTechMono',
-                                    fontSize: 8.5,
-                                    fontWeight: FontWeight.bold,
-                                    color: badgeColor,
-                                  ),
-                                ),
-                              );
-                            },
-                          ),
-                          IconButton(
-                            icon: const Icon(Icons.power_settings_new, color: Colors.redAccent, size: 18),
-                            tooltip: "CLOSE GHOST",
-                            onPressed: () {
-                              Sfx.play(SfxId.close);
-                              ModelLifecycle.instance.onChatCollapsed();
-                              if (mounted) setState(() => _chatState = GhostChatState.collapsed);
-                              unawaited(GhostSettings.setVisible(false).catchError((Object e) {
-                                debugPrint('GHOST: could not persist visibility: $e');
-                              }));
-                            },
-                            padding: EdgeInsets.zero,
-                            constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
-                          ),
-                          IconButton(
-                            icon: Icon(Icons.close, color: themeColor, size: 18),
-                            tooltip: "MINIMIZE",
-                            onPressed: _toggleCollapse,
-                            padding: EdgeInsets.zero,
-                            constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
-                          ),
-                        ],
-                      ),
-                    ),
-                    Container(height: 1, margin: const EdgeInsets.symmetric(horizontal: 12), color: themeColor.withValues(alpha: 0.25)),
-                    Flexible(
-                      child: ListView.builder(
-                        controller: _scrollController,
-                        reverse: true,
-                        shrinkWrap: true,
-                        padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
-                        itemCount: _messages.length,
-                        itemBuilder: (context, index) {
-                          final msg = _messages[_messages.length - 1 - index];
-                          final child = msg.chips != null ? _buildSuggestionChips(msg.chips!, themeColor) : _buildMessageBubble(msg, themeColor);
-                          return _Entrance(key: ValueKey(msg.id), fromLeft: msg.isGhost, child: child);
-                        },
-                      ),
-                    ),
-                    Padding(
-                      padding: const EdgeInsets.fromLTRB(10, 4, 10, 10),
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Row(
-                            children: [
-                              Expanded(
-                                child: TextField(
-                                  controller: _inputController,
-                                  focusNode: _inputFocus,
-                                  onChanged: _onInputChanged,
-                                  cursorColor: themeColor,
-                                  style: const TextStyle(fontFamily: 'ShareTechMono', color: Colors.white, fontSize: 13),
-                                  decoration: InputDecoration(
-                                    hintText: "QUERY THE GHOST...",
-                                    hintStyle: const TextStyle(fontFamily: 'VT323', color: Colors.white38, fontSize: 14),
-                                    isDense: true,
-                                    filled: true,
-                                    fillColor: Colors.black.withValues(alpha: 0.35),
-                                    contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                                    enabledBorder: OutlineInputBorder(
-                                      borderRadius: BorderRadius.circular(10),
-                                      borderSide: BorderSide(color: themeColor.withValues(alpha: 0.45)),
-                                    ),
-                                    focusedBorder: OutlineInputBorder(
-                                      borderRadius: BorderRadius.circular(10),
-                                      borderSide: BorderSide(color: themeColor, width: 1.6),
-                                    ),
-                                  ),
-                                  onSubmitted: _handleUserInput,
-                                  textCapitalization: TextCapitalization.sentences,
-                                ),
-                              ),
-                              const SizedBox(width: 6),
-                              _buildMicButton(themeColor),
-                              const SizedBox(width: 6),
-                              DecoratedBox(
-                                decoration: BoxDecoration(
-                                  shape: BoxShape.circle,
-                                  border: Border.all(color: themeColor.withValues(alpha: 0.7)),
-                                  color: themeColor.withValues(alpha: 0.12),
-                                ),
-                                child: IconButton(
-                                  icon: Icon(Icons.send, color: themeColor, size: 18),
-                                  onPressed: () => _handleUserInput(_inputController.text),
-                                  padding: EdgeInsets.zero,
-                                  constraints: const BoxConstraints(minWidth: 38, minHeight: 38),
-                                ),
-                              ),
-                            ],
-                          ),
-                          _buildVoiceStatus(themeColor),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-              ),
+              child: a >= 0.995 ? panelBody : Opacity(opacity: a, child: panelBody),
             ),
           ),
         ),
@@ -655,7 +759,7 @@ class _GhostChatOverlayState extends State<GhostChatOverlay> with TickerProvider
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
         constraints: const BoxConstraints(maxWidth: 240),
         decoration: BoxDecoration(
-          color: isGhost ? Colors.black.withValues(alpha: 0.35) : themeColor.withValues(alpha: 0.85),
+          color: isGhost ? Colors.black.withValues(alpha: 0.62) : themeColor.withValues(alpha: 0.85),
           border: Border.all(color: isGhost ? themeColor.withValues(alpha: 0.5) : themeColor, width: 1),
           borderRadius: BorderRadius.circular(12).copyWith(
             bottomLeft: isGhost ? const Radius.circular(2) : const Radius.circular(12),
@@ -680,7 +784,7 @@ class _GhostChatOverlayState extends State<GhostChatOverlay> with TickerProvider
               ),
               const SizedBox(height: 2),
             ],
-            if (msg.typingTextNotifier != null)
+            if (msg.isTyping && msg.typingTextNotifier != null)
               ValueListenableBuilder<String>(
                 valueListenable: msg.typingTextNotifier!,
                 builder: (context, val, _) => Text(
@@ -784,14 +888,18 @@ class _ChatMessage {
     this.typingTextNotifier,
   }) : id = id ?? ++_counter;
 
-  _ChatMessage copyWith({String? text, bool? isTyping}) =>
+  _ChatMessage copyWith({
+    String? text,
+    bool? isTyping,
+    bool clearTypingNotifier = false,
+  }) =>
       _ChatMessage(
         id: id,
         text: text ?? this.text,
         isGhost: isGhost,
         isTyping: isTyping ?? this.isTyping,
         chips: chips,
-        typingTextNotifier: typingTextNotifier,
+        typingTextNotifier: clearTypingNotifier ? null : typingTextNotifier,
       );
 }
 

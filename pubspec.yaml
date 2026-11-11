@@ -35,6 +35,7 @@ flutter:
   uses-material-design: true
   shaders:
     - shaders/backdrop.frag
+    - shaders/ghost.frag
   assets:
     - assets/
     - assets/backgrounds/

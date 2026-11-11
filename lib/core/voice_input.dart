@@ -1,7 +1,7 @@
-// =========================================================
+// ============================================================
 // As Above, So Below. As Within, So Without.
-// The Future Dictates The Past and The Past is Always Present.
-// =========================================================
+// The Future Dictates the Past and the Past is Always Present.
+// ============================================================
 
 import 'dart:async';
 import 'dart:io';
@@ -35,8 +35,8 @@ class VoiceInput extends ChangeNotifier {
   static const int bytesPerSecond = sampleRate * 2;
   static const int minBytesForOneSecond = bytesPerSecond;
 
-  /// Optional hooks wired by AppGhostWorld to duck AudioService volume while listening
-  /// so music playback doesn't bleed into the microphone capture.
+
+
   static Future<void> Function()? onRecordingStarted;
   static Future<void> Function()? onRecordingStopped;
 
@@ -271,7 +271,7 @@ class VoiceInput extends ChangeNotifier {
     }
   }
 
-  /// Corrects common speech recognition homophones for Sovereign Tagger terminology.
+
   static String _normalizeDomainTranscript(String raw) {
     var out = raw;
     const replacements = <String, String>{

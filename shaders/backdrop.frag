@@ -11,7 +11,9 @@ uniform float uIntensity;
 out vec4 fragColor;
 
 float hash(vec2 p) {
-  return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
+  vec3 p3 = fract(vec3(p.xyx) * 0.1031);
+  p3 += dot(p3, p3.yzx + 33.33);
+  return fract((p3.x + p3.y) * p3.z);
 }
 
 float noise(vec2 p) {
@@ -34,8 +36,8 @@ void main() {
   float v = uVariant;
 
   vec2 np = vec2(uv.x * aspect, uv.y);
-  float n = noise(np * 2.6 + vec2(uTime * 0.035, -uTime * 0.025)) * 0.65 + noise(np * 6.0 - vec2(uTime * 0.05, uTime * 0.04)) * 0.35;
-  vec3 col = accent * smoothstep(0.45, 1.0, n) * 0.14;
+  float n = noise(np * 3.1 + vec2(uTime * 0.032, -uTime * 0.024));
+  vec3 col = accent * smoothstep(0.42, 0.98, n) * 0.14;
 
   float horizon = 0.68;
   col += accent * smoothstep(0.08, 0.0, abs(uv.y - horizon)) * 0.08;

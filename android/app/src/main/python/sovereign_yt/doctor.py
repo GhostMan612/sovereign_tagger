@@ -7,7 +7,7 @@ import json
 import os
 import re
 
-# Explicit knowledge base — patterns seen when YouTube/Google harden anti-bot
+
 PATCH_REGISTRY = {
     "youtube_android_blocked": {
         "signature": ["Sign in to confirm you’re not a bot", "android.*player.*not available", "confirm you are not a bot"],
@@ -71,7 +71,7 @@ def diagnose(error_log: str = ""):
                     if sig.lower() in lower:
                         hits.append({"patch_id": patch_id, "field": info["field"], "file": info["file"], "hotfix": info["hotfix"]})
                         break
-        # Always include inventory of python payload
+
         py_dir = os.path.dirname(os.path.abspath(__file__))
         inventory = []
         for root, _, files in os.walk(py_dir):
@@ -83,7 +83,7 @@ def diagnose(error_log: str = ""):
                         inventory.append({"file": os.path.relpath(fp, py_dir), "bytes": sz})
                     except Exception:
                         pass
-        # yt-dlp version probe (best-effort, no crash if missing)
+
         ytdlp_version = "unknown"
         try:
             import yt_dlp
@@ -93,7 +93,7 @@ def diagnose(error_log: str = ""):
         except Exception:
             pass
 
-        # Current extractor_args snapshot (from bridge.py source text)
+
         extractor_snapshot = ""
         try:
             bridge_path = os.path.join(py_dir, "bridge.py")

@@ -1,3 +1,8 @@
+// ============================================================
+// As Above, So Below. As Within, So Without.
+// The Future Dictates the Past and the Past is Always Present.
+// ============================================================
+
 import 'package:ffmpeg_kit_extended_flutter/ffmpeg_kit_extended_flutter.dart';
 
 Future<Map<String, int>> probeStreams(String path) async {

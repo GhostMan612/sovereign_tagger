@@ -5,6 +5,7 @@
 
 import 'dart:async';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'eq_mapper.dart';
@@ -20,6 +21,10 @@ class PlaybackFx {
   static final ValueNotifier<double> replayGainPreamp = ValueNotifier<double>(0.0);
   static final ValueNotifier<double> fadeSeconds = ValueNotifier<double>(0.0);
 
+  static const MethodChannel _fxChannel = MethodChannel('com.sovereign.tagger/audio_fx');
+  static double _minDb = -15.0;
+  static double _maxDb = 15.0;
+  static int _attachedSessionId = 0;
   static AudioPlayer? _player;
   static AndroidEqualizerParameters? _params;
   static double _rgVolume = 1.0;
@@ -30,7 +35,7 @@ class PlaybackFx {
   static int? _lastIndex;
   static Map<String, String> _lastTags = const {};
 
-  static AudioPipeline createPipeline() => AudioPipeline(androidAudioEffects: [loudness, equalizer]);
+  static AudioPipeline createPipeline() => AudioPipeline(androidAudioEffects: const []);
 
   static Future<void> init(AudioPlayer player) async {
     _player = player;
@@ -55,7 +60,33 @@ class PlaybackFx {
         _pushVolume();
       }
     });
-    unawaited(_activateEq());
+    player.androidAudioSessionIdStream.listen((sid) {
+      if (sid != null && sid > 0 && sid != _attachedSessionId) {
+        unawaited(_attachNativeSession(sid));
+      }
+    });
+    final initialSid = player.androidAudioSessionId;
+    if (initialSid != null && initialSid > 0) {
+      unawaited(_attachNativeSession(initialSid));
+    }
+  }
+
+  static Future<void> _attachNativeSession(int sessionId) async {
+    try {
+      final res = await _fxChannel.invokeMethod<Map<Object?, Object?>>('attachSession', {'sessionId': sessionId});
+      if (res == null) return;
+      _attachedSessionId = sessionId;
+      final rawBands = (res['bands'] as List?) ?? const [];
+      deviceBands.value = rawBands.map((e) => (e as num).toDouble()).toList();
+      _minDb = (res['minDb'] as num?)?.toDouble() ?? -15.0;
+      _maxDb = (res['maxDb'] as num?)?.toDouble() ?? 15.0;
+      debugPrint('SOVEREIGN FX: attached audioSessionId=$sessionId (${deviceBands.value.length} bands)');
+      if (_params != null) unawaited(_activateEq());
+      await applyEq();
+      await _applyBoost();
+    } catch (e) {
+      debugPrint('SOVEREIGN FX: attachSession UNAVAILABLE ($e)');
+    }
   }
 
   static Future<void> _activateEq() async {
@@ -63,6 +94,7 @@ class PlaybackFx {
       _params = await equalizer.parameters;
       deviceBands.value = _params!.bands.map((b) => b.centerFrequency).toList();
       debugPrint('SOVEREIGN FX: device EQ has ${_params!.bands.length} bands');
+      if (_params != null) unawaited(_activateEq());
       await applyEq();
     } catch (e) {
       debugPrint('SOVEREIGN FX: device EQ UNAVAILABLE ($e) - EQ stays off, playback must not be muted');
@@ -71,6 +103,22 @@ class PlaybackFx {
 
   static Future<void> applyEq() async {
     try {
+      if (_attachedSessionId <= 0) {
+        final sid = _player?.androidAudioSessionId;
+        if (sid != null && sid > 0) {
+          await _attachNativeSession(sid);
+          return;
+        }
+      }
+      final bands = deviceBands.value;
+      final nativeMapped = (eqEnabled.value && bands.isNotEmpty)
+          ? EqMapper.mapToDevice(eqGains.value, bands, _minDb, _maxDb)
+          : const <double>[];
+      await _fxChannel.invokeMethod('applyEq', {
+        'enabled': eqEnabled.value,
+        'gainsDb': nativeMapped,
+      });
+      if (_params == null) return;
       await equalizer.setEnabled(eqEnabled.value);
       final params = _params;
       if (params == null || !eqEnabled.value) return;
@@ -148,6 +196,13 @@ class PlaybackFx {
 
   static Future<void> _applyBoost() async {
     try {
+      if (_attachedSessionId > 0) {
+        await _fxChannel.invokeMethod('applyLoudness', {
+          'enabled': _rgBoostDb > 0.05,
+          'boostDb': _rgBoostDb,
+        });
+      }
+      if (_params == null) return;
       if (_rgBoostDb > 0.05) {
         await loudness.setTargetGain(_rgBoostDb);
         await loudness.setEnabled(true);

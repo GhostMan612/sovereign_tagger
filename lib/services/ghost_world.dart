@@ -1,7 +1,7 @@
-// ============================================================================
+// ============================================================
 // As Above, So Below. As Within, So Without.
 // The Future Dictates the Past and the Past is Always Present.
-// ============================================================================
+// ============================================================
 
 import 'dart:async';
 import 'dart:convert';
@@ -11,6 +11,7 @@ import 'package:flutter/services.dart';
 import '../core/forge_request.dart';
 import '../core/ghost_commands.dart';
 import '../core/metadata_sources.dart';
+import '../core/media_forensics.dart';
 import '../core/model_lifecycle.dart';
 import '../core/playlists.dart';
 import '../core/storage_client.dart';
@@ -18,6 +19,7 @@ import '../core/tag_io.dart';
 import '../core/voice_input.dart';
 import '../screens/eq_presets_screen.dart';
 import '../screens/main_shell.dart';
+import '../screens/media_inspector_screen.dart';
 import '../screens/playback_engine_screen.dart';
 import '../screens/settings_screen.dart';
 import '../tabs/tab_library.dart';
@@ -127,7 +129,7 @@ class AppGhostWorld implements GhostWorld {
     unawaited(GhostVectorIndex.instance.loadFromDiskIfNeeded());
     StorageClient.libraryRevision.addListener(() => _generation++);
 
-    // Track any file sent to Forge so "loaded file" voice commands always know the target path
+
     SovereignState.pendingForge.addListener(() {
       final req = SovereignState.pendingForge.value;
       if (req != null && req.path.isNotEmpty) {
@@ -135,7 +137,7 @@ class AppGhostWorld implements GhostWorld {
       }
     });
 
-    // Automatically duck AudioService volume during voice command recording
+
     VoiceInput.onRecordingStarted = () async {
       try {
         _preDuckVolume = AudioService.player.volume;
@@ -230,6 +232,34 @@ class AppGhostWorld implements GhostWorld {
   void openPlaybackEngine() => _push(const PlaybackEngineScreen());
 
   @override
+  void openMediaInspector({String? path, bool autoRunForensics = false}) {
+    final target = path ?? _currentPath;
+    _push(
+      MediaInspectorScreen(
+        initialPath: target,
+        titleHint: target == _currentPath && !nowTitle.startsWith('[') ? nowTitle : null,
+        autoRunForensics: autoRunForensics,
+      ),
+    );
+  }
+
+  @override
+  Future<String?> inspectActiveMedia({bool runForensics = false}) async {
+    final target = _currentPath;
+    if (target == null || target.isEmpty) return null;
+    try {
+      final report = await MediaForensics.inspect(target);
+      ForensicAuditReport? audit;
+      if (runForensics && report.primaryAudio != null) {
+        audit = await MediaForensics.runDeepAudioAudit(report);
+      }
+      return report.toCompactSummary(audit: audit);
+    } catch (e) {
+      return 'Probe fault: $e';
+    }
+  }
+
+  @override
   void grab(String url) {
     GhostCommandBus.lastGrabbedUrl = url;
     SovereignState.pendingGrabberUrl.value = url;
@@ -263,9 +293,9 @@ class AppGhostWorld implements GhostWorld {
     }
   }
 
-  // ==========================================================================
-  // GhostBrain v2 Cross-Tab Automation Capabilities (Grabber & Forge)
-  // ==========================================================================
+
+
+
 
   @override
   Future<List<GrabberSearchHit>> searchGrabber(String query, {String source = 'youtube'}) async {
@@ -320,6 +350,7 @@ class AppGhostWorld implements GhostWorld {
     String? label,
     bool isVideo = false,
     String mode = 'm4a',
+    bool sendToForgeWhenDone = false,
   }) async {
     final cleanUrl = url.trim();
     if (cleanUrl.isEmpty) return null;
@@ -333,25 +364,10 @@ class AppGhostWorld implements GhostWorld {
           ? GrabberMediaMode.video
           : (mode == 'mp3' ? GrabberMediaMode.mp3 : GrabberMediaMode.m4a),
       autoDownloadTopResult: true,
+      sendToForgeWhenDone: sendToForgeWhenDone,
     );
 
-    final jobId = 'ghost_${DateTime.now().millisecondsSinceEpoch}';
-    try {
-      // Trigger download directly on the native ytdlp channel as well so it starts immediately
-      // even if TabGrabber hasn't applied the optional GhostCommandBus listener patch yet.
-      unawaited(_ytChannel.invokeMethod('downloadMedia', {
-        'url': cleanUrl,
-        'formatId': isVideo ? 'best' : 'bestaudio',
-        'jobId': jobId,
-        'isVideo': isVideo,
-        'isPlaylist': cleanUrl.contains('playlist?list='),
-        'mode': mode,
-      }));
-      return jobId;
-    } catch (e) {
-      debugPrint('GHOST: downloadInGrabber channel call error: $e');
-      return null;
-    }
+    return 'ghost_${DateTime.now().millisecondsSinceEpoch}';
   }
 
   @override
@@ -406,7 +422,7 @@ class AppGhostWorld implements GhostWorld {
       String? matchedSummary;
       String? lyricsSummary;
 
-      // 1. Optional 15s ACRCloud Audio Fingerprinting
+
       if (useAcrFingerprint) {
         final hit = await MetadataSources.acrIdentify(path);
         if (hit != null) {
@@ -425,7 +441,7 @@ class AppGhostWorld implements GhostWorld {
         }
       }
 
-      // 2. Multi-catalog Metadata & LRCLIB Search (iTunes + Deezer + MusicBrainz + LRCLIB)
+
       if (fetchMetadata) {
         final res = await MetadataSources.search(
           artist: artist,
@@ -458,7 +474,7 @@ class AppGhostWorld implements GhostWorld {
         }
       }
 
-      // 3. Dedicated Lyrics Lookup (LRCLIB / Genius fallback) if lyrics were requested and not yet populated
+
       if (fetchLyrics && !prefill.containsKey('LYRICS')) {
         if (title.isNotEmpty) {
           final lrc = await MetadataSources.fetchLyrics(

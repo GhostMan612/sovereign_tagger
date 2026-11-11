@@ -3,6 +3,7 @@
 // The Future Dictates the Past and the Past is Always Present.
 // ============================================================
 
+import 'dart:async';
 import 'dart:math' as math;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
@@ -77,13 +78,15 @@ class EmbeddingGemmaService {
   }) async {
     final mPath = modelPath ?? (await EmbeddingModel.modelFile()).path;
     final tPath = tokenizerPath ?? (await EmbeddingModel.tokenizerFile()).path;
-    final raw = await _channel.invokeMethod<Map<Object?, Object?>>(
-      'loadModel',
-      <String, dynamic>{
-        'modelPath': mPath,
-        'tokenizerPath': tPath,
-      },
-    );
+    final raw = await _channel
+        .invokeMethod<Map<Object?, Object?>>(
+          'loadModel',
+          <String, dynamic>{
+            'modelPath': mPath,
+            'tokenizerPath': tPath,
+          },
+        )
+        .timeout(const Duration(seconds: 25));
     _nativeChecked = true;
     _nativeAvailable = true;
     _nativeCache.clear();
@@ -93,9 +96,25 @@ class EmbeddingGemmaService {
     return raw.map((k, v) => MapEntry(k.toString(), v));
   }
 
+  Future<Map<String, dynamic>> runSelfTest() async {
+    final raw = await _channel
+        .invokeMethod<Map<Object?, Object?>>('selfTest')
+        .timeout(const Duration(seconds: 25));
+    if (raw == null) return const <String, dynamic>{'ok': false};
+    final map = raw.map((k, v) => MapEntry(k.toString(), v));
+    final ok = map['ok'] == true;
+    _nativeChecked = true;
+    if (ok != _nativeAvailable) {
+      _nativeAvailable = ok;
+      _engineEpoch++;
+      nativeActiveNotifier.value = ok;
+    }
+    return map;
+  }
+
   Future<void> unloadNativeModel({bool keepAvailableForLazyReload = true}) async {
     try {
-      await _channel.invokeMethod<bool>('unloadModel');
+      await _channel.invokeMethod<bool>('unloadModel').timeout(const Duration(seconds: 5));
     } catch (e) {
       debugPrint('EMBEDDING_GEMMA: unloadModel failed: $e');
     }
@@ -123,20 +142,24 @@ class EmbeddingGemmaService {
       final hit = _nativeCache[cacheKey];
       if (hit != null) return hit;
       try {
-        final raw = await _channel.invokeMethod<List<dynamic>>(
-          'embedText',
-          <String, dynamic>{
-            'text': text.trim(),
-            'dims': dims,
-            'task': task,
-            if (title != null && title.isNotEmpty) 'title': title,
-          },
-        );
+        final raw = await _channel
+            .invokeMethod<List<dynamic>>(
+              'embedText',
+              <String, dynamic>{
+                'text': text.trim(),
+                'dims': dims,
+                'task': task,
+                if (title != null && title.isNotEmpty) 'title': title,
+              },
+            )
+            .timeout(const Duration(seconds: 6));
         if (raw != null && raw.isNotEmpty) {
           final vec = _decodeVector(raw);
           _putCache(_nativeCache, cacheKey, vec);
           return vec;
         }
+      } on TimeoutException catch (e) {
+        debugPrint('EMBEDDING_GEMMA: embedText timed out (using fast fallback for this turn): $e');
       } catch (e) {
         debugPrint('EMBEDDING_GEMMA: native embedText fell back to offline n-gram projection: $e');
         _nativeAvailable = false;
@@ -162,22 +185,24 @@ class EmbeddingGemmaService {
       try {
         final task = isDocument ? 'document' : 'query';
         final results = <Float32List>[];
-        const chunkSize = 24;
+        const chunkSize = 4;
         for (var offset = 0; offset < texts.length; offset += chunkSize) {
           final end = math.min(offset + chunkSize, texts.length);
           final subTexts = texts.sublist(offset, end);
           final subTitles = titles != null && titles.length >= end
               ? titles.sublist(offset, end)
               : null;
-          final rawBatch = await _channel.invokeMethod<List<dynamic>>(
-            'embedBatch',
-            <String, dynamic>{
-              'texts': subTexts,
-              if (subTitles != null) 'titles': subTitles,
-              'dims': dims,
-              'task': task,
-            },
-          );
+          final rawBatch = await _channel
+              .invokeMethod<List<dynamic>>(
+                'embedBatch',
+                <String, dynamic>{
+                  'texts': subTexts,
+                  if (subTitles != null) 'titles': subTitles,
+                  'dims': dims,
+                  'task': task,
+                },
+              )
+              .timeout(const Duration(seconds: 20));
           if (rawBatch == null || rawBatch.length != subTexts.length) {
             throw StateError('Batch size mismatch from native EmbeddingGemma bridge');
           }
@@ -189,8 +214,13 @@ class EmbeddingGemmaService {
               results.add(embedSyncFallback(subTexts[i]));
             }
           }
+          if (end < texts.length) {
+            await Future<void>.delayed(const Duration(milliseconds: 25));
+          }
         }
         return results;
+      } on TimeoutException catch (e) {
+        debugPrint('EMBEDDING_GEMMA: embedBatch timed out (falling back for remaining batch): $e');
       } catch (e) {
         debugPrint('EMBEDDING_GEMMA: native embedBatch fell back to offline n-gram projection: $e');
         _nativeAvailable = false;

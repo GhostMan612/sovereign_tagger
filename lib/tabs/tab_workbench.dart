@@ -14,6 +14,8 @@ import 'package:ffmpeg_kit_extended_flutter/ffmpeg_kit_extended_flutter.dart';
 import '../core/ffmpeg_executor.dart';
 import 'package:audio_waveforms/audio_waveforms.dart';
 import '../core/media_probe.dart';
+import '../core/media_forensics.dart';
+import '../screens/media_inspector_screen.dart';
 import '../core/pcm_recorder.dart';
 import '../core/tap_feedback.dart';
 import '../core/cyber_tap_feedback.dart';
@@ -21,6 +23,7 @@ import '../screens/main_shell.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../widgets/waveform_studio.dart';
 import '../core/whisper_model.dart';
+import '../core/ghost_commands.dart';
 
 class TabWorkbench extends StatefulWidget {
   const TabWorkbench({super.key});
@@ -159,6 +162,9 @@ class _TabWorkbenchState extends State<TabWorkbench> {
 
   final List<String> _operations = [
     "Extract Audio (Video to MP3)",
+    "Lossless Audio Extract (-c:a copy)",
+    "Split Chapters Losslessly (-c copy)",
+    "Fake-Lossless & DR Audit",
     "Clip Media (The Scalpel)",
     "Convert Format",
     "Normalize Audio (LUFS -14)",
@@ -217,27 +223,27 @@ class _TabWorkbenchState extends State<TabWorkbench> {
       final session = await FFmpegExecutor.execute('-y -i "$_selectedFilePath" -af ebur128 -f null -');
       final output = session.getOutput() ?? "";
       
-      // Parse EBU R128 output for ReplayGain values
+
       double? trackGain;
       double? trackPeak;
       double? albumGain;
       double? albumPeak;
       
-      // Look for integrated loudness (used for track gain calculation)
+
       final integratedMatch = RegExp(r'I:\s*(-?\d+\.?\d*)\s*LUFS').firstMatch(output);
       if (integratedMatch != null) {
         final integrated = double.tryParse(integratedMatch.group(1) ?? "") ?? 0.0;
-        trackGain = -14.0 - integrated; // Target -14 LUFS
+        trackGain = -14.0 - integrated;
       }
       
-      // Look for true peak
+
       final truePeakMatch = RegExp(r'TP:\s*(-?\d+\.?\d*)\s*LUFS').firstMatch(output);
       if (truePeakMatch != null) {
         final tp = double.tryParse(truePeakMatch.group(1) ?? "") ?? 0.0;
-        trackPeak = pow(10.0, tp / 20.0).toDouble(); // Convert dBTP to linear
+        trackPeak = pow(10.0, tp / 20.0).toDouble();
       }
       
-      // For album gain/peak, we'd need multiple files - use track values as fallback
+
       albumGain = trackGain;
       albumPeak = trackPeak;
 
@@ -249,7 +255,7 @@ class _TabWorkbenchState extends State<TabWorkbench> {
         final ap = albumPeak!;
         _replayGainReport = "Track Gain: ${tg.toStringAsFixed(2)} dB\nTrack Peak: ${tp.toStringAsFixed(6)}\nAlbum Gain: ${ag.toStringAsFixed(2)} dB\nAlbum Peak: ${ap.toStringAsFixed(6)}";
 
-        // Write tags via id3 channel
+
         const id3Channel = MethodChannel('com.sovereign.tagger/id3');
         final metadata = <String, String>{
           'REPLAYGAIN_TRACK_GAIN': '${tg.toStringAsFixed(2)} dB',
@@ -260,8 +266,10 @@ class _TabWorkbenchState extends State<TabWorkbench> {
         
         try {
           await id3Channel.invokeMethod('writeTags', {'filePath': _selectedFilePath, 'metadata': metadata});
+          if (!mounted) return;
           setState(() => _replayGainReport = "TAGS WRITTEN ✓\n$_replayGainReport");
         } catch (e) {
+          if (!mounted) return;
           setState(() => _replayGainReport = "Scan Complete (Tag Write Failed: $e)\n$_replayGainReport");
         }
       } else {
@@ -287,15 +295,50 @@ class _TabWorkbenchState extends State<TabWorkbench> {
     super.initState();
     _waveController = PlayerController();
     _recorderController = RecorderController();
+    GhostCommandBus.pendingWorkbenchCommand.addListener(_onGhostWorkbenchCommand);
+    WidgetsBinding.instance.addPostFrameCallback((_) => _onGhostWorkbenchCommand());
   }
 
   @override
   void dispose() {
     _ampSub?.cancel();    _waveController.dispose();
+    GhostCommandBus.pendingWorkbenchCommand.removeListener(_onGhostWorkbenchCommand);
     _recorderController.dispose();
     _startCtrl.dispose();
     _endCtrl.dispose();
     super.dispose();
+  }
+
+  void _onGhostWorkbenchCommand() {
+    final cmd = GhostCommandBus.pendingWorkbenchCommand.value;
+    if (cmd == null || !mounted) return;
+    GhostCommandBus.pendingWorkbenchCommand.value = null;
+    final path = cmd.filePath;
+    final hasFile = path != null && path.isNotEmpty && File(path).existsSync();
+    setState(() {
+      if (hasFile) {
+        _selectedFilePath = path;
+      }
+      if (cmd.task == WorkbenchTaskType.transcribeLyricsWhisper) {
+        _selectedOperation = "Transcribe (Whisper AI)";
+        _statusMessage = hasFile
+            ? "Mounted For On-Device Whisper Transcription."
+            : "Whisper AI Selected — Mount Track To Transcribe.";
+      } else if (cmd.task == WorkbenchTaskType.analyzeReplayGain) {
+        _selectedOperation = "Scan ReplayGain (EBU R128)";
+        _statusMessage = hasFile
+            ? "Mounted For EBU R128 ReplayGain Scan."
+            : "ReplayGain Scanner Selected — Mount Track To Scan.";
+      } else if (cmd.task == WorkbenchTaskType.openEq) {
+        _selectedOperation = "15-Band Equalizer (AutoEq)";
+      }
+    });
+    if (hasFile && cmd.task == WorkbenchTaskType.analyzeReplayGain && !_isProcessing) {
+      unawaited(_scanReplayGain());
+    }
+    if (cmd.onResult != null && !cmd.onResult!.isCompleted) {
+      cmd.onResult!.complete(_selectedOperation);
+    }
   }
 
   void _startAmpStream() {
@@ -533,8 +576,10 @@ class _TabWorkbenchState extends State<TabWorkbench> {
       }
 
       final srtPath = "$tempDir/whisper_${DateTime.now().millisecondsSinceEpoch}.srt";
+      if (!mounted) return;
       setState(() { _statusMessage = "Whisper: Transcribing (${_whisperLanguage.toUpperCase()}, base.en)..."; _opProgress = 0.0; });
       final durationMs = await probeDurationMs(_selectedFilePath);
+      if (!mounted) return;
 
       final session = await FFmpegExecutor.execute(
         '-y -i "$_selectedFilePath" -vn -af "whisper=model=${modelFile.path}:language=$_whisperLanguage:destination=$srtPath:format=srt" -f null -',
@@ -561,6 +606,7 @@ class _TabWorkbenchState extends State<TabWorkbench> {
           _statusMessage = "Transcription Secured:\n$sidecarPath\n\nPREVIEW:\n$preview";
         });
       } else {
+        if (!mounted) return;
         setState(() => _statusMessage = "Whisper Fault. Pulling On-Device Filter Documentation...");
         final docsSession = await FFmpegExecutor.execute('-hide_banner -h filter=whisper');
         final docs = docsSession.getOutput() ?? "";
@@ -574,6 +620,68 @@ class _TabWorkbenchState extends State<TabWorkbench> {
     } catch (e) {
       if (!mounted) return;
       setState(() { _isProcessing = false; _statusMessage = "ERR: Whisper Fault: $e"; });
+    }
+  }
+
+  Future<void> _executeForensicWorkbenchOp() async {
+    setState(() {
+      _isProcessing = true;
+      _opProgress = 0.0;
+      _statusMessage = "Probing Container & Streams...";
+    });
+    try {
+      final report = await MediaForensics.inspect(_selectedFilePath);
+      if (!mounted) return;
+      if (_selectedOperation == "Lossless Audio Extract (-c:a copy)") {
+        setState(() => _statusMessage = "Demuxing Audio Stream (-c:a copy, Zero Re-Encode)...");
+        final res = await MediaForensics.extractAudioLossless(report);
+        if (!mounted) return;
+        if (res.ok) TapFeedback.machineConfirm();
+        setState(() {
+          _isProcessing = false;
+          _statusMessage = res.summary;
+        });
+      } else if (_selectedOperation == "Split Chapters Losslessly (-c copy)") {
+        final res = await MediaForensics.splitChaptersLossless(
+          report,
+          onProgress: (cur, total, title) {
+            if (!mounted) return;
+            setState(() {
+              _opProgress = total > 0 ? cur / total : 0.0;
+              _statusMessage = "Splitting Chapter $cur/$total: $title";
+            });
+          },
+        );
+        if (!mounted) return;
+        if (res.ok) TapFeedback.machineConfirm();
+        setState(() {
+          _isProcessing = false;
+          _statusMessage = res.summary;
+        });
+      } else {
+        final audit = await MediaForensics.runDeepAudioAudit(
+          report,
+          onStage: (stage) {
+            if (!mounted) return;
+            setState(() => _statusMessage = stage);
+          },
+        );
+        if (!mounted) return;
+        TapFeedback.machineConfirm();
+        final lufs = audit.integratedLufs != null ? "${audit.integratedLufs!.toStringAsFixed(1)} LUFS" : "N/A";
+        final tp = audit.truePeakDbtp != null ? "${audit.truePeakDbtp!.toStringAsFixed(1)} dBTP" : "N/A";
+        final dr = audit.dynamicRangeDb != null ? "DR${audit.dynamicRangeDb!.round()}" : "N/A";
+        setState(() {
+          _isProcessing = false;
+          _statusMessage = "${audit.verdictLabel}\n${audit.verdictDetail}\nLoudness: $lufs • True Peak: $tp • $dr • Bits: ${audit.effectiveBitDepth}";
+        });
+      }
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _isProcessing = false;
+        _statusMessage = "ERR: Forensic Operation Fault: $e";
+      });
     }
   }
 
@@ -591,12 +699,19 @@ class _TabWorkbenchState extends State<TabWorkbench> {
       await _scanReplayGain();
       return;
     }
+    if (_selectedOperation == "Lossless Audio Extract (-c:a copy)" ||
+        _selectedOperation == "Split Chapters Losslessly (-c copy)" ||
+        _selectedOperation == "Fake-Lossless & DR Audit") {
+      await _executeForensicWorkbenchOp();
+      return;
+    }
     setState(() { _isProcessing = true; _statusMessage = "Allocating FFmpeg Resources..."; });
 
     try {
       final tempDir = await _storageChannel.invokeMethod('getTempDirectory');
       final timestamp = DateTime.now().millisecondsSinceEpoch;
       final durationMs = await probeDurationMs(_selectedFilePath);
+      if (!mounted) return;
 
       final parts = _selectedFilePath.split('.');
       final srcExt = parts.length > 1 ? parts.last.toLowerCase() : "";
@@ -651,7 +766,7 @@ class _TabWorkbenchState extends State<TabWorkbench> {
           command = '-y -i "$_selectedFilePath" -ss $startText -to $endText -c copy "$outPath"';
         }
       } else if (_selectedOperation == "Spectrogram Snapshot") {
-        command = '-y -i "$_selectedFilePath" -lavfi "showspectrogrampic=s=1280x720:legend=1" -frames:v 1 "$outPath"';
+        command = '-y -i "$_selectedFilePath" -lavfi "showspectrumpic=s=1280x720:legend=1" -frames:v 1 "$outPath"';
       } else if (_selectedOperation == "Mix With File") {
         if (_secondFilePath.isEmpty) {
           setState(() { _isProcessing = false; _statusMessage = "ERR: MOUNT SECOND MEDIA FIRST."; });
@@ -683,6 +798,7 @@ class _TabWorkbenchState extends State<TabWorkbench> {
               setState(() => _statusMessage = "LOUDNORM PASS 1/2: ANALYZING...");
               final analysisCmd = '-y -i "$_selectedFilePath" -af "loudnorm=I=-14:LRA=11:TP=-1.5:print_format=json" -f null -';
               final pass1 = await FFmpegExecutor.execute(analysisCmd);
+              if (!mounted) return;
               final measured = _parseLoudnormMeasurements(pass1.getOutput() ?? "");
               if (measured != null) {
                 loudnormFilter = 'loudnorm=I=-14:LRA=11:TP=-1.5:measured_I=${measured['input_i']}:measured_LRA=${measured['input_lra']}:measured_TP=${measured['input_tp']}:measured_thresh=${measured['input_thresh']}:offset=${measured['target_offset']}:linear=true';
@@ -812,6 +928,7 @@ class _TabWorkbenchState extends State<TabWorkbench> {
       });
 
       if (ReturnCode.isSuccess(session.getReturnCode())) {
+        if (!mounted) return;
         setState(() => _statusMessage = "Process Complete. Injecting To MediaStore...");
         final originalName = _selectedFilePath.split('/').last;
         final baseName = originalName.contains('.') ? originalName.substring(0, originalName.lastIndexOf('.')) : originalName;
@@ -827,9 +944,11 @@ class _TabWorkbenchState extends State<TabWorkbench> {
         TapFeedback.machineConfirm();
         setState(() { _isProcessing = false; _statusMessage = payloadNote; });
       } else {
+        if (!mounted) return;
         setState(() { _isProcessing = false; _statusMessage = "ERR: Kernel Panic. FFmpeg Segfault."; });
       }
     } catch (e) {
+      if (!mounted) return;
       setState(() { _isProcessing = false; _statusMessage = "Critical ERR: $e"; });
     }
   }
@@ -871,6 +990,8 @@ class _TabWorkbenchState extends State<TabWorkbench> {
                   _wmb('Transcribe produces a plain text block and writes a sidecar .srt. First run extracts the bundled 141MB model. Cancel stops the FFmpeg session and discards the partial output.'),
                   _wmh('RECORDER'),
                   _wmb('REC captures 48k mono PCM WAV by default. HALT auto-exports the recording to cache. STOP finishes the file. AAC is thefallback mode.'),
+                  _wmh('MEDIAINFO & FORENSICS'),
+                  _wmb('Tap the analytics icon in the header (or choose Lossless Audio Extract / Split Chapters / Fake-Lossless Audit) to inspect containers, streams, FastStart atoms, EBU R128 + DR crest, 16/19.5 kHz MP3 brickwall shelves, and split chapters with -c copy.'),
                 ],
               ),
             ),
@@ -903,6 +1024,23 @@ class _TabWorkbenchState extends State<TabWorkbench> {
                         "THE SCALPEL & STUDIO",
                         style: TextStyle(fontFamily: 'ShareTechMono', fontSize: 22, fontWeight: FontWeight.bold, color: themeColor, letterSpacing: 1.2)
                       ),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.analytics_outlined, color: Colors.cyanAccent),
+                      tooltip: "MEDIAINFO & FORENSICS",
+                      onPressed: _isProcessing
+                          ? null
+                          : () {
+                              TapFeedback.machineTap();
+                              Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (_) => MediaInspectorScreen(
+                                    initialPath: _selectedFilePath.isEmpty ? null : _selectedFilePath,
+                                  ),
+                                ),
+                              );
+                            },
                     ),
                     IconButton(
                       icon: Icon(Icons.help_outline, color: themeColor),
@@ -1124,6 +1262,7 @@ class _TabWorkbenchState extends State<TabWorkbench> {
                                   icon: Icon(isPlaying ? Icons.pause : Icons.play_arrow, color: themeColor, size: 36),
                                   onPressed: () async {
                                     isPlaying ? await _waveController.pausePlayer() : await _waveController.startPlayer();
+                                    if (!mounted) return;
                                     setState((){});
                                   },
                                 );

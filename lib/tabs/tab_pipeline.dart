@@ -70,6 +70,7 @@ class _TabPipelineState extends State<TabPipeline> {
       if (!mounted) return;
       if (_queue.any((q) => q.path == e.path)) continue;
       final tags = await TagIO.read(e.path);
+      if (!mounted) return;
       final bucket = tags.isEmpty ? "GHOST" : _classify(tags);
       _queue.add(BatchItem(
         path: e.path,
@@ -169,6 +170,7 @@ class _TabPipelineState extends State<TabPipeline> {
     }
 
     final useAcr = await MetadataSources.acrConfigured();
+    if (!mounted) return;
     final uris = targets.map((i) => i.uri).whereType<String>().toList();
     var fixInPlace = true;
     if (uris.isNotEmpty) {
@@ -177,6 +179,7 @@ class _TabPipelineState extends State<TabPipeline> {
       if (!mounted) return;
       if (!granted) {
         final copies = await _confirm("PERMISSION DENIED", "Android did not allow modifying the originals.\n\nContinue and add fixed COPIES to Music instead?", "USE COPIES");
+        if (!mounted) return;
         if (!copies) {
           _setStatus("Batch Canceled. Nothing Was Changed.");
           return;

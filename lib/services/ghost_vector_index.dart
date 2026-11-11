@@ -3,6 +3,7 @@
 // The Future Dictates the Past and the Past is Always Present.
 // ============================================================
 
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
@@ -242,7 +243,7 @@ class GhostVectorIndex {
       statusText: 'Indexing 0 / ${pendingTracks.length} tracks...',
     );
 
-    const batchSize = 24;
+    final batchSize = targetEngineId == EmbeddingGemmaService.nativeEngineId ? 4 : 24;
     var processed = 0;
     try {
       for (var start = 0; start < pendingTracks.length; start += batchSize) {
@@ -330,6 +331,52 @@ class GhostVectorIndex {
     final embedder = EmbeddingGemmaService.instance;
     await embedder.checkNativeAvailability();
 
+    final qLower = query.toLowerCase();
+    final qWords = qLower
+        .replaceAll(RegExp(r'[^a-z0-9]+'), ' ')
+        .trim()
+        .split(RegExp(r'\s+'))
+        .where((w) => w.length >= 3)
+        .toList();
+
+    final nativeReadyForDirectSearch =
+        embedder.activeEngineId == EmbeddingGemmaService.nativeEngineId &&
+            _loadedEngineId == EmbeddingGemmaService.nativeEngineId &&
+            _records.isNotEmpty &&
+            !state.value.isIndexing;
+
+    if (embedder.activeEngineId == EmbeddingGemmaService.nativeEngineId &&
+        !nativeReadyForDirectSearch &&
+        library.length > 4) {
+      if (!state.value.isIndexing) {
+        final fastTagRead = library.length <= 160;
+        unawaited(ensureIndexed(library, readEmbeddedLyrics: fastTagRead));
+      }
+      final fallbackQueryVec = embedder.embedSyncFallback(query);
+      final fastMatches = <GhostSemanticMatch>[];
+      for (final track in library) {
+        final existing = _records[track.path];
+        final snip = existing?.snippet.isNotEmpty == true
+            ? existing!.snippet
+            : '${track.title} — ${track.artist}${track.album.isNotEmpty ? ' • ${track.album}' : ''}';
+        final docVec = embedder.embedSyncFallback('${track.title} ${track.artist} ${track.album} $snip');
+        var score = EmbeddingGemmaService.cosine(fallbackQueryVec, docVec);
+        if (qWords.isNotEmpty && snip.isNotEmpty) {
+          final snipLower = snip.toLowerCase();
+          var hits = 0;
+          for (final w in qWords) {
+            if (snipLower.contains(w)) hits++;
+          }
+          if (hits > 0) {
+            score += 0.14 * (hits / qWords.length);
+          }
+        }
+        fastMatches.add(GhostSemanticMatch(track: track, score: score, snippet: snip));
+      }
+      fastMatches.sort((a, b) => b.score.compareTo(a.score));
+      return fastMatches.take(topK).toList();
+    }
+
     if (_records.isEmpty || _loadedEngineId != embedder.activeEngineId) {
       final fastTagRead = library.length <= 160;
       await ensureIndexed(library, readEmbeddedLyrics: fastTagRead);
@@ -339,19 +386,9 @@ class GhostVectorIndex {
     final queryVec = await embedder.embed(query, isDocument: false);
     final queryEngineAfter = embedder.activeEngineId;
 
-    if (queryEngineAfter != _loadedEngineId) {
-      await ensureIndexed(library, forceRebuild: true, readEmbeddedLyrics: false);
-    } else if (queryEngineBefore != queryEngineAfter) {
+    if (queryEngineAfter != _loadedEngineId || queryEngineBefore != queryEngineAfter) {
       await ensureIndexed(library, forceRebuild: true, readEmbeddedLyrics: false);
     }
-
-    final qLower = query.toLowerCase();
-    final qWords = qLower
-        .replaceAll(RegExp(r'[^a-z0-9]+'), ' ')
-        .trim()
-        .split(RegExp(r'\s+'))
-        .where((w) => w.length >= 3)
-        .toList();
 
     final trackByPath = <String, GhostTrack>{for (final t in library) t.path: t};
     final matches = <GhostSemanticMatch>[];

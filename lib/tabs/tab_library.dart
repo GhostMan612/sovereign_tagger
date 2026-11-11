@@ -12,6 +12,7 @@ import '../core/forge_request.dart';
 import '../core/playlists.dart';
 import '../core/storage_client.dart';
 import '../screens/main_shell.dart';
+import '../screens/media_inspector_screen.dart';
 import '../widgets/playlist_picker.dart';
 
 class LibTrack {
@@ -402,6 +403,7 @@ class _TabLibraryState extends State<TabLibrary> with AutomaticKeepAliveClientMi
                     PlaylistStore.removeFrom(playlistId.substring(5), t.path);
                     _refreshPlaylistDetail();
                   }),
+                tile(Icons.analytics_outlined, "MEDIAINFO & FORENSICS", () => Navigator.push(context, MaterialPageRoute(builder: (_) => MediaInspectorScreen(initialPath: t.path, titleHint: t.title))), color: Colors.cyanAccent),
                 tile(Icons.edit_note, "EDIT IN FORGE", () => SovereignState.sendToForge(ForgeRequest(path: t.path, origin: ForgeOrigin.library, originUri: t.uri.isEmpty ? null : t.uri)), color: Colors.purpleAccent),
                 if (t.uri.isNotEmpty) tile(Icons.delete_forever, "DELETE FROM DEVICE", () => _deleteTracks([t]), color: Colors.redAccent),
               ],

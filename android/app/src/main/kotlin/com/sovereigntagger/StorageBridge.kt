@@ -346,6 +346,35 @@ class StorageBridge(private val context: Context) {
         try { MediaScannerConnection.scanFile(context, arrayOf(path), null, null) } catch (_: Exception) {}
     }
 
+    fun exportTextToDownloads(fileName: String, mimeType: String, data: String): String? {
+        return try {
+            val safeName = fileName.replace(Regex("[\\\\/:*?\"<>|]"), "_").trim().ifEmpty { "sovereign_report.txt" }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                val values = ContentValues().apply {
+                    put(MediaStore.MediaColumns.DISPLAY_NAME, safeName)
+                    put(MediaStore.MediaColumns.MIME_TYPE, mimeType)
+                    put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS)
+                    put(MediaStore.MediaColumns.IS_PENDING, 1)
+                }
+                val uri = context.contentResolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values) ?: return null
+                context.contentResolver.openOutputStream(uri)?.use { it.write(data.toByteArray(Charsets.UTF_8)) }
+                values.clear()
+                values.put(MediaStore.MediaColumns.IS_PENDING, 0)
+                context.contentResolver.update(uri, values, null, null)
+                "Downloads/$safeName"
+            } else {
+                val dir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+                if (!dir.exists()) dir.mkdirs()
+                val file = File(dir, safeName)
+                file.writeText(data, Charsets.UTF_8)
+                scan(file.absolutePath)
+                file.absolutePath
+            }
+        } catch (_: Exception) {
+            null
+        }
+    }
+
     fun exportConfig(data: String): Boolean {
         return try {
             val values = ContentValues().apply {

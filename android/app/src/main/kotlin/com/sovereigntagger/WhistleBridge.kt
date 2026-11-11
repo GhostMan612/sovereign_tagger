@@ -179,8 +179,8 @@ class WhistleBridge(private val context: Context) {
             }
 
             if (dataOffset < 0 || dataLength <= 0) return null
-            if (audioFormat != 1) return null // PCM only
-            if (bitsPerSample != 16) return null // 16-bit only
+            if (audioFormat != 1) return null
+            if (bitsPerSample != 16) return null
 
             val sampleCount = dataLength / (2 * numChannels)
             val floats = FloatArray(sampleCount)
@@ -189,7 +189,7 @@ class WhistleBridge(private val context: Context) {
             for (i in 0 until sampleCount) {
                 val s = bb.getShort(byteIdx)
                 floats[i] = (s.toFloat() / 32768.0f).coerceIn(-1.0f, 1.0f)
-                byteIdx += 2 * numChannels // if stereo, read left channel only
+                byteIdx += 2 * numChannels
             }
 
             return floats

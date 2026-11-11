@@ -16,6 +16,7 @@ import '../core/playlists.dart';
 import '../screens/main_shell.dart';
 import '../screens/playback_engine_screen.dart';
 import '../screens/eq_presets_screen.dart';
+import '../screens/media_inspector_screen.dart';
 import '../widgets/cyber_backdrop.dart';
 import '../widgets/machine_rain.dart';
 import '../widgets/playlist_picker.dart';
@@ -44,6 +45,22 @@ class TheaterScreen extends StatelessWidget {
   void _sendToForge(BuildContext context, String path) {
     Navigator.of(context).popUntil((route) => route.isFirst);
     SovereignState.sendToForge(ForgeRequest(path: path, origin: ForgeOrigin.player, originUri: AudioService.infoFor(path)?.uri));
+  }
+
+  void _openCurrentMediaInfo(BuildContext context) {
+    final list = AudioService.playlist.value;
+    final idx = AudioService.currentIndex.value;
+    final path = (idx >= 0 && idx < list.length) ? list[idx].path : null;
+    final title = AudioService.currentTitle.value;
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => MediaInspectorScreen(
+          initialPath: path,
+          titleHint: title.startsWith('[') ? null : title,
+        ),
+      ),
+    );
   }
 
   void _showTrackMenu(BuildContext context, File file, int index, Color themeColor) {
@@ -79,6 +96,10 @@ class TheaterScreen extends StatelessWidget {
                 Navigator.pop(sheetContext);
                 await showPlaylistPicker(context, [file.path], themeColor);
               }),
+              tile(Icons.analytics_outlined, "MEDIAINFO & FORENSICS", "Inspect codecs, bit depth, chapters & fake-lossless shelf", () {
+                Navigator.pop(sheetContext);
+                Navigator.push(context, MaterialPageRoute(builder: (_) => MediaInspectorScreen(initialPath: file.path)));
+              }, color: Colors.cyanAccent),
               tile(Icons.edit_note, "EDIT IN FORGE", "Fix tags, art, lyrics and file name", () {
                 Navigator.pop(sheetContext);
                 _sendToForge(context, file.path);
@@ -245,6 +266,11 @@ class TheaterScreen extends StatelessWidget {
             title: Text("NOW PLAYING", style: TextStyle(fontFamily: 'ShareTechMono', color: accentColor, fontSize: 18, fontWeight: FontWeight.bold, letterSpacing: 2.0)),
             centerTitle: true,
             actions: [
+              IconButton(
+                icon: const Icon(Icons.analytics_outlined, color: Colors.amberAccent),
+                tooltip: "MEDIAINFO & FORENSICS",
+                onPressed: () => _openCurrentMediaInfo(context),
+              ),
               IconButton(
                 icon: const Icon(Icons.tune, color: Colors.purpleAccent),
                 tooltip: "EQUALIZER",

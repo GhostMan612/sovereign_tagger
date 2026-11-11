@@ -114,6 +114,23 @@ class StorageClient {
     return SaveResult.fromMap(raw, overwrote: false);
   }
 
+  static Future<String?> exportTextToDownloads({
+    required String fileName,
+    required String content,
+    String mimeType = 'text/plain',
+  }) async {
+    if (!await _legacyStoragePermission()) return null;
+    try {
+      return await _channel.invokeMethod<String>('exportTextToDownloads', {
+        'fileName': fileName,
+        'mimeType': mimeType,
+        'data': content,
+      });
+    } catch (_) {
+      return null;
+    }
+  }
+
   static Future<List<Map<String, Object?>>> queryAudio() async {
     final List<Object?>? raw = await _channel.invokeMethod('queryAudio');
     return (raw ?? const [])

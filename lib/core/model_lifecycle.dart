@@ -124,12 +124,14 @@ class ModelLifecycle {
     final mBytes = (map['modelBytes'] as num?)?.toInt() ?? 0;
     final tBytes = (map['tokenizerBytes'] as num?)?.toInt() ?? 0;
     final lastErr = map['lastError']?.toString() ?? '';
+    final selfTestSummary = map['selfTestSummary']?.toString() ?? '';
 
     String msg;
     if (overrideMessage != null && overrideMessage.isNotEmpty) {
       msg = overrideMessage;
     } else if (loaded) {
-      msg = 'NATIVE LITERT LOADED (256-D MRL) • RAM $availMb / $totalMb MB free';
+      final detail = selfTestSummary.isNotEmpty ? selfTestSummary : '256-D MRL';
+      msg = 'NATIVE LITERT LOADED ($detail) • RAM $availMb / $totalMb MB free';
     } else if (filesReady) {
       msg = 'WEIGHTS INSTALLED (${(mBytes / (1024 * 1024)).toStringAsFixed(0)} MB) • STANDBY (lazy-loads on query)';
     } else if (lastErr.isNotEmpty) {
@@ -156,7 +158,7 @@ class ModelLifecycle {
       isBusy: true,
       isDownloading: true,
       progress: 0.01,
-      statusText: 'Connecting to Hugging Face...',
+      statusText: 'Connecting to EmbeddingGemma mirrors...',
     );
     try {
       await EmbeddingModel.download(
@@ -173,10 +175,12 @@ class ModelLifecycle {
       state.value = state.value.copyWith(
         isDownloading: false,
         progress: 1.0,
-        statusText: 'Initializing LiteRT EmbeddingGemma interpreter...',
+        statusText: 'Initializing LiteRT EmbeddingGemma interpreter & running self-test...',
       );
       await EmbeddingGemmaService.instance.loadNativeModel();
-      await refreshStatus(overrideMessage: 'EMBEDDINGGEMMA READY ✓ (LiteRT 256-D MRL active)');
+      final report = await EmbeddingGemmaService.instance.runSelfTest();
+      final summary = report['summary']?.toString() ?? 'LiteRT 256-D MRL active';
+      await refreshStatus(overrideMessage: 'EMBEDDINGGEMMA VERIFIED ✓ ($summary)');
       return true;
     } catch (e) {
       debugPrint('MODEL_LIFECYCLE: downloadAndActivate failed: $e');
@@ -188,6 +192,31 @@ class ModelLifecycle {
         isDownloading: false,
         progress: 0.0,
       );
+    }
+  }
+
+  Future<String> verifyLiveInference() async {
+    if (state.value.isBusy) return state.value.statusText;
+    state.value = state.value.copyWith(
+      isBusy: true,
+      statusText: 'Running live 256-D neural self-test...',
+    );
+    try {
+      await EmbeddingGemmaService.instance.loadNativeModel();
+      final report = await EmbeddingGemmaService.instance.runSelfTest();
+      final ok = report['ok'] == true;
+      final summary = report['summary']?.toString() ?? 'LiteRT 256-D MRL active';
+      final msg = ok
+          ? 'EMBEDDINGGEMMA VERIFIED ✓ ($summary)'
+          : 'ERR: Self-test check failed ($summary)';
+      await refreshStatus(overrideMessage: msg);
+      return msg;
+    } catch (e) {
+      final errMsg = 'ERR: Self-test failed: $e';
+      await refreshStatus(overrideMessage: errMsg);
+      return errMsg;
+    } finally {
+      state.value = state.value.copyWith(isBusy: false);
     }
   }
 
@@ -210,7 +239,9 @@ class ModelLifecycle {
       final bothReady = await EmbeddingModel.areFilesReady();
       if (bothReady) {
         await EmbeddingGemmaService.instance.loadNativeModel();
-        await refreshStatus(overrideMessage: 'LOCAL EMBEDDINGGEMMA LOADED ✓ (LiteRT 256-D MRL active)');
+        final report = await EmbeddingGemmaService.instance.runSelfTest();
+        final summary = report['summary']?.toString() ?? 'LiteRT 256-D MRL active';
+        await refreshStatus(overrideMessage: 'LOCAL EMBEDDINGGEMMA VERIFIED ✓ ($summary)');
       } else {
         final missing = await EmbeddingModel.isModelPresent()
             ? 'Now import sentencepiece.model to activate.'
@@ -229,10 +260,12 @@ class ModelLifecycle {
 
   Future<bool> loadIntoRam() async {
     if (state.value.isBusy) return false;
-    state.value = state.value.copyWith(isBusy: true, statusText: 'Loading LiteRT interpreter...');
+    state.value = state.value.copyWith(isBusy: true, statusText: 'Loading LiteRT interpreter & verifying...');
     try {
       await EmbeddingGemmaService.instance.loadNativeModel();
-      await refreshStatus(overrideMessage: 'LITE-RT INTERPRETER ACTIVE ✓');
+      final report = await EmbeddingGemmaService.instance.runSelfTest();
+      final summary = report['summary']?.toString() ?? 'LiteRT 256-D MRL active';
+      await refreshStatus(overrideMessage: 'LITE-RT ACTIVE ✓ ($summary)');
       return true;
     } catch (e) {
       debugPrint('MODEL_LIFECYCLE: loadIntoRam failed: $e');

@@ -3,6 +3,7 @@
 // The Future Dictates the Past and the Past is Always Present.
 // ============================================================
 
+import 'dart:async';
 import 'dart:math' as math;
 import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
@@ -48,17 +49,19 @@ class CyberBackdrop extends StatefulWidget {
   State<CyberBackdrop> createState() => _CyberBackdropState();
 }
 
-class _CyberBackdropState extends State<CyberBackdrop> with SingleTickerProviderStateMixin, WidgetsBindingObserver {
+class _CyberBackdropState extends State<CyberBackdrop> with WidgetsBindingObserver {
   static Future<ui.FragmentProgram?>? _loading;
   static ui.FragmentProgram? _program;
+  static const Duration _frameStep = Duration(milliseconds: 45);
 
   final ValueNotifier<double> _time = ValueNotifier<double>(0);
-  late final Ticker _ticker;
+  final Stopwatch _clock = Stopwatch();
+  Timer? _timer;
   ui.FragmentShader? _shader;
-  Duration _last = Duration.zero;
+  int _lastUs = 0;
   double _elapsed = 0;
-  int _frame = 0;
   bool _resumed = true;
+  bool _tickerEnabled = true;
 
   static Future<ui.FragmentProgram?> _load() {
     return _loading ??= ui.FragmentProgram.fromAsset('shaders/backdrop.frag').then<ui.FragmentProgram?>((p) {
@@ -77,8 +80,7 @@ class _CyberBackdropState extends State<CyberBackdrop> with SingleTickerProvider
     WidgetsBinding.instance.addObserver(this);
     final lifecycle = SchedulerBinding.instance.lifecycleState;
     _resumed = lifecycle == null || lifecycle == AppLifecycleState.resumed;
-    _ticker = createTicker(_onTick);
-    FeedbackSettings.backdrop.addListener(_syncTicker);
+    FeedbackSettings.backdrop.addListener(_syncTimer);
     if (_program != null) {
       _tryBindShader();
     } else {
@@ -87,7 +89,17 @@ class _CyberBackdropState extends State<CyberBackdrop> with SingleTickerProvider
         if (_tryBindShader()) setState(() {});
       });
     }
-    _syncTicker();
+    _syncTimer();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final enabled = TickerMode.valuesOf(context).enabled;
+    if (_tickerEnabled != enabled) {
+      _tickerEnabled = enabled;
+      _syncTimer();
+    }
   }
 
   bool _tryBindShader() {
@@ -101,35 +113,43 @@ class _CyberBackdropState extends State<CyberBackdrop> with SingleTickerProvider
     }
   }
 
-  void _syncTicker() {
-    final shouldRun = _resumed && FeedbackSettings.backdrop.value;
-    if (shouldRun && !_ticker.isActive) {
-      _last = Duration.zero;
-      _ticker.start();
-    } else if (!shouldRun && _ticker.isActive) {
-      _ticker.stop();
+  void _syncTimer() {
+    final shouldRun = _resumed && _tickerEnabled && FeedbackSettings.backdrop.value;
+    if (shouldRun && _timer == null) {
+      _clock
+        ..reset()
+        ..start();
+      _lastUs = 0;
+      _timer = Timer.periodic(_frameStep, _onTimer);
+    } else if (!shouldRun && _timer != null) {
+      _timer?.cancel();
+      _timer = null;
+      _clock.stop();
     }
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     _resumed = state == AppLifecycleState.resumed;
-    _syncTicker();
+    _syncTimer();
   }
 
-  void _onTick(Duration elapsed) {
-    final dt = _last == Duration.zero ? 0.0 : (elapsed - _last).inMicroseconds / 1e6;
-    _last = elapsed;
-    _elapsed += dt.clamp(0.0, 0.05);
-    _frame++;
-    if (_frame.isEven) _time.value = _elapsed;
+  void _onTimer(Timer _) {
+    if (!mounted) return;
+    final nowUs = _clock.elapsedMicroseconds;
+    final dt = _lastUs == 0 ? 0.045 : (nowUs - _lastUs) / 1e6;
+    _lastUs = nowUs;
+    _elapsed = (_elapsed + dt.clamp(0.0, 0.10)) % 3600.0;
+    _time.value = _elapsed;
   }
 
   @override
   void dispose() {
-    FeedbackSettings.backdrop.removeListener(_syncTicker);
+    FeedbackSettings.backdrop.removeListener(_syncTimer);
     WidgetsBinding.instance.removeObserver(this);
-    _ticker.dispose();
+    _timer?.cancel();
+    _timer = null;
+    _clock.stop();
     _shader?.dispose();
     _time.dispose();
     super.dispose();
@@ -148,29 +168,37 @@ class _CyberBackdropState extends State<CyberBackdrop> with SingleTickerProvider
               builder: (context, userIntensity, _) {
                 final effective = (widget.intensity * userIntensity).clamp(0.15, 1.80);
                 final shader = _shader;
-                final artChild = AnimatedSwitcher(
-                  duration: const Duration(milliseconds: 420),
-                  switchInCurve: Curves.easeOutCubic,
-                  switchOutCurve: Curves.easeInCubic,
-                  layoutBuilder: (currentChild, previousChildren) => Stack(
-                    fit: StackFit.expand,
-                    children: [
-                      ...previousChildren,
-                      if (currentChild != null) currentChild,
-                    ],
-                  ),
-                  child: SizedBox.expand(
-                    key: ValueKey<BackdropVariant>(widget.variant),
-                    child: Image.asset(
-                      CyberBackdrop.assetFor(widget.variant),
-                      fit: BoxFit.cover,
-                      alignment: Alignment.bottomCenter,
-                      filterQuality: FilterQuality.medium,
-                      gaplessPlayback: true,
-                      errorBuilder: (context, error, _) {
-                        debugPrint('BACKDROP: scene art unavailable (${widget.variant.name}): $error');
-                        return const SizedBox.shrink();
-                      },
+                final artChild = RepaintBoundary(
+                  child: ColorFiltered(
+                    colorFilter: CyberBackdrop.accentColorFilter(
+                      widget.accentColor,
+                      brightness: (0.62 * effective).clamp(0.15, 1.35),
+                    ),
+                    child: AnimatedSwitcher(
+                      duration: const Duration(milliseconds: 420),
+                      switchInCurve: Curves.easeOutCubic,
+                      switchOutCurve: Curves.easeInCubic,
+                      layoutBuilder: (currentChild, previousChildren) => Stack(
+                        fit: StackFit.expand,
+                        children: [
+                          ...previousChildren,
+                          if (currentChild != null) currentChild,
+                        ],
+                      ),
+                      child: SizedBox.expand(
+                        key: ValueKey<BackdropVariant>(widget.variant),
+                        child: Image.asset(
+                          CyberBackdrop.assetFor(widget.variant),
+                          fit: BoxFit.cover,
+                          alignment: Alignment.bottomCenter,
+                          filterQuality: FilterQuality.low,
+                          gaplessPlayback: true,
+                          errorBuilder: (context, error, _) {
+                            debugPrint('BACKDROP: scene art unavailable (${widget.variant.name}): $error');
+                            return const SizedBox.shrink();
+                          },
+                        ),
+                      ),
                     ),
                   ),
                 );
@@ -185,31 +213,29 @@ class _CyberBackdropState extends State<CyberBackdrop> with SingleTickerProvider
                         child: artChild,
                         builder: (context, t, child) {
                           final phase = widget.variant.index * 1.15;
-                          final scale = 1.09 + 0.032 * math.sin(t * 0.21 + phase);
-                          final dx = 11.0 * math.sin(t * 0.14 + phase);
-                          final dy = 8.0 * math.cos(t * 0.11 + phase);
-                          final breath = (0.58 + 0.12 * math.sin(t * 0.72 + phase)) * effective;
-                          return ColorFiltered(
-                            colorFilter: CyberBackdrop.accentColorFilter(widget.accentColor, brightness: breath),
-                            child: Transform.translate(
-                              offset: Offset(dx, dy),
-                              child: Transform.scale(
-                                scale: scale,
-                                child: child,
-                              ),
+                          final scale = 1.09 + 0.030 * math.sin(t * 0.21 + phase);
+                          final dx = 10.0 * math.sin(t * 0.14 + phase);
+                          final dy = 7.0 * math.cos(t * 0.11 + phase);
+                          return Transform.translate(
+                            offset: Offset(dx, dy),
+                            child: Transform.scale(
+                              scale: scale,
+                              child: child,
                             ),
                           );
                         },
                       ),
                       if (shader != null)
-                        CustomPaint(
-                          size: Size.infinite,
-                          painter: _BackdropPainter(
-                            shader: shader,
-                            time: _time,
-                            accent: widget.accentColor,
-                            variant: widget.variant.index.toDouble(),
-                            intensity: effective * 0.85,
+                        RepaintBoundary(
+                          child: CustomPaint(
+                            size: Size.infinite,
+                            painter: _BackdropPainter(
+                              shader: shader,
+                              time: _time,
+                              accent: widget.accentColor,
+                              variant: widget.variant.index.toDouble(),
+                              intensity: effective * 0.85,
+                            ),
                           ),
                         )
                       else
@@ -262,16 +288,18 @@ class _BackdropPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
+    final t = time.value;
+    final breath = 0.86 + 0.14 * math.sin(t * 0.72 + variant * 1.15);
     shader
       ..setFloat(0, size.width)
       ..setFloat(1, size.height)
-      ..setFloat(2, time.value)
+      ..setFloat(2, t)
       ..setFloat(3, accent.r)
       ..setFloat(4, accent.g)
       ..setFloat(5, accent.b)
       ..setFloat(6, 1.0)
       ..setFloat(7, variant)
-      ..setFloat(8, intensity);
+      ..setFloat(8, intensity * breath);
     canvas.drawRect(
       Offset.zero & size,
       Paint()

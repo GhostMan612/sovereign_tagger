@@ -83,13 +83,16 @@ class SentencePieceTokenizer private constructor(
             i += charCount
         }
 
-        while (symbols.size > 1) {
+        var merges = 0
+        val maxMerges = symbols.size * 2
+        while (symbols.size > 1 && merges < maxMerges) {
             var bestIdx = -1
             var bestScore = Float.NEGATIVE_INFINITY
             for (idx in 0 until symbols.size - 1) {
                 val merged = symbols[idx] + symbols[idx + 1]
                 val id = pieceToId[merged] ?: continue
-                val sc = scores[id]
+                val rawSc = scores[id]
+                val sc = if (rawSc != 0f) rawSc else -id.toFloat()
                 if (sc > bestScore) {
                     bestScore = sc
                     bestIdx = idx
@@ -98,6 +101,7 @@ class SentencePieceTokenizer private constructor(
             if (bestIdx < 0) break
             symbols[bestIdx] = symbols[bestIdx] + symbols[bestIdx + 1]
             symbols.removeAt(bestIdx + 1)
+            merges++
         }
 
         for (sym in symbols) {
@@ -306,7 +310,7 @@ class SentencePieceTokenizer private constructor(
                         byteToks[hex] = idx
                     }
                 }
-                if (t == 1 || t == 4) {
+                if (t == 0 || t == 1 || t == 4) {
                     if (!map.containsKey(p)) {
                         map[p] = idx
                     }

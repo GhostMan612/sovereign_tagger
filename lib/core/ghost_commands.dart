@@ -1,7 +1,7 @@
-// ============================================================================
+// ============================================================
 // As Above, So Below. As Within, So Without.
 // The Future Dictates the Past and the Past is Always Present.
-// ============================================================================
+// ============================================================
 
 import 'dart:async';
 import 'package:flutter/foundation.dart';
@@ -27,7 +27,7 @@ class GrabberSearchHit {
 class GrabberCommand {
   final String queryOrUrl;
   final bool isSearchQuery;
-  final String source; // 'youtube' or 'soundcloud'
+  final String source;
   final GrabberMediaMode mode;
   final bool autoDownloadTopResult;
   final bool sendToForgeWhenDone;
@@ -62,8 +62,8 @@ class WorkbenchCommand {
   });
 }
 
-/// Global reactive command bus for cross-tab GhostBrain v2 automation.
-/// Works alongside SovereignState without breaking existing ValueNotifiers.
+
+
 class GhostCommandBus {
   static final ValueNotifier<GrabberCommand?> pendingGrabberCommand =
       ValueNotifier<GrabberCommand?>(null);

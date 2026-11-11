@@ -31,10 +31,15 @@ class EmbeddingGemmaBridge(private val context: Context) {
     @Volatile private var interpreter: Interpreter? = null
     @Volatile private var tokenizer: SentencePieceTokenizer? = null
     private var mappedModel: MappedByteBuffer? = null
+    private var cachedInBuffers: Array<ByteBuffer>? = null
+    private var cachedOutBuffers: Array<ByteBuffer>? = null
     @Volatile private var configuredModelPath: String? = null
     @Volatile private var configuredTokenizerPath: String? = null
     @Volatile private var seqLen: Int = 256
     @Volatile private var outputDim: Int = 768
+    @Volatile private var lastLatencyMs: Long = 0L
+    @Volatile private var selfTestOk: Boolean = false
+    @Volatile private var selfTestSummary: String = ""
     @Volatile private var lastError: String? = null
     private var idleUnloadFuture: ScheduledFuture<*>? = null
 
@@ -78,11 +83,73 @@ class EmbeddingGemmaBridge(private val context: Context) {
             "tokenizerBytes" to if (tFile.exists()) tFile.length() else 0L,
             "seqLen" to seqLen,
             "outputDim" to outputDim,
+            "vocabSize" to (tokenizer?.vocabSize ?: 0),
+            "lastLatencyMs" to lastLatencyMs,
+            "selfTestOk" to selfTestOk,
+            "selfTestSummary" to selfTestSummary,
             "availRamMb" to (mem.availMem / (1024L * 1024L)),
             "totalRamMb" to (mem.totalMem / (1024L * 1024L)),
             "lowMemory" to mem.lowMemory,
             "lastError" to lastError,
         )
+    }
+
+    fun runSelfTest(callback: (Map<String, Any?>?, String?) -> Unit) {
+        executor.execute {
+            try {
+                ensureLoadedInternal()
+                val t0 = System.nanoTime()
+                val qVec = runSingleInference(
+                    formatPrompt("play dark synthwave electronic night music", "query", null),
+                    256,
+                )
+                val inferMs = ((System.nanoTime() - t0) / 1_000_000L).coerceAtLeast(1L)
+                val posVec = runSingleInference(
+                    formatPrompt("Dark Synthwave Retrowave Cyberpunk Night Drive", "document", "Midnight Grid"),
+                    256,
+                )
+                val negVec = runSingleInference(
+                    formatPrompt("Acoustic Classical Solo Flute Baroque Morning", "document", "Sonata in G"),
+                    256,
+                )
+                var qNormSq = 0.0
+                var matchCos = 0.0
+                var nonMatchCos = 0.0
+                for (i in qVec.indices) {
+                    val qv = qVec[i].toDouble()
+                    qNormSq += qv * qv
+                    matchCos += qv * posVec[i].toDouble()
+                    nonMatchCos += qv * negVec[i].toDouble()
+                }
+                val qNorm = sqrt(qNormSq)
+                val ok = qNorm > 0.9 && !matchCos.isNaN() && !nonMatchCos.isNaN()
+                lastLatencyMs = inferMs
+                selfTestOk = ok
+                val matchStr = String.format(java.util.Locale.US, "%.2f", matchCos)
+                val nonMatchStr = String.format(java.util.Locale.US, "%.2f", nonMatchCos)
+                selfTestSummary = "256-D MRL verified (${inferMs}ms/query, cos=$matchStr vs $nonMatchStr)"
+                scheduleIdleUnloadIfConstrained()
+                callback(
+                    hashMapOf(
+                        "ok" to ok,
+                        "latencyMs" to inferMs,
+                        "vocabSize" to (tokenizer?.vocabSize ?: 0),
+                        "seqLen" to seqLen,
+                        "outputDim" to outputDim,
+                        "mrlDim" to qVec.size,
+                        "matchCosine" to matchCos,
+                        "nonMatchCosine" to nonMatchCos,
+                        "summary" to selfTestSummary,
+                    ),
+                    null,
+                )
+            } catch (t: Throwable) {
+                Log.e(TAG, "EmbeddingGemma selfTest failed", t)
+                lastError = t.message ?: t.toString()
+                selfTestOk = false
+                callback(null, lastError)
+            }
+        }
     }
 
     fun loadModel(
@@ -225,18 +292,35 @@ class EmbeddingGemmaBridge(private val context: Context) {
         seqLen = if (resolvedInShape.isNotEmpty()) resolvedInShape.last().coerceAtLeast(16) else DEFAULT_SEQ_LEN
         outputDim = if (resolvedOutShape.isNotEmpty()) resolvedOutShape.last().coerceAtLeast(64) else 768
 
+        cachedInBuffers = Array(interp.inputTensorCount) { idx ->
+            ByteBuffer.allocateDirect(interp.getInputTensor(idx).numBytes()).order(ByteOrder.nativeOrder())
+        }
+        cachedOutBuffers = Array(interp.outputTensorCount) { idx ->
+            ByteBuffer.allocateDirect(interp.getOutputTensor(idx).numBytes()).order(ByteOrder.nativeOrder())
+        }
+
         configuredModelPath = mFile.absolutePath
         configuredTokenizerPath = tFile.absolutePath
         mappedModel = mapped
         tokenizer = sp
         interpreter = interp
         lastError = null
-        Log.i(TAG, "Loaded EmbeddingGemma (${mFile.name}, seq=$seqLen, out=$outputDim, vocab=${sp.vocabSize})")
+
+        val t0 = System.nanoTime()
+        val warmVec = runSingleInference("task: search result | query: ping", 256)
+        val warmMs = ((System.nanoTime() - t0) / 1_000_000L).coerceAtLeast(1L)
+        var warmNormSq = 0.0
+        for (v in warmVec) warmNormSq += (v * v).toDouble()
+        lastLatencyMs = warmMs
+        selfTestOk = warmNormSq > 0.5
+        selfTestSummary = "256-D MRL active (${warmMs}ms warm-up, vocab ${sp.vocabSize})"
+        Log.i(TAG, "Loaded EmbeddingGemma (${mFile.name}, seq=$seqLen, out=$outputDim, vocab=${sp.vocabSize}, warm=${warmMs}ms)")
     }
 
     private fun runSingleInference(promptText: String, targetDims: Int): FloatArray {
         val interp = interpreter ?: throw IllegalStateException("Interpreter not loaded")
         val sp = tokenizer ?: throw IllegalStateException("Tokenizer not loaded")
+        val t0 = System.nanoTime()
 
         val rawIds = sp.encode(promptText, addBos = true, addEos = true)
         val maxLen = seqLen
@@ -250,33 +334,59 @@ class EmbeddingGemmaBridge(private val context: Context) {
         }
 
         val inputCount = interp.inputTensorCount
+        val inBufs = cachedInBuffers
         val inputs = Array<Any>(inputCount) { idx ->
             val tensor = interp.getInputTensor(idx)
             val name = tensor.name().lowercase()
             val numElem = tensor.numElements()
             val values = IntArray(numElem)
             when {
-                idx == 0 || name.contains("token") || name.contains("input_id") -> {
-                    for (k in 0 until min(numElem, paddedIds.size)) values[k] = paddedIds[k]
+                name.contains("mask") -> {
+                    for (k in 0 until numElem) values[k] = if ((k % maxLen) < validLen) 1 else 0
                 }
                 name.contains("pos") -> {
                     for (k in 0 until numElem) values[k] = k % maxLen
+                }
+                name.contains("segment") || name.contains("type_id") -> {
+                    for (k in 0 until numElem) values[k] = 0
+                }
+                name.contains("token") || name.contains("input_id") || name.contains("ids") || idx == 0 -> {
+                    for (k in 0 until min(numElem, paddedIds.size)) values[k] = paddedIds[k]
                 }
                 else -> {
                     for (k in 0 until numElem) values[k] = if ((k % maxLen) < validLen) 1 else 0
                 }
             }
-            buildInputBuffer(tensor.dataType(), tensor.numBytes(), values)
+            val reusable = if (inBufs != null && idx < inBufs.size && inBufs[idx].capacity() == tensor.numBytes()) {
+                inBufs[idx]
+            } else {
+                null
+            }
+            fillInputBuffer(reusable, tensor.dataType(), tensor.numBytes(), values)
         }
 
-        val outTensor = interp.getOutputTensor(0)
-        val outBuf = ByteBuffer.allocateDirect(outTensor.numBytes()).order(ByteOrder.nativeOrder())
-        val outputs = HashMap<Int, Any>(2)
-        outputs[0] = outBuf
+        val outCount = interp.outputTensorCount
+        val outBufs = cachedOutBuffers
+        val outputs = HashMap<Int, Any>(outCount * 2)
+        var preferredOutIdx = 0
+        for (idx in 0 until outCount) {
+            val oTensor = interp.getOutputTensor(idx)
+            val oShape = oTensor.shape()
+            if (oShape.size == 2 && oShape.last() >= 64) {
+                preferredOutIdx = idx
+            }
+            val buf = if (outBufs != null && idx < outBufs.size && outBufs[idx].capacity() == oTensor.numBytes()) {
+                outBufs[idx].apply { clear() }
+            } else {
+                ByteBuffer.allocateDirect(oTensor.numBytes()).order(ByteOrder.nativeOrder())
+            }
+            outputs[idx] = buf
+        }
 
         interp.runForMultipleInputsOutputs(inputs, outputs)
 
-        outBuf.rewind()
+        val outTensor = interp.getOutputTensor(preferredOutIdx)
+        val outBuf = (outputs[preferredOutIdx] as ByteBuffer).apply { rewind() }
         val outShape = outTensor.shape()
         val hiddenDim = if (outShape.isNotEmpty()) outShape.last() else outputDim
         val rawVec = FloatArray(hiddenDim)
@@ -316,11 +426,18 @@ class EmbeddingGemmaBridge(private val context: Context) {
                 truncated[i] *= inv
             }
         }
+        lastLatencyMs = ((System.nanoTime() - t0) / 1_000_000L).coerceAtLeast(1L)
         return truncated
     }
 
-    private fun buildInputBuffer(dtype: DataType, numBytes: Int, values: IntArray): ByteBuffer {
-        val buf = ByteBuffer.allocateDirect(numBytes).order(ByteOrder.nativeOrder())
+    private fun fillInputBuffer(
+        reusable: ByteBuffer?,
+        dtype: DataType,
+        numBytes: Int,
+        values: IntArray,
+    ): ByteBuffer {
+        val buf = reusable?.apply { clear() }
+            ?: ByteBuffer.allocateDirect(numBytes).order(ByteOrder.nativeOrder())
         when (dtype) {
             DataType.INT64 -> {
                 val lb = buf.asLongBuffer()
@@ -375,6 +492,8 @@ class EmbeddingGemmaBridge(private val context: Context) {
         interpreter = null
         tokenizer = null
         mappedModel = null
+        cachedInBuffers = null
+        cachedOutBuffers = null
     }
 
     private fun mapReadOnly(file: File): MappedByteBuffer {

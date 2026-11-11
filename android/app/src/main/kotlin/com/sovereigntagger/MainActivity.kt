@@ -8,7 +8,10 @@ package com.sovereigntagger
 import android.app.Activity
 import android.app.RecoverableSecurityException
 import android.content.Intent
+import android.media.audiofx.Equalizer
+import android.media.audiofx.LoudnessEnhancer
 import android.net.Uri
+import kotlin.math.roundToInt
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
@@ -16,6 +19,7 @@ import android.os.Looper
 import android.provider.MediaStore
 import android.util.Log
 import com.ryanheise.audioservice.AudioServiceActivity
+import io.flutter.embedding.android.RenderMode
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.EventChannel
 import io.flutter.plugin.common.MethodChannel
@@ -23,6 +27,8 @@ import com.chaquo.python.Python
 import com.chaquo.python.android.AndroidPlatform
 
 class MainActivity: AudioServiceActivity() {
+    override fun getRenderMode(): RenderMode = RenderMode.texture
+
     private val YTDLP_CHANNEL = "com.sovereign.tagger/ytdlp"
     private val EVENT_CHANNEL = "com.sovereign.tagger/ytdlp_events"
     private val ID3_CHANNEL = "com.sovereign.tagger/id3"
@@ -34,6 +40,11 @@ class MainActivity: AudioServiceActivity() {
     private val SFX_CHANNEL = "com.sovereign.tagger/sfx"
     private val WHISTLE_CHANNEL = "com.sovereign.tagger/whistle"
     private val EMBEDDINGS_CHANNEL = "com.sovereign.tagger/embeddings"
+    private val AUDIO_FX_CHANNEL = "com.sovereign.tagger/audio_fx"
+
+    private var hwEqualizer: Equalizer? = null
+    private var hwLoudness: LoudnessEnhancer? = null
+    private var hwAudioSessionId: Int = 0
 
     private val REQ_WRITE = 7301
     private val REQ_DELETE = 7302
@@ -110,6 +121,10 @@ class MainActivity: AudioServiceActivity() {
     }
 
     override fun onDestroy() {
+        try { hwEqualizer?.release() } catch (_: Throwable) {}
+        try { hwLoudness?.release() } catch (_: Throwable) {}
+        hwEqualizer = null
+        hwLoudness = null
         sfxEngine?.release()
         sfxEngine = null
         embeddingBridge.release()
@@ -318,6 +333,12 @@ class MainActivity: AudioServiceActivity() {
                     runAsync(result, "STORAGE_ERROR") { storageBridge.exportConfig(data) }
                 }
                 "autoImportConfig" -> runAsync(result, "STORAGE_ERROR") { storageBridge.autoImportConfig() }
+                "exportTextToDownloads" -> {
+                    val fileName = call.argument<String>("fileName") ?: "sovereign_report.txt"
+                    val mimeType = call.argument<String>("mimeType") ?: "text/plain"
+                    val data = call.argument<String>("data") ?: ""
+                    runAsync(result, "STORAGE_ERROR") { storageBridge.exportTextToDownloads(fileName, mimeType, data) }
+                }
                 "getTempDirectory" -> { result.success(storageBridge.getTempDirectory()) }
                 "getAppDocDir" -> { result.success(context.filesDir.absolutePath) }
                 "openUrl" -> {
@@ -441,6 +462,14 @@ class MainActivity: AudioServiceActivity() {
                         mainHandler.post { result.success(ok) }
                     }
                 }
+                "selfTest" -> {
+                    embeddingBridge.runSelfTest { report, err ->
+                        mainHandler.post {
+                            if (report != null) result.success(report)
+                            else result.error("EMBEDDING_SELFTEST_ERROR", err ?: "EmbeddingGemma self-test failed", null)
+                        }
+                    }
+                }
                 "embedText" -> {
                     val text = call.argument<String>("text") ?: ""
                     val dims = call.argument<Int>("dims") ?: 256
@@ -463,6 +492,94 @@ class MainActivity: AudioServiceActivity() {
                             if (vecs != null) result.success(vecs)
                             else result.error("EMBEDDING_BATCH_ERROR", err ?: "Batch embedding failed", null)
                         }
+                    }
+                }
+                else -> result.notImplemented()
+            }
+        }
+
+        MethodChannel(messenger, AUDIO_FX_CHANNEL).setMethodCallHandler { call, result ->
+            when (call.method) {
+                "attachSession" -> {
+                    val sessionId = call.argument<Int>("sessionId") ?: 0
+                    if (sessionId <= 0) {
+                        result.success(null)
+                        return@setMethodCallHandler
+                    }
+                    try {
+                        if (hwAudioSessionId != sessionId || hwEqualizer == null) {
+                            try { hwEqualizer?.release() } catch (_: Throwable) {}
+                            try { hwLoudness?.release() } catch (_: Throwable) {}
+                            hwAudioSessionId = sessionId
+                            hwEqualizer = Equalizer(0, sessionId)
+                            hwLoudness = LoudnessEnhancer(sessionId)
+                        }
+                        val eq = hwEqualizer
+                        if (eq == null) {
+                            result.success(null)
+                            return@setMethodCallHandler
+                        }
+                        val numBands = eq.numberOfBands.toInt()
+                        val bandsHz = ArrayList<Double>(numBands)
+                        for (b in 0 until numBands) {
+                            bandsHz.add(eq.getCenterFreq(b.toShort()).toDouble() / 1000.0)
+                        }
+                        val range = eq.bandLevelRange
+                        val minDb = range[0].toDouble() / 100.0
+                        val maxDb = range[1].toDouble() / 100.0
+                        result.success(
+                            hashMapOf(
+                                "bands" to bandsHz,
+                                "minDb" to minDb,
+                                "maxDb" to maxDb,
+                            )
+                        )
+                    } catch (t: Throwable) {
+                        Log.w("MainActivity", "AudioFX attachSession($sessionId) unavailable: $t")
+                        result.success(null)
+                    }
+                }
+                "applyEq" -> {
+                    val enabled = call.argument<Boolean>("enabled") ?: false
+                    val gainsDb = call.argument<List<Double>>("gainsDb") ?: emptyList()
+                    try {
+                        val eq = hwEqualizer
+                        if (eq != null) {
+                            eq.enabled = enabled
+                            if (enabled && gainsDb.isNotEmpty()) {
+                                val range = eq.bandLevelRange
+                                val minMb = range[0].toInt()
+                                val maxMb = range[1].toInt()
+                                val count = minOf(eq.numberOfBands.toInt(), gainsDb.size)
+                                for (b in 0 until count) {
+                                    val mb = (gainsDb[b] * 100.0).roundToInt().coerceIn(minMb, maxMb).toShort()
+                                    eq.setBandLevel(b.toShort(), mb)
+                                }
+                            }
+                        }
+                        result.success(true)
+                    } catch (t: Throwable) {
+                        Log.w("MainActivity", "AudioFX applyEq failed: $t")
+                        result.success(false)
+                    }
+                }
+                "applyLoudness" -> {
+                    val enabled = call.argument<Boolean>("enabled") ?: false
+                    val boostDb = call.argument<Double>("boostDb") ?: 0.0
+                    try {
+                        val le = hwLoudness
+                        if (le != null) {
+                            if (enabled && boostDb > 0.05) {
+                                le.setTargetGain((boostDb * 100.0).roundToInt())
+                                le.enabled = true
+                            } else {
+                                le.enabled = false
+                            }
+                        }
+                        result.success(true)
+                    } catch (t: Throwable) {
+                        Log.w("MainActivity", "AudioFX applyLoudness failed: $t")
+                        result.success(false)
                     }
                 }
                 else -> result.notImplemented()

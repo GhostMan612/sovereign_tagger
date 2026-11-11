@@ -36,8 +36,10 @@ class _GrabJob {
   String? error;
   String? companionForVideo;
   int selfHealAttempts = 0;
+  final bool sendToForgeWhenDone;
+  final Completer<String>? onResult;
 
-  _GrabJob({required this.id, required this.url, required this.isVideo, required this.isPlaylist, required this.mode, required this.label});
+  _GrabJob({required this.id, required this.url, required this.isVideo, required this.isPlaylist, required this.mode, required this.label, this.sendToForgeWhenDone = false, this.onResult});
 }
 
 class _GrabCard {
@@ -171,6 +173,20 @@ class _TabGrabberState extends State<TabGrabber> {
         }
       } else {
         _urlController.text = cmd.queryOrUrl;
+        if (cmd.mode == GrabberMediaMode.mp3) {
+          _exportMode = _ExportMode.mp3;
+        } else if (cmd.mode == GrabberMediaMode.original) {
+          _exportMode = _ExportMode.original;
+        } else if (cmd.mode == GrabberMediaMode.m4a) {
+          _exportMode = _ExportMode.m4a;
+        }
+        if (cmd.autoDownloadTopResult && cmd.queryOrUrl.trim().isNotEmpty) {
+          final isVid = cmd.mode == GrabberMediaMode.video;
+          final fmt = isVid ? 'best' : _audioFormatFor(_exportMode);
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted) unawaited(_startDownload(cmd.queryOrUrl.trim(), fmt, isVideo: isVid, sendToForgeWhenDone: cmd.sendToForgeWhenDone, onResult: cmd.onResult));
+          });
+        }
       }
     });
   }
@@ -218,10 +234,10 @@ class _TabGrabberState extends State<TabGrabber> {
     }
   }
 
-  Future<void> _startDownload(String url, String formatId, {required bool isVideo, bool playlist = false, String? label}) async {
+  Future<void> _startDownload(String url, String formatId, {required bool isVideo, bool playlist = false, String? label, bool sendToForgeWhenDone = false, Completer<String>? onResult}) async {
     TapFeedback.machineTap();
     final jobId = _newJobId();
-    final job = _GrabJob(id: jobId, url: url, isVideo: isVideo, isPlaylist: playlist, mode: _exportMode, label: label ?? url);
+    final job = _GrabJob(id: jobId, url: url, isVideo: isVideo, isPlaylist: playlist, mode: _exportMode, label: label ?? url, sendToForgeWhenDone: sendToForgeWhenDone, onResult: onResult);
     setState(() {
       _jobs[jobId] = job;
       _statusMessage = "Download Started. You Can Keep Browsing — Results Appear Below.";
@@ -259,6 +275,7 @@ class _TabGrabberState extends State<TabGrabber> {
   void _dismissJob(_GrabJob job) => setState(() => _jobs.remove(job.id));
 
   Future<void> _onFinished(_GrabJob job, String eventJobId, Map<String, dynamic> data) async {
+    if (!mounted) return;
     final info = (data['info'] as Map?)?.cast<String, dynamic>() ?? <String, dynamic>{};
     try {
       if (job.companionForVideo != null && eventJobId != job.id) {
@@ -433,6 +450,19 @@ class _TabGrabberState extends State<TabGrabber> {
     setState(() {
       card.artBase64 = art;
       card.status = TagIO.canWrite(path) ? "" : "NOTE: .${ext.toUpperCase()} can't hold tags. Pick M4A or MP3 mode to tag it.";
+      if (job.onResult != null && !job.onResult!.isCompleted) {
+        job.onResult!.complete(path);
+      }
+      if (job.sendToForgeWhenDone && !job.isPlaylist) {
+        GhostCommandBus.lastMountedForgePath = path;
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          SovereignState.sendToForge(ForgeRequest(
+            path: path,
+            origin: ForgeOrigin.grabber,
+            autoTask: ForgeAutoTask.fullAutoTagAndLyrics,
+          ));
+        });
+      }
     });
   }
 
@@ -456,6 +486,7 @@ class _TabGrabberState extends State<TabGrabber> {
       finalPath = merged;
     } else {
       final probe = await probeStreams(videoPath);
+      if (!mounted) return;
       if (probe['audio'] == 0 && probe.isNotEmpty) {
         if (job.selfHealAttempts >= 1) {
           setState(() {
@@ -496,6 +527,9 @@ class _TabGrabberState extends State<TabGrabber> {
     if (!mounted) return;
     setState(() => _cards.insert(0, card));
     _finishJob(job, "Video Ready Below. SAVE TO MOVIES When Happy.");
+    if (job.onResult != null && !job.onResult!.isCompleted) {
+      job.onResult!.complete(finalPath);
+    }
   }
 
   Future<String?> _mergeWithLadder(_GrabJob job, String videoPath, String audioPath, String outDir) async {

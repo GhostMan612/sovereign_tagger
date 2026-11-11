@@ -74,7 +74,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       _acrSecretCtrl.text = prefs.getString('acr_secret') ?? "";
       _hfTokenCtrl.text = prefs.getString('hf_token') ?? "";
     });
-    // Load Ghost Tutorial settings
+
     GhostSettings.load(prefs);
   }
 
@@ -111,7 +111,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
       "genius_key": _geniusKeyCtrl.text.trim(),
       "acr_host": _acrHostCtrl.text.trim(),
       "acr_key": _acrKeyCtrl.text.trim(),
-      "acr_secret": _acrSecretCtrl.text.trim()
+      "acr_secret": _acrSecretCtrl.text.trim(),
+      "hf_token": _hfTokenCtrl.text.trim(),
     };
     final encryptedData = _encrypt(jsonEncode(config));
     
@@ -146,6 +147,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           _acrHostCtrl.text = config["acr_host"] ?? "";
           _acrKeyCtrl.text = config["acr_key"] ?? "";
           _acrSecretCtrl.text = config["acr_secret"] ?? "";
+          _hfTokenCtrl.text = config["hf_token"] ?? "";
         });
       } catch (e) {
         if (!mounted) return;
@@ -192,8 +194,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
         }
       } catch (_) {}
 
+      if (!mounted) return;
       setState(() => _cacheStatus = "Aggressive GC Complete. Purged $count Cache + $stagingCount Staging Files. Python Kernel Untouched.");
     } catch (e) {
+      if (!mounted) return;
       setState(() => _cacheStatus = "ERR: Purge Fault: $e");
     }
   }
@@ -206,6 +210,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     });
     try {
       final result = await const MethodChannel('com.sovereign.tagger/ytdlp').invokeMethod('updateCore');
+      if (!mounted) return;
       final data = jsonDecode(result.toString());
       if (data['status'] == 'success') {
         setState(() => _updateStatus = data['message'].toString());
@@ -228,6 +233,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     });
     try {
       final result = await const MethodChannel('com.sovereign.tagger/ytdlp').invokeMethod('updateFullStack');
+      if (!mounted) return;
       final data = jsonDecode(result.toString());
       if (!mounted) return;
       if (data['status'] == 'success') {
@@ -334,13 +340,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
         'playlists': <String, dynamic>{},
       };
       
-      // Backup EQ presets
+
       for (int i = 0; i < 15; i++) {
         final val = prefs.getDouble('eq15_band_$i');
         if (val != null) (backup['eq_presets'] as Map)['band_$i'] = val;
       }
       
-      // Backup persisted queue
+
       final queueJson = prefs.getString('persist_queue');
       if (queueJson != null) {
         final queue = Map<String, dynamic>.from(jsonDecode(queueJson) as Map);
@@ -351,7 +357,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       
       final encryptedData = _encrypt(jsonEncode(backup));
       
-      // Use storage channel to export
+
       final success = await const MethodChannel('com.sovereign.tagger/storage').invokeMethod('exportConfig', {'data': encryptedData});
       
       if (!mounted) return;
@@ -374,6 +380,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     try {
       final picked = await FilePicker.pickFile(type: FileType.any);
       if (picked == null || picked.path == null) {
+        if (!mounted) return;
         setState(() => _backupStatus = "Restore canceled.");
         return;
       }
@@ -384,13 +391,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
       final backup = jsonDecode(decrypted) as Map<String, dynamic>;
       
       if (backup['version'] != 1) {
+        if (!mounted) return;
         setState(() => _backupStatus = "ERR: Unsupported backup version.");
         return;
       }
       
       final prefs = await SharedPreferences.getInstance();
       
-      // Restore settings
+
       final settings = backup['settings'] as Map<String, dynamic>?;
       if (settings != null) {
         await prefs.setString('genius_key', settings['genius_key'] ?? "");
@@ -414,7 +422,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         }
       }
       
-      // Restore EQ presets
+
       final eqPresets = backup['eq_presets'] as Map<String, dynamic>?;
       if (eqPresets != null) {
         for (int i = 0; i < 15; i++) {
@@ -423,7 +431,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         }
       }
       
-      // Restore playlist
+
       final playlists = backup['playlists'] as Map<String, dynamic>?;
       if (playlists != null && playlists['persist_queue'] != null) {
         final queue = Map<String, dynamic>.from(playlists['persist_queue'] as Map);
@@ -432,7 +440,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       }
       
       if (!mounted) return;
-      _loadKeys(); // Reload UI
+      _loadKeys();
       setState(() => _backupStatus = "RESTORE COMPLETE ✓\nSettings + EQ + Queue restored. Restart recommended.");
     } catch (e) {
       if (!mounted) return;
@@ -452,6 +460,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       const yc = MethodChannel('com.sovereign.tagger/ytdlp');
       final lastErr = _updateStatus.contains("ERR") ? _updateStatus : "";
       final result = await yc.invokeMethod('runDoctor', {'errorLog': lastErr});
+      if (!mounted) return;
       final data = jsonDecode(result.toString());
       if (!mounted) return;
       if (data['status'] == 'success') {
@@ -527,7 +536,20 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('hf_token', token);
     if (!mounted) return;
-    await ModelLifecycle.instance.downloadAndActivate(hfToken: token);
+    final ok = ModelLifecycle.instance.state.value.filesReady
+        ? !(await ModelLifecycle.instance.verifyLiveInference()).startsWith('ERR')
+        : await ModelLifecycle.instance.downloadAndActivate(hfToken: token);
+    if (!mounted) return;
+    final statusMsg = ModelLifecycle.instance.state.value.statusText;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('> $statusMsg', style: const TextStyle(fontFamily: 'ShareTechMono')),
+        backgroundColor: Colors.black,
+        shape: RoundedRectangleBorder(
+          side: BorderSide(color: ok ? Colors.greenAccent : Colors.redAccent),
+        ),
+      ),
+    );
   }
 
   Future<void> _importEmbeddingFile({required bool isTokenizer}) async {
@@ -702,7 +724,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         obscureText: true,
                         style: const TextStyle(fontFamily: 'ShareTechMono', color: Colors.cyanAccent, fontSize: 12),
                         decoration: InputDecoration(
-                          labelText: 'HF READ TOKEN (OPTIONAL FOR GATED GEMMA REPO)',
+                          labelText: 'HF READ TOKEN (OPTIONAL — AUTO-MIRROR WORKS WITHOUT TOKEN)',
                           labelStyle: const TextStyle(fontFamily: 'ShareTechMono', color: Colors.white54, fontSize: 10),
                           isDense: true,
                           enabledBorder: OutlineInputBorder(
@@ -714,6 +736,27 @@ class _SettingsScreenState extends State<SettingsScreen> {
                           filled: true,
                           fillColor: Colors.black,
                         ),
+                      ),
+                      const SizedBox(height: 6),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: GestureDetector(
+                              onTap: () => _openRegistration(EmbeddingModel.repoUrl),
+                              child: const Text(
+                                "[1. ACCEPT HF GEMMA LICENSE ↗]",
+                                style: TextStyle(fontFamily: 'ShareTechMono', fontSize: 10, color: Colors.cyanAccent),
+                              ),
+                            ),
+                          ),
+                          GestureDetector(
+                            onTap: () => _openRegistration(EmbeddingModel.hfTokensUrl),
+                            child: const Text(
+                              "[2. GET HF READ TOKEN ↗]",
+                              style: TextStyle(fontFamily: 'ShareTechMono', fontSize: 10, color: Colors.cyanAccent),
+                            ),
+                          ),
+                        ],
                       ),
                       const SizedBox(height: 12),
                       OutlinedButton.icon(
@@ -783,6 +826,23 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         ],
                       ),
                       if (rt.filesReady) ...[
+                        const SizedBox(height: 8),
+                        SizedBox(
+                          width: double.infinity,
+                          child: OutlinedButton.icon(
+                            onPressed: rt.isBusy ? null : _downloadEmbeddingGemma,
+                            icon: const Icon(Icons.verified_outlined, color: Colors.cyanAccent, size: 15),
+                            label: const Text(
+                              "TEST LIVE 256-D INFERENCE",
+                              style: TextStyle(fontFamily: 'ShareTechMono', fontSize: 11, color: Colors.cyanAccent),
+                            ),
+                            style: OutlinedButton.styleFrom(
+                              side: BorderSide(color: Colors.cyanAccent.withValues(alpha: 0.7)),
+                              backgroundColor: Colors.black,
+                              padding: const EdgeInsets.symmetric(vertical: 12),
+                            ),
+                          ),
+                        ),
                         const SizedBox(height: 8),
                         Row(
                           children: [

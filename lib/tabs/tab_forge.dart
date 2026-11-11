@@ -18,6 +18,7 @@ import '../core/tag_io.dart';
 import '../core/title_cleaner.dart';
 import '../screens/main_shell.dart';
 import '../screens/lyric_sync_screen.dart';
+import '../screens/media_inspector_screen.dart';
 import '../widgets/metadata_review_sheet.dart';
 import 'tab_player.dart';
 
@@ -114,6 +115,9 @@ class _TabForgeState extends State<TabForge> {
         await _searchMetadata();
       } else if (req.autoTask == ForgeAutoTask.findLyrics && (req.prefill['LYRICS'] ?? '').isEmpty) {
         await _findLyrics();
+      } else if (req.autoTask == ForgeAutoTask.fullAutoTagAndLyrics) {
+        if (req.prefill.isEmpty) await _searchMetadata();
+        if ((req.prefill['LYRICS'] ?? '').isEmpty && _v('LYRICS').isEmpty) await _findLyrics();
       } else if (req.autoTask == ForgeAutoTask.acrIdentify && req.prefill.isEmpty) {
         await _acrIdentify();
       }
@@ -812,6 +816,20 @@ class _TabForgeState extends State<TabForge> {
 
   Widget _mb(String t) => Text(t, style: const TextStyle(fontFamily: 'VT323', fontSize: 15, color: Colors.white70, height: 1.35));
 
+  void _openMediaInspector() {
+    TapFeedback.machineTap();
+    final target = _originalPath.isNotEmpty ? _originalPath : (_workingPath.isNotEmpty ? _workingPath : null);
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => MediaInspectorScreen(
+          initialPath: target,
+          titleHint: _v('TITLE').isNotEmpty ? _v('TITLE') : (_originalDisplayName.isNotEmpty ? _originalDisplayName : null),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return ValueListenableBuilder<Color>(
@@ -830,6 +848,11 @@ class _TabForgeState extends State<TabForge> {
                 Row(
                   children: [
                     Expanded(child: Text("THE FORGE", style: TextStyle(fontFamily: 'ShareTechMono', fontSize: 22, fontWeight: FontWeight.bold, color: themeColor, letterSpacing: 1.2))),
+                    IconButton(
+                      icon: const Icon(Icons.analytics_outlined, color: Colors.cyanAccent),
+                      tooltip: "MEDIAINFO & FORENSICS",
+                      onPressed: _isProcessing ? null : _openMediaInspector,
+                    ),
                     if (_dirty)
                       Container(
                         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
@@ -901,6 +924,8 @@ class _TabForgeState extends State<TabForge> {
                   Row(
                     children: [
                       Expanded(child: _toolButton(icon: Icons.play_circle_fill, label: "PLAY IN PLAYER", color: Colors.greenAccent, onPressed: _isProcessing ? null : _playInPlayer)),
+                      const SizedBox(width: 8),
+                      Expanded(child: _toolButton(icon: Icons.analytics_outlined, label: "MEDIAINFO", color: Colors.cyanAccent, onPressed: _isProcessing ? null : _openMediaInspector)),
                     ],
                   ),
                   const SizedBox(height: 8),

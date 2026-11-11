@@ -1,8 +1,10 @@
-// ============================================================================
+// ============================================================
 // As Above, So Below. As Within, So Without.
 // The Future Dictates the Past and the Past is Always Present.
-// ============================================================================
+// ============================================================
 
+
+import 'dart:async';
 import 'dart:math' as math;
 import 'dart:typed_data';
 import '../core/embedding_service.dart';
@@ -67,14 +69,16 @@ abstract class GhostWorld {
   void openSettings();
   void openEq();
   void openPlaybackEngine();
+  void openMediaInspector({String? path, bool autoRunForensics = false}) {}
+  Future<String?> inspectActiveMedia({bool runForensics = false}) async => null;
   void grab(String url);
   bool forgeCurrent();
   bool toggleFavoriteCurrent();
   Future<bool> openUrl(String url);
 
-  // GhostBrain v2 Cross-Tab Automation Hooks (with safe default implementations for tests)
+
   Future<List<GrabberSearchHit>> searchGrabber(String query, {String source = 'youtube'}) async => const [];
-  Future<String?> downloadInGrabber(String url, {String? label, bool isVideo = false, String mode = 'm4a'}) async {
+  Future<String?> downloadInGrabber(String url, {String? label, bool isVideo = false, String mode = 'm4a', bool sendToForgeWhenDone = false}) async {
     grab(url);
     return null;
   }
@@ -129,6 +133,8 @@ enum _SemanticIntent {
   workbenchWhisper,
   workbenchReplayGain,
   playSemanticVibe,
+  inspectMedia,
+  auditLossless,
 }
 
 class _IntentExemplar {
@@ -157,6 +163,72 @@ class GhostBrain {
   static int _nativeExemplarsEpoch = -1;
   static Map<String, Float32List>? _nativeKbVectors;
   static int _nativeKbEpoch = -1;
+  static bool _warmingExemplars = false;
+  static bool _warmingKb = false;
+
+  static Future<void> _warmExemplarsInBackground() async {
+    if (_warmingExemplars) return;
+    _warmingExemplars = true;
+    try {
+      final svc = EmbeddingGemmaService.instance;
+      final epoch = svc.engineEpoch;
+      final intents = <_SemanticIntent>[];
+      final phrases = <String>[];
+      _rawExemplarPhrases.forEach((intent, list) {
+        for (final p in list) {
+          intents.add(intent);
+          phrases.add(p);
+        }
+      });
+      final built = <_IntentExemplar>[];
+      for (var i = 0; i < phrases.length; i += 2) {
+        await Future<void>.delayed(const Duration(milliseconds: 220));
+        if (svc.activeEngineId != EmbeddingGemmaService.nativeEngineId || svc.engineEpoch != epoch) return;
+        final end = (i + 2 < phrases.length) ? i + 2 : phrases.length;
+        final chunk = phrases.sublist(i, end);
+        final vecs = await svc.embedBatch(chunk, isDocument: true);
+        if (vecs.length != chunk.length) return;
+        for (var j = 0; j < chunk.length; j++) {
+          built.add(_IntentExemplar(intents[i + j], chunk[j], vecs[j]));
+        }
+      }
+      if (svc.activeEngineId == EmbeddingGemmaService.nativeEngineId && svc.engineEpoch == epoch) {
+        _nativeExemplars = built;
+        _nativeExemplarsEpoch = epoch;
+      }
+    } finally {
+      _warmingExemplars = false;
+    }
+  }
+
+  static Future<void> _warmKbInBackground() async {
+    if (_warmingKb) return;
+    _warmingKb = true;
+    try {
+      final svc = EmbeddingGemmaService.instance;
+      final epoch = svc.engineEpoch;
+      final map = <String, Float32List>{};
+      for (var i = 0; i < _kb.length; i += 2) {
+        await Future<void>.delayed(const Duration(milliseconds: 220));
+        if (svc.activeEngineId != EmbeddingGemmaService.nativeEngineId || svc.engineEpoch != epoch) return;
+        final end = (i + 2 < _kb.length) ? i + 2 : _kb.length;
+        final slice = _kb.sublist(i, end);
+        final docs = <String>[for (final e in slice) '${e.title}. ${e.keys}. ${e.details.first}'];
+        final titles = <String>[for (final e in slice) e.title];
+        final vecs = await svc.embedBatch(docs, titles: titles, isDocument: true);
+        if (vecs.length != slice.length) return;
+        for (var j = 0; j < slice.length; j++) {
+          map[slice[j].id] = vecs[j];
+        }
+      }
+      if (svc.activeEngineId == EmbeddingGemmaService.nativeEngineId && svc.engineEpoch == epoch) {
+        _nativeKbVectors = map;
+        _nativeKbEpoch = epoch;
+      }
+    } finally {
+      _warmingKb = false;
+    }
+  }
 
   static const Map<_SemanticIntent, List<String>> _rawExemplarPhrases = <_SemanticIntent, List<String>>{
     _SemanticIntent.grabSearch: [
@@ -221,6 +293,16 @@ class GhostBrain {
       'queue chill atmospheric late night music',
       'play songs with a moody cyberpunk vibe',
     ],
+    _SemanticIntent.inspectMedia: [
+      'show mediainfo codec bitrate sample rate for this song',
+      'inspect container streams and bit depth of loaded file',
+      'what codec bitrate and sample rate is playing',
+    ],
+    _SemanticIntent.auditLossless: [
+      'check if this flac or wav is true lossless or fake upsampled mp3',
+      'run audio forensics spectral shelf and dynamic range audit',
+      'verify bitstream integrity and true peak loudness',
+    ],
   };
 
   GhostBrain(this.world, {math.Random? random}) : _rng = random ?? math.Random() {
@@ -255,6 +337,10 @@ class GhostBrain {
         phrases.add(p);
       }
     });
+    if (_nativeExemplars == null || _nativeExemplarsEpoch != _embedder.engineEpoch) {
+      unawaited(_warmExemplarsInBackground());
+      return _exemplars!;
+    }
     final vecs = await _embedder.embedBatch(phrases, isDocument: true);
     if (_embedder.activeEngineId != EmbeddingGemmaService.nativeEngineId || vecs.length != phrases.length) {
       return _exemplars!;
@@ -274,6 +360,10 @@ class GhostBrain {
     }
     final docs = <String>[for (final e in _kb) '${e.title}. ${e.keys}. ${e.details.first}'];
     final titles = <String>[for (final e in _kb) e.title];
+    if (_nativeKbVectors == null || _nativeKbEpoch != _embedder.engineEpoch) {
+      unawaited(_warmKbInBackground());
+      return null;
+    }
     final vecs = await _embedder.embedBatch(docs, titles: titles, isDocument: true);
     if (_embedder.activeEngineId != EmbeddingGemmaService.nativeEngineId || vecs.length != _kb.length) {
       return null;
@@ -437,6 +527,12 @@ class GhostBrain {
     _KbEntry('whisper', 'Transcribe with Whisper', 'whisper transcribe transcription speech text subtitle words ai model',
       ["WORKBENCH has Whisper transcription. The first run downloads the model (about 140 MB), then it works offline."],
       ['The workbench']),
+    _KbEntry('mediainfo', 'MediaInfo & forensics', 'mediainfo inspector forensics bitrate codec sample rate bit depth lossless fake upsampled spectrogram chapters faststart ffprobe json audit',
+      [
+        "MEDIAINFO & FORENSICS inspects container atoms, audio/video/subtitle streams, bit depth, sample rate, color space, FastStart streamability, chapters, and tags in TREE, classic MEDIAINFO TEXT, or RAW FFPROBE JSON.",
+        "Tap RUN DEEP FORENSIC AUDIT to catch fake-lossless upsampled MP3 brickwalls (16/19.5 kHz shelves), zero-padded 24-bit files, EBU R128 loudness, True Peak, DR crest, and bitstream decode errors - plus pinch-zoom HD spectrograms and lossless -c copy audio extract / chapter splitting.",
+      ],
+      ['Open MediaInfo', 'Is this true lossless?']),
     _KbEntry('keys', 'Get API keys', 'api key keys genius acr acrcloud token fingerprint identify write kernel',
       [
         "Keys are optional: metadata search and lyrics work without them. ACRCloud is only for IDENTIFY (audio fingerprint); Genius is an extra lyrics source.",
@@ -485,6 +581,7 @@ class GhostBrain {
     ..._tabs.keys,
     'play', 'pause', 'next', 'previous', 'shuffle', 'repeat', 'sleep', 'queue', 'open', 'show', 'favorite', 'what', 'playing',
     'everything', 'playlist', 'settings', 'player', 'cancel', 'after', 'song', 'hide', 'laugh', 'joke', 'extract', 'loaded', 'mounted',
+    'mediainfo', 'inspector', 'forensics', 'bitrate', 'codec', 'lossless', 'spectrogram', 'chapters', 'audit',
   };
 
   List<String> suggestionsFor(int tab) {
@@ -496,7 +593,7 @@ class GhostBrain {
       case 2:
         return const ['How does batch work?', 'Permission prompts', 'What can you do?'];
       case 3:
-        return const ['ReplayGain scan', 'Transcribe with Whisper', 'The workbench'];
+        return const ['Open MediaInfo', 'Is this true lossless?', 'ReplayGain scan', 'Transcribe with Whisper'];
       case 4:
         return const ['Shuffle everything', 'Play something dark', "What's playing?", 'Extract metadata & lyrics'];
       default:
@@ -578,13 +675,18 @@ class GhostBrain {
     final special = await _special(q.rawText);
     if (special != null) return special;
 
-    // GhostBrain v2 Cross-Tab Automation & Hybrid EmbeddingGemma Intent Router
-    final crossTab = await _crossTabAutomation(raw, q);
+    final forensic = await _mediaForensicsIntent(raw, q);
+    if (forensic != null) return forensic;
+
+
+    final crossTab = await _crossTabAutomation(raw, q, allowSemanticFallback: false);
     if (crossTab != null) return crossTab;
 
     final command = await _command(q, rawInput: raw);
     if (command != null) return command;
 
+    final semCrossTab = await _crossTabAutomation(raw, q, allowSemanticFallback: true);
+    if (semCrossTab != null) return semCrossTab;
     return await _knowledge(words, rawQuery: raw);
   }
 
@@ -618,9 +720,9 @@ class GhostBrain {
     _grabChoices = const [];
     _grabChoiceSendToForge = false;
 
-    await world.downloadInGrabber(picked.url, label: picked.title, mode: mode);
+    await world.downloadInGrabber(picked.url, label: picked.title, mode: mode, sendToForgeWhenDone: chainForge);
     final suffix = chainForge
-        ? " Once finished on the card, tap SEND TO FORGE or say 'extract metadata and lyrics'."
+        ? " It will automatically mount in FORGE for metadata & lyrics extraction when finished."
         : " Watch the GRABBER card for progress.";
     return GhostReply(
       "Downloading '${picked.title}' (${mode.toUpperCase()}) in GRABBER.$suffix",
@@ -629,7 +731,54 @@ class GhostBrain {
     );
   }
 
-  Future<GhostReply?> _crossTabAutomation(String raw, _Query q) async {
+  Future<GhostReply?> _mediaForensicsIntent(String raw, _Query q) async {
+    final text = q.rawText;
+    final rawSet = q.rawSet;
+    if (text.contains(' how do i ') || text.contains(' how does ')) return null;
+
+    if ((rawSet.contains('open') || rawSet.contains('show') || rawSet.contains('launch')) &&
+        (rawSet.contains('mediainfo') || rawSet.contains('inspector') || rawSet.contains('forensics'))) {
+      world.openMediaInspector();
+      return const GhostReply(
+        'Opening MEDIAINFO & FORENSICS.',
+        tone: GhostTone.happy,
+        chips: ['Is this true lossless?', "What's playing?"],
+      );
+    }
+
+    final asksAudit = text.contains(' true lossless ') ||
+        text.contains(' fake lossless ') ||
+        text.contains(' upsampled ') ||
+        text.contains(' dynamic range ') ||
+        text.contains(' brickwall ') ||
+        ((rawSet.contains('audit') || rawSet.contains('forensics')) &&
+            (rawSet.contains('this') || rawSet.contains('song') || rawSet.contains('track') || rawSet.contains('file') || rawSet.contains('audio')));
+
+    final asksSpecs = rawSet.contains('bitrate') ||
+        text.contains(' sample rate ') ||
+        text.contains(' bit depth ') ||
+        (rawSet.contains('codec') && (rawSet.contains('this') || rawSet.contains('what') || rawSet.contains('song') || rawSet.contains('track') || rawSet.contains('playing'))) ||
+        ((rawSet.contains('inspect') || rawSet.contains('mediainfo')) &&
+            (rawSet.contains('this') || rawSet.contains('song') || rawSet.contains('track') || rawSet.contains('file') || rawSet.contains('current')));
+
+    if (!asksAudit && !asksSpecs) return null;
+
+    final summary = await world.inspectActiveMedia(runForensics: asksAudit);
+    if (summary == null) {
+      world.openMediaInspector(autoRunForensics: asksAudit);
+      return const GhostReply(
+        "Nothing is mounted yet - opened MEDIAINFO & FORENSICS so you can pick any audio or video file.",
+        tone: GhostTone.happy,
+      );
+    }
+    return GhostReply(
+      summary,
+      tone: GhostTone.happy,
+      chips: const ['Open MediaInfo', 'Is this true lossless?'],
+    );
+  }
+
+  Future<GhostReply?> _crossTabAutomation(String raw, _Query q, {bool allowSemanticFallback = false}) async {
     final text = q.rawText;
     final set = q.set;
     final rawSet = q.rawSet;
@@ -640,7 +789,7 @@ class GhostBrain {
         !text.contains(' please ');
     if (isQuestion) return null;
 
-    // 1. Direct Lexical + Structural Triggers for Forge & Grabber Actions
+
     final mentionsForge = set.contains('forge') || set.contains('tag') || rawSet.contains('metadata') || rawSet.contains('id3') || rawSet.contains('loaded') || rawSet.contains('mounted');
     final mentionsLyrics = set.contains('lyrics') || rawSet.contains('lyrics') || rawSet.contains('lyric') || rawSet.contains('lrc') || rawSet.contains('words') || rawSet.contains('karaoke');
     final mentionsAcr = rawSet.contains('acr') || rawSet.contains('acrcloud') || rawSet.contains('fingerprint') || rawSet.contains('identify') || rawSet.contains('recognize');
@@ -655,11 +804,13 @@ class GhostBrain {
         text.contains(' songs about ') ||
         text.contains(' that says ');
 
-    final queryVec = await _embedder.embed(raw);
+    final queryVec = (allowSemanticFallback && _nativeExemplars != null)
+        ? await _embedder.embed(raw)
+        : _embedder.embedSyncFallback(raw);
     final activeExemplars = await _activeExemplarsForEngine(_embedder.activeEngineId);
     final usingNativeExemplars = !identical(activeExemplars, _exemplars);
     final effQueryVec = usingNativeExemplars ? queryVec : _embedder.embedSyncFallback(raw);
-    final simGate = usingNativeExemplars ? 0.56 : 0.72;
+    final simGate = !allowSemanticFallback ? 999.0 : (usingNativeExemplars ? 0.56 : 0.72);
     _SemanticIntent? bestIntent;
     var bestSim = -1.0;
     for (final ex in activeExemplars) {
@@ -670,7 +821,7 @@ class GhostBrain {
       }
     }
 
-    // Check Grabber Search & Download Intent
+
     if (mentionsGrabber && !mentionsForge ||
         (bestSim >= simGate &&
             (bestIntent == _SemanticIntent.grabSearch ||
@@ -699,7 +850,7 @@ class GhostBrain {
 
         if (wantsImmediateDownload) {
           final top = hits.first;
-          await world.downloadInGrabber(top.url, label: top.title, isVideo: isVideo, mode: mode);
+          await world.downloadInGrabber(top.url, label: top.title, isVideo: isVideo, mode: mode, sendToForgeWhenDone: chainToForge);
           if (hits.length > 1) {
             _grabChoices = hits.take(3).toList();
             _grabChoiceMode = mode;
@@ -732,7 +883,7 @@ class GhostBrain {
       }
     }
 
-    // Check Forge ACRCloud Fingerprint Intent
+
     if (mentionsAcr && (mentionsForge || mentionsExtract || rawSet.contains('song') || rawSet.contains('track') || rawSet.contains('file') || rawSet.contains('this')) ||
         (bestSim >= simGate && bestIntent == _SemanticIntent.forgeAcrIdentify)) {
       final res = await world.forgeExtract(
@@ -747,7 +898,7 @@ class GhostBrain {
       );
     }
 
-    // Check Forge Metadata + Lyrics Extraction Intent
+
     if ((mentionsForge && (mentionsExtract || mentionsLyrics)) ||
         (mentionsLyrics && mentionsExtract && !librarySemanticHint) ||
         text.contains(' extract metadata ') ||
@@ -789,7 +940,7 @@ class GhostBrain {
       );
     }
 
-    // Check Workbench Whisper / ReplayGain Intent
+
     if ((rawSet.contains('whisper') && (rawSet.contains('transcribe') || rawSet.contains('lyrics') || rawSet.contains('run'))) ||
         (bestSim >= simGate && bestIntent == _SemanticIntent.workbenchWhisper)) {
       world.openTab(3);
@@ -831,12 +982,29 @@ class GhostBrain {
       if (semReply != null) return semReply;
     }
 
+    if (bestSim >= simGate && (bestIntent == _SemanticIntent.inspectMedia || bestIntent == _SemanticIntent.auditLossless)) {
+      final wantAudit = bestIntent == _SemanticIntent.auditLossless;
+      final summary = await world.inspectActiveMedia(runForensics: wantAudit);
+      if (summary == null) {
+        world.openMediaInspector(autoRunForensics: wantAudit);
+        return const GhostReply(
+          "Opened MEDIAINFO & FORENSICS - mount any audio or video file to inspect streams and run the lossless audit.",
+          tone: GhostTone.happy,
+        );
+      }
+      return GhostReply(
+        summary,
+        tone: GhostTone.happy,
+        chips: const ['Open MediaInfo', 'Is this true lossless?'],
+      );
+    }
+
     return null;
   }
 
   static String _extractGrabberQuery(String raw) {
     var s = raw.trim();
-    // Strip common conversational prefixes and suffixes
+
     final prefixPatterns = <RegExp>[
       RegExp(r'^(?:hey|yo|ok|okay)?\s*(?:ghost|ghostbrain)?[,\s]*', caseSensitive: false),
       RegExp(r'^(?:can|could|would)\s+you\s+(?:please\s+)?', caseSensitive: false),
@@ -1106,6 +1274,10 @@ class GhostBrain {
   }
 
   GhostReply? _navigate(Set<String> set, String text) {
+    if (set.contains('mediainfo') || set.contains('inspector') || set.contains('forensics')) {
+      world.openMediaInspector();
+      return const GhostReply('Opening MEDIAINFO & FORENSICS.');
+    }
     if (set.contains('eq')) {
       world.openEq();
       return const GhostReply('Opening the EQUALIZER.');
@@ -1388,7 +1560,7 @@ class GhostBrain {
       return GhostReply(_pick(const ["Signal unclear. Try one of these:", "Say that again, in human? Or pick one:"]), tone: GhostTone.sarcastic, chips: suggestionsFor(world.currentTab));
     }
     final qStr = rawQuery.isEmpty ? words.join(' ') : rawQuery;
-    final queryVec = await _embedder.embed(qStr);
+    final queryVec = _nativeKbVectors != null ? await _embedder.embed(qStr) : _embedder.embedSyncFallback(qStr);
     final nativeKb = await _activeKbVectorsForEngine(_embedder.activeEngineId);
     final useNative = nativeKb != null && _embedder.activeEngineId == EmbeddingGemmaService.nativeEngineId;
     final effQueryVec = useNative ? queryVec : _embedder.embedSyncFallback(qStr);

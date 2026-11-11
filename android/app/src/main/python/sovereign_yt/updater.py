@@ -1,5 +1,3 @@
-# updater.py
-
 # ============================================================
 # As Above, So Below. As Within, So Without.
 # The Future Dictates the Past and the Past is Always Present.
@@ -99,14 +97,14 @@ def execute_scorched_earth():
 def update_python_stack():
     try:
         results = {}
-        # Attempt pip upgrade for pure-python deps (best-effort; offline hosts will report error, not crash)
+
         for pkg in ["mutagen", "lyricsgenius"]:
             try:
-                import pip  # type: ignore
+                import pip
                 rc = pip.main(["install", "--upgrade", "--quiet", pkg])
                 results[pkg] = "upgraded" if rc == 0 else f"pip rc={rc}"
             except Exception as pip_e:
-                # Chaquopy environment fallback: try ensurepip path
+
                 try:
                     import subprocess
                     rc2 = subprocess.call([sys.executable, "-m", "pip", "install", "--upgrade", "--quiet", pkg])
@@ -122,7 +120,7 @@ def execute_full_scorched_earth():
     if ytdlp_res.get("status") != "success":
         return json.dumps(ytdlp_res)
     deps_res = json.loads(update_python_stack())
-    # Always surface yt-dlp tag; deps are best-effort
+
     msg = ytdlp_res.get("message", "")
     if deps_res.get("status") == "success":
         msg += f" | Deps: {deps_res.get('results')}"

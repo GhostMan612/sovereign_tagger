@@ -85,4 +85,4 @@ NEEDLE_API int needle_embed(
 }
 #endif
 
-#endif // NEEDLE_H
+#endif
