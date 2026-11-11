@@ -8,6 +8,13 @@ import os
 import re
 
 
+PINNED_VERSIONS = {
+    "yt-dlp": "2026.10.26",
+    "mutagen": "1.48.1",
+    "lyricsgenius": "3.15.0",
+}
+
+
 PATCH_REGISTRY = {
     "youtube_android_blocked": {
         "signature": ["Sign in to confirm you’re not a bot", "android.*player.*not available", "confirm you are not a bot"],
@@ -44,7 +51,7 @@ PATCH_REGISTRY = {
     "ytdlp_outdated_extractor": {
         "signature": ["ExtractorError", "Unsupported URL", "Unable to extract", "yt-dlp.*outdated"],
         "field": "yt-dlp version",
-        "current": ["pip 3.14 yt-dlp"],
+        "current": ["yt-dlp 2026.10.26 (build-time pin, see docs/python-pins.md)"],
         "hotfix": ["execute_scorched_earth() from updater.py – wipes yt_dlp folder + pulls latest tarball from GitHub"],
         "file": "updater.py",
         "lines": "execute_scorched_earth()"
@@ -107,6 +114,7 @@ def diagnose(error_log: str = ""):
         return json.dumps({
             "status": "success",
             "ytdlp_version": str(ytdlp_version),
+            "pinned_versions": PINNED_VERSIONS,
             "hits": hits,
             "inventory": inventory,
             "extractor_snapshot": extractor_snapshot,
