@@ -183,7 +183,7 @@ class _CloudFolderViewState extends State<CloudFolderView> {
                 ),
               if (entry.isFolder)
                 ListTile(
-                  leading: const Icon(Icons.folder_download, color: Colors.cyanAccent),
+                  leading: const Icon(Icons.cloud_download, color: Colors.cyanAccent),
                   title: const Text('DOWNLOAD FOLDER TO MUSIC', style: TextStyle(fontFamily: 'ShareTechMono', color: Colors.white)),
                   onTap: () {
                     Navigator.pop(context);
