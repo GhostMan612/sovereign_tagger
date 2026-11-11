@@ -4,7 +4,7 @@
 
 ## Workspace
 
-- **Flutter Android app** — `sovereign_tagger` (Sovereign Mantle media engine: yt-dlp via chaquopy Python, FFmpeg DSP, ACRCloud + Genius). Dart ≥3.13, `ffmpeg_kit_extended_flutter: ^0.6.2` (`full`+`gpl`, FFmpeg 9.0.1), `just_audio 0.10.6` + `audio_service 0.18.19` + `audio_session 0.2.4` + `permission_handler 12.0.3` + `video_player 2.14.0` + `wakelock_plus 1.5.2` + `audio_waveforms 2.0.2` + `file_picker 9.2.3`. `minSdk 26 / compileSdk 36 / NDK 28.2`.
+- **Flutter Android app** — `sovereign_tagger` (Sovereign Mantle media engine: yt-dlp via Chaquopy Python, FFmpeg DSP, ACRCloud + Genius). `pubspec.yaml` declares Dart SDK `>=3.0.0 <4.0.0`, `ffmpeg_kit_extended_flutter: ^0.6.2` (`full`+`gpl`), `just_audio: ^0.10.6` + `audio_service: ^0.18.19` + `audio_session: ^0.2.4` + `permission_handler: ^12.0.3` + `video_player: ^2.14.1` + `wakelock_plus: ^1.8.1` + `audio_waveforms: ^2.0.2` + `file_picker: ^13.1.0`. Android `minSdk 26 / compileSdk 36`; NDK version comes from Flutter.
 - **Writable:** `C:\sovereign_tagger` only (+ `%USERPROFILE%\.gradle`, `pub-cache`, `C:\android` SDK). `lib/**/*.dart` is the main touch surface.
 - **READ-ONLY — never write:** `C:\pathfinder_god`, `C:\Recovery for All`, `C:\Sovereign Nodes`, `C:\sovereign_mantle`.
 - **Note:** `C:\sovereign_tagger_2` was the disposable playground copy but is now deprecated — all work happens in `C:\sovereign_tagger`.
@@ -56,7 +56,7 @@
 > See the shell gate above.
 
 ```powershell
-C:\android\flutter\bin\flutter.bat pub get    # SDK lives in C:\android\flutter — NOT C:\src. Bare `flutter` may not resolve; always use this path. Everything maxed except file_picker 9 / wakelock_plus 1.5.2 (win32 pair) and permission_handler 12 (compileSdk 37)
+C:\android\flutter\bin\flutter.bat pub get    # SDK lives in C:\android\flutter — NOT C:\src. Bare `flutter` may not resolve. Use the dependency versions in pubspec.yaml as the current source of truth.
 C:\android\flutter\bin\flutter.bat analyze --no-pub  # expect "No issues found!" — END OF PLAN ONLY
 C:\android\flutter\bin\flutter.bat build apk --release  # ALLOWED per RULES §1.5 (operator override 2026-10-01). END-OF-PLAN ONLY — it is minutes, not seconds. Release signing falls back to the DEBUG keystore unless SOVEREIGN_KEYSTORE is set, so a release APK is NOT Play-ready.
 ```
@@ -99,9 +99,9 @@ C:\android\flutter\bin\flutter.bat build apk --release  # ALLOWED per RULES §1.
 
 ## Toolchain quirks
 
-- **Dependency ceiling (verified by resolver, Phase 27.1)** — only two walls remain. (1) **win32 pair:** `file_picker <12` needs `win32 ^5.9.0`, `wakelock_plus >=1.6.1` needs `win32 ^6.0.1`, so `wakelock_plus` stays `1.5.2` until `file_picker` moves to 13.x (full API rewrite: `FilePicker.platform`/`FilePickerResult` gone, 16 call sites, and Forge write-back depends on `PlatformFile.identifier`) — dedicated session. (2) **compileSdk wall:** `permission_handler 13` pulls `permission_handler_android 14` which uses API 37 (`VERSION_CODES.CINNAMON_BUN`) while root `android/build.gradle` forces plugins to `compileSdk 36`. Everything else is at latest; `flutter pub upgrade --major-versions` would break both walls, so do not run it. `just_audio_background` Beta unresolvable on this mirror — use `audio_service` handler already wired (`MainActivity : FlutterActivity` + manifest `AudioService`/`MediaButtonReceiver` + `FOREGROUND_SERVICE*` perms).
-- **Chaquopy** `gradle:17.0.0` supports `AGP 7.3-9.2 / Python 3.10-3.14 / minSdk 24` (`versions.rst`). `python 3.14` is top but has very few wheels — fallback comment in `app/build.gradle:54` says flip to `"3.11"` if `pip` fails. `3.12+` is 64-bit only (`arm64-v8a,x86_64` only, no `armeabi-v7a`). `buildPython` must match runtime `version` `chaquo #991`. `compileSdk 36 / NDK 28.2` / `JDK 25 bundled` (`flutter doctor -v` `jbr/bin/java 25.0.2`) with `compileOptions 1.8` still builds via shim but warns `source 8 obsolete` — bump to `17` only in a dedicated Java session. `AGP 9.0.1 / KGP 2.3.20 / Gradle 9.1.0` are at ceiling.
-- No `test/` suite in repo (deferred-zero-bloat); verification is analyzer + device smoke. Background playback, FB muxing, loudnorm two-pass, PCM WAV, and matrix rain perf all require a device/emulator.
+- **Dependency status (verified against main `pubspec.yaml` and `android/app/build.gradle`)** — The historical `file_picker` / `wakelock_plus` win32 version wall is resolved: the manifest now declares `file_picker: ^13.1.0` and `wakelock_plus: ^1.8.1`. `permission_handler` remains at `^12.0.3` with `compileSdk 36`; review API-37/Gradle compatibility before major-version upgrades. This replaces the obsolete Phase 27.1 dependency-ceiling guidance; `flutter pub upgrade --major-versions` is not a routine cleanup command. `audio_service` is already wired for background controls.
+- **Chaquopy** `gradle:17.0.0` supports `AGP 7.3-9.2 / Python 3.10-3.14 / minSdk 24` (`versions.rst`). `python 3.14` is top but has very few wheels — fallback comment in `app/build.gradle:54` says flip to `"3.11"` if `pip` fails. `3.12+` is 64-bit only (`arm64-v8a,x86_64` only, no `armeabi-v7a`). `buildPython` must match runtime `version` `chaquo #991`. `compileSdk 36 / NDK 28.2` / `JDK 25 bundled` (`flutter doctor -v` `jbr/bin/java 25.0.2`) with Java 17 source/target compatibility and Kotlin JVM target 17 already configured in `android/app/build.gradle`. `AGP 9.0.1 / KGP 2.3.20 / Gradle 9.1.0` are at ceiling.
+- **Test suite exists:** `test/ghost_foundations_test.dart` and `test/tagger_web_screen_test.dart` are checked in. Verification includes `flutter analyze`, `flutter test`, and device smoke; a passing analyzer or test run alone does not establish correct device behavior.
 
 ## Style
 
