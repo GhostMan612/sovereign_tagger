@@ -692,7 +692,12 @@ class SentinelStore extends ChangeNotifier {
     final nowIso = DateTime.now().toUtc().toIso8601String();
     for (var i = 0; i < _hits.length; i++) {
       if (hitIds.contains(_hits[i].id)) {
-        _hits[i] = _hits[i].copyWith(status: SentinelStatus.inPipeline, lastSeen: nowIso);
+        _hits[i] = _hits[i].copyWith(
+          status: SentinelStatus.inPipeline,
+          statusReason: 'Sent to Pipeline',
+          evidence: <String, dynamic>{..._hits[i].evidence, 'sentinelHandoff': 'pipeline', 'sentinelHandoffAt': nowIso},
+          lastSeen: nowIso,
+        );
         count++;
       }
     }

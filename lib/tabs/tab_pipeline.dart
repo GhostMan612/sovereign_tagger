@@ -17,6 +17,7 @@ import '../core/storage_client.dart';
 import '../core/tag_io.dart';
 import '../core/title_cleaner.dart';
 import '../screens/main_shell.dart';
+import '../services/sentinel_store.dart';
 import 'tab_library.dart';
 
 class BatchItem {
@@ -48,6 +49,49 @@ class _TabPipelineState extends State<TabPipeline> {
   bool _includePristine = false;
   int _currentIndex = 0;
   String _globalStatus = "Load Tracks From The Library Or Files, Then EXECUTE BATCH.\nConfident Matches Are Fixed In Place; Unsure Ones Go To REVIEW.";
+
+  @override
+  void initState() {
+    super.initState();
+    SentinelStore.onSendToPipeline = _receiveSentinelHits;
+  }
+
+  @override
+  void dispose() {
+    SentinelStore.onSendToPipeline = null;
+    super.dispose();
+  }
+
+  Future<void> _receiveSentinelHits(List<SentinelHit> hits) async {
+    if (_isBatchRunning) throw StateError('PIPELINE BUSY: Finish The Running Batch First.');
+    final entries = <({String path, String? uri, String name})>[];
+    for (final hit in hits) {
+      if (hit.path.isEmpty) continue;
+      entries.add((path: hit.path, uri: hit.uri.isEmpty ? null : hit.uri, name: hit.displayName.isEmpty ? hit.path.split('/').last : hit.displayName));
+    }
+    if (entries.isEmpty) return;
+    await _addItems(entries);
+  }
+
+  Future<void> _markSentinelUncompletable(BatchItem item) async {
+    try {
+      final store = SentinelStore.instance;
+      await store.ensureLoaded();
+      SentinelHit? hit;
+      if (item.uri != null && item.uri!.isNotEmpty) hit = store.byUri(item.uri!);
+      if (hit == null) {
+        for (final h in store.allHits) {
+          if (h.path == item.path) {
+            hit = h;
+            break;
+          }
+        }
+      }
+      if (hit != null && hit.status == SentinelStatus.inPipeline) {
+        await store.sentinelMarkUncompletable(hit.id, SentinelUncompletableReason.noCatalogMatch);
+      }
+    } catch (_) {}
+  }
 
   void _setStatus(String s) {
     if (!mounted) return;
@@ -233,6 +277,7 @@ class _TabPipelineState extends State<TabPipeline> {
         if (best == null || res.confidence < _autoApplyThreshold) {
           review++;
           _updateItem(item, best == null ? "No Catalog Match. Tap To Fix In The Forge." : "Unsure (${(res.confidence * 100).round()}%): ${best.artist} - ${best.title}. Tap To Review In Forge.", isProcessing: false, newBucket: "REVIEW");
+          if (best == null) await _markSentinelUncompletable(item);
           continue;
         }
 

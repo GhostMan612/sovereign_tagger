@@ -48,6 +48,16 @@ class SovereignState {
     pendingForge.value = request;
     currentTab.value = 1;
   }
+
+  static final List<ForgeRequest> forgeQueue = <ForgeRequest>[];
+
+  static void queueToForge(List<ForgeRequest> requests) {
+    if (requests.isEmpty) return;
+    forgeQueue.addAll(requests);
+    if (pendingForge.value == null) {
+      pendingForge.value = forgeQueue.removeAt(0);
+    }
+  }
 }
 
 enum PlaybackRepeat { off, all, one }
