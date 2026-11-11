@@ -3,19 +3,6 @@
 // The Future Dictates the Past and the Past is Always Present.
 // ============================================================
 
-/// In-app browser for Tagger's two approved developer consoles.
-///
-/// Scope honesty, stated plainly because it is easy to overclaim: a page
-/// here is still an external website. Its server and any embedded third
-/// parties receive the device's IP address and user agent. Keeping the
-/// browser closed does not make the site private, and this screen does
-/// not claim to block trackers. JavaScript is ON here, unlike the
-/// Recovery-for-All screen this was ported from: both approved hosts
-/// are authenticated developer consoles that need it to log in and work
-/// at all, so JS-off would make the port pointless. The exception is
-/// per-host, not global: only genius.com and console.acrcloud.com ever
-/// load in this screen, navigation off those hosts is blocked, and
-/// there are no JavaScript channels into app state.
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -68,6 +55,12 @@ class _TaggerWebScreenState extends State<TaggerWebScreen> {
       _progress = 0;
     });
 
+    if (!_isApprovedHost(widget.uri)) {
+      if (!mounted) return;
+      setState(() => _error = 'This website is not an approved in-app source.');
+      return;
+    }
+
     try {
       final controller = WebViewController();
       if (!mounted) return;
@@ -98,14 +91,14 @@ class _TaggerWebScreenState extends State<TaggerWebScreen> {
             await _refreshNavState();
           },
           onWebResourceError: (error) {
-            if (!mounted || error.isForMainFrame == false) return;
+            if (!mounted || error.isForMainFrame != true) return;
             final description = error.description;
             setState(() => _error = description.trim().isEmpty
                 ? 'This page could not be loaded.'
                 : description);
           },
           onHttpError: (error) {
-            if (!mounted) return;
+            if (!mounted || error.request?.uri != _currentUri) return;
             final status = error.response?.statusCode;
             if (status != null && status >= 400) {
               setState(() => _error =
@@ -119,10 +112,7 @@ class _TaggerWebScreenState extends State<TaggerWebScreen> {
       if (!mounted) {
         return;
       }
-      setState(() {
-        _controller = controller;
-        _host = widget.uri.host;
-      });
+      setState(() => _controller = controller);
       await _refreshNavState();
     } catch (error) {
       debugPrint('Tagger WebView startup failed: $error');
@@ -253,9 +243,8 @@ class _TaggerWebScreenState extends State<TaggerWebScreen> {
         if (mounted) await _refreshNavState();
         return;
       }
-    } catch (_) {
-      // A controller that cannot report history must not trap the user:
-      // fall through and close the screen instead.
+    } catch (error) {
+      debugPrint('Tagger WebView history unavailable: $error');
     }
     if (mounted) Navigator.of(context).pop();
   }
