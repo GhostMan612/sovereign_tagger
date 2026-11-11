@@ -1,7 +1,7 @@
-// ===================================================
+// ============================================================
 // As Above, So Below. As Within, So Without.
 // The Future Dictates the Past and the Past is Always Present.
-// ===================================================
+// ============================================================
 
 import 'dart:async';
 import 'dart:convert';
@@ -344,72 +344,87 @@ class SentinelStore extends ChangeNotifier {
   static const String fileName = 'sentinel_hits.json';
   static bool Function()? isHeavyOperationActive;
   static void Function(SentinelHit hit)? onOpenInForge;
+  static Future<void> Function(List<SentinelHit> hits)? onSendToPipeline;
 
   final List<SentinelHit> _hits = <SentinelHit>[];
   String? _lastScanId;
   String? _generatedAt;
-  bool _loaded = false;
+  Future<void>? _loadFuture;
+  Future<void> _pendingSave = Future<void>.value();
   bool _scanning = false;
   bool _cancelRequested = false;
 
   bool get isScanning => _scanning;
   List<SentinelHit> get allHits => List.unmodifiable(_hits);
 
-  Future<File?> _resolveStoreFile() async {
-    try {
-      final dir = await getApplicationDocumentsDirectory();
-      if (dir.existsSync()) return File('${dir.path}/$fileName');
-    } catch (_) {}
-    try {
-      final tmp = Directory.systemTemp;
-      if (tmp.existsSync()) return File('${tmp.path}/$fileName');
-    } catch (_) {}
-    return null;
+  Future<File> _resolveStoreFile() async {
+    final directory = await getApplicationDocumentsDirectory();
+    if (!await directory.exists()) {
+      await directory.create(recursive: true);
+    }
+    return File('${directory.path}/$fileName');
   }
 
-  Future<void> ensureLoaded() async {
-    if (_loaded) return;
-    _loaded = true;
-    final file = await _resolveStoreFile();
-    if (file == null || !file.existsSync()) return;
+  Future<void> ensureLoaded() => _loadFuture ??= _load();
+
+  Future<void> _load() async {
     try {
+      final file = await _resolveStoreFile();
+      if (!await file.exists()) return;
       final decoded = jsonDecode(await file.readAsString());
-      if (decoded is Map<String, dynamic>) {
-        _lastScanId = decoded['scanId']?.toString();
-        _generatedAt = decoded['generatedAt']?.toString();
-        final list = decoded['hits'];
-        if (list is List) {
-          _hits
-            ..clear()
-            ..addAll(list.whereType<Map>().map((m) => SentinelHit.fromJson(m.cast<String, dynamic>())));
-        }
+      if (decoded is! Map<String, dynamic>) {
+        throw const FormatException('Sentinel store is not an object');
       }
+      if (decoded['schemaVersion'] != schemaVersion) {
+        throw const FormatException('Unsupported Sentinel store schema');
+      }
+      final rawHits = decoded['hits'];
+      if (rawHits is! List) {
+        throw const FormatException('Sentinel store hits are missing');
+      }
+      final loadedHits = rawHits
+          .whereType<Map>()
+          .map((entry) => SentinelHit.fromJson(entry.cast<String, dynamic>()))
+          .toList();
+      _hits
+        ..clear()
+        ..addAll(loadedHits);
+      _lastScanId = decoded['scanId']?.toString();
+      _generatedAt = decoded['generatedAt']?.toString();
       notifyListeners();
-    } catch (e) {
-      debugPrint('SENTINEL: Failed to load $fileName: $e');
+    } catch (error, stackTrace) {
+      _loadFuture = null;
+      debugPrint('SENTINEL: Failed to load $fileName: $error');
+      Error.throwWithStackTrace(error, stackTrace);
     }
   }
 
-  Future<void> saveAtomically() async {
+  Future<void> saveAtomically() {
+    final next = _pendingSave.then((_) => _writeSnapshot());
+    _pendingSave = next.then<void>(
+      (_) {},
+      onError: (Object error, StackTrace stackTrace) {
+        debugPrint('SENTINEL: Atomic save failed: $error');
+      },
+    );
+    return next;
+  }
+
+  Future<void> _writeSnapshot() async {
     final file = await _resolveStoreFile();
-    if (file == null) return;
     final partFile = File('${file.path}.part');
     final nowIso = DateTime.now().toUtc().toIso8601String();
-    _generatedAt ??= nowIso;
     final payload = <String, dynamic>{
       'schemaVersion': schemaVersion,
       'scanId': _lastScanId ?? nowIso,
-      'generatedAt': _generatedAt,
-      'hits': _hits.map((h) => h.toJson()).toList(),
+      'generatedAt': _generatedAt ?? nowIso,
+      'hits': _hits.map((hit) => hit.toJson()).toList(),
     };
-    try {
-      await partFile.writeAsString(const JsonEncoder.withIndent('  ').convert(payload), flush: true);
-      if (partFile.existsSync() && partFile.lengthSync() > 10) {
-        await partFile.rename(file.path);
-      }
-    } catch (e) {
-      debugPrint('SENTINEL: Atomic save failed: $e');
-    }
+    await partFile.writeAsString(
+      const JsonEncoder.withIndent('  ').convert(payload),
+      flush: true,
+    );
+    await partFile.rename(file.path);
   }
 
   Future<SentinelSummary> sentinelSummary() async {
@@ -454,6 +469,9 @@ class SentinelStore extends ChangeNotifier {
 
   Future<SentinelSummary> sentinelScan({Future<List<Map<String, dynamic>>> Function()? trackProvider}) async {
     await ensureLoaded();
+    if (trackProvider == null) {
+      throw StateError('SCAN BLOCKED: A track provider is required.');
+    }
     if (_scanning) return sentinelSummary();
     if (isHeavyOperationActive?.call() == true) {
       throw StateError('SCAN BLOCKED: Forge, Pipeline, or FFmpeg is currently active.');
@@ -462,15 +480,17 @@ class SentinelStore extends ChangeNotifier {
     _cancelRequested = false;
     notifyListeners();
     final scanId = DateTime.now().toUtc().toIso8601String();
-    _lastScanId = scanId;
-    _generatedAt = scanId;
+    final previousHits = List<SentinelHit>.of(_hits);
+    final previousScanId = _lastScanId;
+    final previousGeneratedAt = _generatedAt;
     try {
-      if (trackProvider != null) {
         final rawTracks = await trackProvider();
         final existingById = <String, SentinelHit>{for (final h in _hits) h.id: h};
         final nextHits = <SentinelHit>[];
         for (var i = 0; i < rawTracks.length; i++) {
-          if (_cancelRequested || isHeavyOperationActive?.call() == true) break;
+          if (_cancelRequested || isHeavyOperationActive?.call() == true) {
+            throw StateError('SCAN CANCELLED: Existing results were preserved.');
+          }
           if (i > 0 && i % 25 == 0) await Future<void>.delayed(const Duration(milliseconds: 8));
           final item = rawTracks[i];
           final path = (item['path'] ?? '').toString();
@@ -516,11 +536,22 @@ class SentinelStore extends ChangeNotifier {
             scanId: scanId,
           ));
         }
+        if (_cancelRequested || isHeavyOperationActive?.call() == true) {
+          throw StateError('SCAN CANCELLED: Existing results were preserved.');
+        }
         _hits
           ..clear()
           ..addAll(nextHits);
+        _lastScanId = scanId;
+        _generatedAt = scanId;
         await saveAtomically();
-      }
+    } catch (_) {
+      _hits
+        ..clear()
+        ..addAll(previousHits);
+      _lastScanId = previousScanId;
+      _generatedAt = previousGeneratedAt;
+      rethrow;
     } finally {
       _scanning = false;
       notifyListeners();
@@ -535,15 +566,22 @@ class SentinelStore extends ChangeNotifier {
     final idx = _hits.indexWhere((h) => h.id == hitId);
     if (idx < 0 || _hits[idx].path.isEmpty) return false;
     final hit = _hits[idx];
+    final handler = onOpenInForge;
+    if (handler == null) return false;
+    handler(hit);
     _hits[idx] = hit.copyWith(status: SentinelStatus.inForge, lastSeen: DateTime.now().toUtc().toIso8601String());
     await saveAtomically();
     notifyListeners();
-    onOpenInForge?.call(hit);
     return true;
   }
 
   Future<int> sentinelSendToPipeline(List<String> hitIds) async {
     await ensureLoaded();
+    final handler = onSendToPipeline;
+    if (handler == null) return 0;
+    final selected = _hits.where((hit) => hitIds.contains(hit.id)).toList();
+    if (selected.isEmpty) return 0;
+    await handler(List<SentinelHit>.unmodifiable(selected));
     var count = 0;
     final nowIso = DateTime.now().toUtc().toIso8601String();
     for (var i = 0; i < _hits.length; i++) {
