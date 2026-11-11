@@ -6,6 +6,7 @@
 import yt_dlp
 import json
 import os
+import re
 import shutil
 import urllib.request
 
@@ -63,8 +64,116 @@ def _base_opts():
     }
 
 
+_FFMPEGKIT = {"classes": None, "installed": False, "attempted": False, "version": ""}
+
+
+def _resolve_ffmpegkit_classes():
+    if _FFMPEGKIT["classes"] is not None:
+        return _FFMPEGKIT["classes"]
+    try:
+        from com.arthenica.ffmpegkit import FFmpegKit, FFprobeKit, ReturnCode
+
+        classes = (FFmpegKit, FFprobeKit, ReturnCode)
+    except Exception:
+        try:
+            from java import jclass
+
+            classes = (
+                jclass("com.arthenica.ffmpegkit.FFmpegKit"),
+                jclass("com.arthenica.ffmpegkit.FFprobeKit"),
+                jclass("com.arthenica.ffmpegkit.ReturnCode"),
+            )
+        except Exception:
+            return None
+    try:
+        for cls, names in (
+            (classes[0], ("executeWithArguments",)),
+            (classes[1], ("executeWithArguments",)),
+            (classes[2], ("isSuccess", "isCancel")),
+        ):
+            for name in names:
+                if not hasattr(cls, name):
+                    return None
+    except Exception:
+        return None
+    _FFMPEGKIT["classes"] = classes
+    return classes
+
+
+def _ffmpegkit_exec(argv):
+    classes = _resolve_ffmpegkit_classes()
+    if classes is None:
+        raise OSError("FFmpegKit Java bridge unavailable")
+    FFmpegKit, FFprobeKit, ReturnCode = classes
+    prog = os.path.basename(str(argv[0]))
+    args = [str(a) for a in argv[1:]]
+    if prog == "ffprobe" and "-print_format" in args and "json" in args:
+        args = ["-v", "quiet"] + args
+    try:
+        if prog == "ffprobe":
+            session = FFprobeKit.executeWithArguments(args)
+        else:
+            session = FFmpegKit.executeWithArguments(args)
+        rc_obj = session.getReturnCode()
+        if rc_obj is None:
+            return "", 1
+        if ReturnCode.isSuccess(rc_obj):
+            rc = 0
+        elif ReturnCode.isCancel(rc_obj):
+            rc = 255
+        else:
+            rc = 1
+        return session.getOutput() or "", rc
+    except OSError:
+        raise
+    except Exception as e:
+        raise OSError("FFmpegKit execution failed: %s" % e)
+
+
+def _install_ffmpegkit_backend():
+    if _FFMPEGKIT["attempted"]:
+        return _FFMPEGKIT["installed"]
+    _FFMPEGKIT["attempted"] = True
+    try:
+        if _resolve_ffmpegkit_classes() is None:
+            return False
+        out, rc = _ffmpegkit_exec(["ffmpeg", "-version"])
+        found = re.search(r"version\s+([-0-9._a-zA-Z]+)", out or "")
+        if rc != 0 or not found:
+            return False
+        _FFMPEGKIT["version"] = found.group(1)
+        orig_run = yt_dlp.utils.Popen.run
+
+        @classmethod
+        def _patched_run(cls, *args, **kwargs):
+            cmd = args[0] if args else None
+            if isinstance(cmd, (list, tuple)) and cmd:
+                prog = os.path.basename(str(cmd[0]))
+                if prog in ("ffmpeg", "ffprobe"):
+                    text_mode = bool(
+                        kwargs.get("text")
+                        or kwargs.get("encoding")
+                        or kwargs.get("errors")
+                        or kwargs.get("universal_newlines")
+                    )
+                    out, rc = _ffmpegkit_exec([str(c) for c in cmd])
+                    if text_mode:
+                        return out, out, rc
+                    encoded = out.encode("utf-8", "replace")
+                    return encoded, encoded, rc
+            return orig_run(*args, **kwargs)
+
+        yt_dlp.utils.Popen.run = _patched_run
+        _FFMPEGKIT["installed"] = True
+        return True
+    except Exception:
+        return False
+
+
 def _ffmpeg_available():
-    return shutil.which("ffmpeg") is not None
+    if shutil.which("ffmpeg") is not None:
+        return True
+    return _install_ffmpegkit_backend()
 
 
 def capabilities():
@@ -72,7 +181,14 @@ def capabilities():
         version = getattr(yt_dlp.version, "__version__", "")
     except Exception:
         version = ""
-    return json.dumps({"status": "success", "ffmpeg": _ffmpeg_available(), "ytdlp": version})
+    backend = _install_ffmpegkit_backend()
+    return json.dumps({
+        "status": "success",
+        "ffmpeg": _ffmpeg_available(),
+        "ffmpegkit": backend,
+        "ffmpegkit_version": _FFMPEGKIT["version"] if backend else "",
+        "ytdlp": version,
+    })
 
 
 def search_media(query, source, limit=15):
