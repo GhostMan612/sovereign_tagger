@@ -93,6 +93,12 @@ class _TabWorkbenchState extends State<TabWorkbench> {
   String _chainAddOp = "Normalize Audio (LUFS -14)";
   final List<String> _batchFiles = [];
   String _batchReport = "";
+  String _videoRotate = "NONE";
+  bool _videoFlipH = false;
+  bool _videoFlipV = false;
+  String _videoScale = "1080p";
+  String _videoCropAspect = "16:9";
+  String _targetVideoFormat = "mp4";
 
   String _pitchMode = "VARISPEED (pitch+tempo)";
   String _normMode = "TWO-PASS LOUDNORM";
@@ -218,7 +224,15 @@ class _TabWorkbenchState extends State<TabWorkbench> {
     "Firequalizer Curve EQ",
     "DC/Rumble Fix (highpass)",
     "Tone Generator (Test Signals)",
-    "Spectrogram Snapshot"
+    "Spectrogram Snapshot",
+    "Video Trim (Re-Encode)",
+    "Video Rotate / Flip",
+    "Video Scale / Resize",
+    "Video Crop (Center)",
+    "Mute Video (Drop Audio)",
+    "Extract Audio (Video to M4A)",
+    "Video Convert (Container)",
+    "Mux Video + Audio"
   ];
 
   final List<String> _formats = ["mp3", "wav", "flac", "ogg", "m4a"];
@@ -246,7 +260,22 @@ class _TabWorkbenchState extends State<TabWorkbench> {
     "DC/Rumble Fix (highpass)",
   ];
 
-  bool _isBatchable(String op) => _chainableOps.contains(op) || op == "Convert Format" || op == "Extract Audio (Video to MP3)";
+  bool _isBatchable(String op) => _chainableOps.contains(op) || op == "Convert Format" || op == "Extract Audio (Video to MP3)" || (_videoOps.contains(op) && op != "Mux Video + Audio");
+
+  static const List<String> _videoOps = [
+    "Video Trim (Re-Encode)",
+    "Video Rotate / Flip",
+    "Video Scale / Resize",
+    "Video Crop (Center)",
+    "Mute Video (Drop Audio)",
+    "Extract Audio (Video to M4A)",
+    "Video Convert (Container)",
+    "Mux Video + Audio",
+  ];
+
+  static const List<String> _videoFormats = ["mp4", "mkv", "webm"];
+
+  bool _isVideoOp(String op) => _videoOps.contains(op);
 
   Future<void> _scanLufs() async {
     if (_selectedFilePath.isEmpty || _isProcessing) return;
@@ -358,6 +387,21 @@ class _TabWorkbenchState extends State<TabWorkbench> {
           ? "FILTER '$filterName' NOT IN THIS FFMPEG BUILD. No docs returned — check Settings > FFmpeg filter list on device."
           : docs;
       _statusMessage = "ERR: FILTER '$filterName' UNAVAILABLE IN THIS BUILD. See filter docs below — do not retry blindly.";
+    });
+  }
+
+  Future<void> _reportEncoderFault(String encoderName, String output) async {
+    String docs = "";
+    try {
+      final docsSession = await FFmpegExecutor.execute('-hide_banner -h encoder=$encoderName');
+      docs = docsSession.getOutput() ?? "";
+    } catch (_) {}
+    if (!mounted) return;
+    setState(() {
+      _filterFaultReport = docs.isEmpty
+          ? "ENCODER '$encoderName' NOT IN THIS FFMPEG BUILD. No docs returned — check Settings > FFmpeg encoder list on device."
+          : docs;
+      _statusMessage = "ERR: ENCODER '$encoderName' UNAVAILABLE IN THIS BUILD. See encoder docs below — do not retry blindly.";
     });
   }
 
@@ -667,6 +711,131 @@ class _TabWorkbenchState extends State<TabWorkbench> {
     return name.contains('.') ? name.substring(0, name.lastIndexOf('.')) : name;
   }
 
+  String _videoCodecArgs(String container) {
+    switch (container) {
+      case 'webm':
+        return '-c:v libvpx-vp9 -crf 30 -b:v 0 -pix_fmt yuv420p -c:a libopus -b:a 192k';
+      default:
+        return '-c:v libx264 -preset veryfast -crf 23 -pix_fmt yuv420p -c:a aac -b:a 192k';
+    }
+  }
+
+  String _videoAudioCodecArgs(String container) {
+    return container == 'webm' ? '-c:a libopus -b:a 192k' : '-c:a aac -b:a 192k';
+  }
+
+  String _videoRotateChain() {
+    final parts = <String>[];
+    switch (_videoRotate) {
+      case "90 CW":
+        parts.add("transpose=1");
+        break;
+      case "180":
+        parts.add("transpose=1,transpose=1");
+        break;
+      case "90 CCW":
+        parts.add("transpose=2");
+        break;
+    }
+    if (_videoFlipH) parts.add("hflip");
+    if (_videoFlipV) parts.add("vflip");
+    return parts.join(',');
+  }
+
+  int _videoScaleHeight() {
+    switch (_videoScale) {
+      case "720p":
+        return 720;
+      case "480p":
+        return 480;
+      default:
+        return 1080;
+    }
+  }
+
+  String _videoCropFilter() {
+    switch (_videoCropAspect) {
+      case "4:3":
+        return "crop='min(iw,ih*4/3)':'min(ih,iw*3/4)'";
+      case "1:1":
+        return "crop='min(iw,ih)':'min(iw,ih)'";
+      case "9:16":
+        return "crop='min(iw,ih*9/16)':'min(ih,iw*16/9)'";
+      default:
+        return "crop='min(iw,ih*16/9)':'min(ih,iw*9/16)'";
+    }
+  }
+
+  String _videoOpSuffix(String op) {
+    switch (op) {
+      case "Video Trim (Re-Encode)":
+        return "_trim";
+      case "Video Rotate / Flip":
+        return "_rot";
+      case "Video Scale / Resize":
+        return "_scale";
+      case "Video Crop (Center)":
+        return "_crop";
+      case "Mute Video (Drop Audio)":
+        return "_mute";
+      case "Extract Audio (Video to M4A)":
+        return "_m4a";
+      case "Video Convert (Container)":
+        return "_conv";
+      case "Mux Video + Audio":
+        return "_mux";
+      default:
+        return "_mod";
+    }
+  }
+
+  String _buildVideoCommand(String op, String inputPath, String outPath, int? durationMs) {
+    final parts = inputPath.split('.');
+    final srcExt = parts.length > 1 ? parts.last.toLowerCase() : "";
+    final container = ['mp4', 'mkv', 'webm'].contains(srcExt) ? srcExt : "mp4";
+    final vcodecs = _videoCodecArgs(container);
+    switch (op) {
+      case "Video Trim (Re-Encode)": {
+        final timeFmt = RegExp(r'^\d{1,2}:\d{2}:\d{2}$');
+        final startText = _startCtrl.text.trim();
+        final endText = _endCtrl.text.trim();
+        if (!timeFmt.hasMatch(startText) || !timeFmt.hasMatch(endText)) throw StateError("ERR: Clip Bounds Must Be HH:MM:SS.");
+        Duration parseHms(String s) {
+          final p = s.split(':').map((e) => int.parse(e)).toList();
+          return Duration(hours: p[0], minutes: p[1], seconds: p[2]);
+        }
+        final start = parseHms(startText);
+        final end = parseHms(endText);
+        if (end <= start) throw StateError("ERR: END Must Exceed START.");
+        if (durationMs != null && end.inMilliseconds > durationMs + 500) throw StateError("ERR: END Exceeds Source Duration (${_fmtHms(Duration(milliseconds: durationMs))}).");
+        return '-y -i "$inputPath" -ss $startText -to $endText -map 0:v:0 -map 0:a? $vcodecs "$outPath"';
+      }
+      case "Video Rotate / Flip": {
+        final chain = _videoRotateChain();
+        if (chain.isEmpty) throw StateError("ERR: NOTHING TO ROTATE OR FLIP. Pick a rotation or a flip first.");
+        return '-y -i "$inputPath" -vf "$chain" -map 0:v:0 -map 0:a? $vcodecs "$outPath"';
+      }
+      case "Video Scale / Resize":
+        return '-y -i "$inputPath" -vf "scale=-2:${_videoScaleHeight()}" -map 0:v:0 -map 0:a? $vcodecs "$outPath"';
+      case "Video Crop (Center)":
+        return '-y -i "$inputPath" -vf "${_videoCropFilter()}" -map 0:v:0 -map 0:a? $vcodecs "$outPath"';
+      case "Mute Video (Drop Audio)":
+        return '-y -i "$inputPath" -map 0:v:0 -c:v copy "$outPath"';
+      case "Extract Audio (Video to M4A)":
+        return '-y -i "$inputPath" -vn -c:a aac -b:a 256k "$outPath"';
+      case "Video Convert (Container)": {
+        final targetCodecs = _videoCodecArgs(_targetVideoFormat);
+        return '-y -i "$inputPath" -map 0:v:0 -map 0:a? $targetCodecs "$outPath"';
+      }
+      case "Mux Video + Audio": {
+        if (_secondFilePath.isEmpty) throw StateError("ERR: MOUNT SECOND MEDIA FIRST (AUDIO TRACK).");
+        return '-y -i "$inputPath" -i "$_secondFilePath" -map 0:v:0 -map 1:a:0 -c:v copy ${_videoAudioCodecArgs(container)} -shortest "$outPath"';
+      }
+      default:
+        throw StateError("ERR: OP '$op' HAS NO VIDEO CHAIN.");
+    }
+  }
+
   Future<String> _injectToMediaStore(String outPath, String title) async {
     try {
       final uriString = await _storageChannel.invokeMethod('addToMediaStore', {'filePath': outPath, 'title': title});
@@ -683,10 +852,16 @@ class _TabWorkbenchState extends State<TabWorkbench> {
     if (fault != null) {
       setState(() => _isProcessing = false);
       await _reportFilterFault(fault, output);
-    } else {
-      final tail = output.length > 300 ? output.substring(output.length - 300) : output;
-      setState(() { _isProcessing = false; _statusMessage = "ERR: FFmpeg Failed (rc=${session.getReturnCode()}). Last output:\n$tail"; });
+      return;
     }
+    final encoderFault = RegExp(r"Unknown encoder '([^']+)'").firstMatch(output);
+    if (encoderFault != null) {
+      setState(() => _isProcessing = false);
+      await _reportEncoderFault(encoderFault.group(1)!, output);
+      return;
+    }
+    final tail = output.length > 300 ? output.substring(output.length - 300) : output;
+    setState(() { _isProcessing = false; _statusMessage = "ERR: FFmpeg Failed (rc=${session.getReturnCode()}). Last output:\n$tail"; });
   }
 
   Future<void> _pickMixTrack() async {
@@ -1178,6 +1353,12 @@ class _TabWorkbenchState extends State<TabWorkbench> {
         ext = _targetFormat;
       } else if (_selectedOperation == "Extract Audio (Video to MP3)") {
         ext = "mp3";
+      } else if (_selectedOperation == "Extract Audio (Video to M4A)") {
+        ext = "m4a";
+      } else if (_selectedOperation == "Video Convert (Container)") {
+        ext = _targetVideoFormat;
+      } else if (_isVideoOp(_selectedOperation)) {
+        ext = ['mp4', 'mkv', 'webm'].contains(srcExt) ? srcExt : "mp4";
       } else {
         ext = _preservedContainers.contains(srcExt) ? srcExt : "flac";
       }
@@ -1270,6 +1451,19 @@ class _TabWorkbenchState extends State<TabWorkbench> {
         command = '-y -i "$_selectedFilePath" -vn -c:a libmp3lame -b:a 320k "$outPath"';
       } else if (_selectedOperation == "Convert Format") {
         command = '-y -i "$_selectedFilePath" -vn ${_audioCodecArgs(_targetFormat)} "$outPath"';
+      } else if (_isVideoOp(_selectedOperation)) {
+        final streams = await probeStreams(_selectedFilePath);
+        if (!mounted) return;
+        if ((streams['video'] ?? 0) == 0) {
+          setState(() { _isProcessing = false; _statusMessage = "ERR: NOT A VIDEO FILE. Mount an MP4, MKV, or WebM first — this op needs a video stream."; });
+          return;
+        }
+        try {
+          command = _buildVideoCommand(_selectedOperation, _selectedFilePath, outPath, durationMs);
+        } on StateError catch (e) {
+          setState(() { _isProcessing = false; _statusMessage = e.message; });
+          return;
+        }
       } else if (preserveOp) {
         List<String> filters;
         try {
@@ -1321,10 +1515,19 @@ class _TabWorkbenchState extends State<TabWorkbench> {
 
       if (ReturnCode.isSuccess(session.getReturnCode())) {
         if (!mounted) return;
+        if (_isVideoOp(_selectedOperation)) {
+          final outStreams = await probeStreams(outPath);
+          if (!mounted) return;
+          if ((outStreams['video'] ?? 0) == 0) {
+            setState(() { _isProcessing = false; _statusMessage = "ERR: RENDER PRODUCED NO VIDEO STREAM. The codec or filter dropped the video — check the encoder docs below."; });
+            return;
+          }
+        }
         setState(() => _statusMessage = "Process Complete. Injecting To MediaStore...");
         final originalName = _selectedFilePath.split('/').last;
         final baseName = originalName.contains('.') ? originalName.substring(0, originalName.lastIndexOf('.')) : originalName;
-        final payloadNote = await _injectToMediaStore(outPath, "${baseName}_mod");
+        final outSuffix = _isVideoOp(_selectedOperation) ? _videoOpSuffix(_selectedOperation) : "_mod";
+        final payloadNote = await _injectToMediaStore(outPath, "$baseName$outSuffix");
         if (!mounted) return;
         TapFeedback.machineConfirm();
         setState(() { _isProcessing = false; _statusMessage = payloadNote; });
@@ -1464,12 +1667,16 @@ class _TabWorkbenchState extends State<TabWorkbench> {
   String _outputExtFor(String inputPath, String op) {
     if (op == "Convert Format") return _targetFormat;
     if (op == "Extract Audio (Video to MP3)") return "mp3";
+    if (op == "Extract Audio (Video to M4A)") return "m4a";
+    if (op == "Video Convert (Container)") return _targetVideoFormat;
     final parts = inputPath.split('.');
     final srcExt = parts.length > 1 ? parts.last.toLowerCase() : "";
+    if (_isVideoOp(op)) return ['mp4', 'mkv', 'webm'].contains(srcExt) ? srcExt : "mp4";
     return _preservedContainers.contains(srcExt) ? srcExt : "flac";
   }
 
   String _buildTransformCommand(String op, String inputPath, String outPath, int? durationMs) {
+    if (_isVideoOp(op)) return _buildVideoCommand(op, inputPath, outPath, durationMs);
     if (op == "Convert Format") return '-y -i "$inputPath" -vn ${_audioCodecArgs(_targetFormat)} "$outPath"';
     if (op == "Extract Audio (Video to MP3)") return '-y -i "$inputPath" -vn -c:a libmp3lame -b:a 320k "$outPath"';
     if (!_chainableOps.contains(op)) throw StateError("ERR: OP '$op' IS NOT BATCHABLE.");
@@ -1487,7 +1694,7 @@ class _TabWorkbenchState extends State<TabWorkbench> {
     if (_isProcessing) return;
     List<PlatformFile> picked;
     try {
-      picked = await FilePicker.pickFiles(type: FileType.audio);
+      picked = await FilePicker.pickFiles(type: _isVideoOp(_selectedOperation) ? FileType.video : FileType.audio);
     } on PlatformException catch (e) {
       if (!mounted) return;
       setState(() => _statusMessage = "ERR: File Picker Fault: ${e.message}");
@@ -1505,7 +1712,7 @@ class _TabWorkbenchState extends State<TabWorkbench> {
   Future<void> _executeBatch() async {
     if (_isProcessing || _batchFiles.isEmpty) return;
     if (!_isBatchable(_selectedOperation)) {
-      setState(() => _statusMessage = "ERR: BATCH ONLY RUNS SINGLE-FILE TRANSFORMS. Select a DSP op, Convert Format, or Extract Audio first — Mix, Join, Duck, scans, Split, and Whisper do not batch.");
+      setState(() => _statusMessage = "ERR: BATCH ONLY RUNS SINGLE-FILE TRANSFORMS. Select a DSP op, Convert Format, Extract Audio, or a video op first — Mix, Join, Duck, Mux, scans, Split, and Whisper do not batch.");
       return;
     }
     setState(() { _isProcessing = true; _opProgress = 0.0; _batchReport = "Batch Running: $_selectedOperation over ${_batchFiles.length} file(s)..."; });
@@ -1519,6 +1726,13 @@ class _TabWorkbenchState extends State<TabWorkbench> {
         setState(() { _opProgress = i / _batchFiles.length; _statusMessage = "Batch ${i + 1}/${_batchFiles.length}: ${path.split('/').last}"; });
         try {
           final dur = await probeDurationMs(path);
+          if (_isVideoOp(_selectedOperation)) {
+            final inStreams = await probeStreams(path);
+            if ((inStreams['video'] ?? 0) == 0) {
+              lines.add("SKIP ${path.split('/').last}: NOT A VIDEO FILE");
+              continue;
+            }
+          }
           final ext = _outputExtFor(path, _selectedOperation);
           final outPath = "$tempDir/workbench_batch_${DateTime.now().millisecondsSinceEpoch}_$i.$ext";
           final command = _buildTransformCommand(_selectedOperation, path, outPath, dur);
@@ -1529,8 +1743,15 @@ class _TabWorkbenchState extends State<TabWorkbench> {
             lines.add("FAIL ${path.split('/').last}: ${fault != null ? "FILTER '$fault' UNAVAILABLE IN THIS BUILD" : "rc=${session.getReturnCode()}"}");
             continue;
           }
+          if (_isVideoOp(_selectedOperation)) {
+            final outStreams = await probeStreams(outPath);
+            if ((outStreams['video'] ?? 0) == 0) {
+              lines.add("FAIL ${path.split('/').last}: NO VIDEO STREAM IN OUTPUT");
+              continue;
+            }
+          }
           try {
-            final uriString = await _storageChannel.invokeMethod('addToMediaStore', {'filePath': outPath, 'title': "${_baseNameOf(path)}_mod"});
+            final uriString = await _storageChannel.invokeMethod('addToMediaStore', {'filePath': outPath, 'title': "${_baseNameOf(path)}${_isVideoOp(_selectedOperation) ? _videoOpSuffix(_selectedOperation) : '_mod'}"});
             lines.add("OK ${path.split('/').last} -> $uriString");
             File(outPath).delete().ignore();
             ok++;
@@ -1597,6 +1818,8 @@ class _TabWorkbenchState extends State<TabWorkbench> {
                   _wmb('SIDECHAIN DUCK: main file is the music to duck, second file is the voice sidechain — threshold/ratio/attack/release. CHORUS: spatial depth in ms. COMPAND: gentle dynamic curve with makeup gain. FIREQUALIZER: smooth curve EQ driven by the 5 Parametric EQ sliders. TRIM TO SILENCE (PRECISE): 50ms windows at -50dB, tighter than TRIM SILENCE.'),
                   _wmh('SPLIT ON SILENCE'),
                   _wmb('Cuts the mounted file at every detected silence (-45dB, min 0.3s) into numbered tracks (<name>_split_01, _split_02...). Segments shorter than the minimum length are dropped. Same container, re-encoded for sample-accurate cuts. If no splittable silence is found, nothing is written.'),
+                  _wmh('VIDEO OPS'),
+                  _wmb('VIDEO TRIM re-encodes between START/END for frame-accurate cuts (Clip is -c copy, keyframe boundaries only). ROTATE/FLIP uses transpose/hflip/vflip — the same orientation map as the photo editor. SCALE keeps aspect (even widths via -2). CROP center-crops to 16:9 / 4:3 / 1:1 / 9:16. MUTE drops the audio stream with -c:v copy. EXTRACT AUDIO (M4A) pulls AAC 256k; MP3 extract already existed. VIDEO CONVERT re-encodes per container (libx264+aac for mp4/mkv, libvpx-vp9+opus for webm). MUX VIDEO + AUDIO lays a second audio file over the video with explicit -map 0:v:0 -map 1:a:0, video copied, audio re-encoded. Every video render is verified with probeStreams — an output with no video stream is reported, never injected silently. Video ops batch like audio ops (Mux does not — it needs a second file). Video ops do not chain — chains are audio filter chains only.'),
                   _wmh('OP CHAINS'),
                   _wmb('Build an ordered chain from the 20 single-file DSP ops and save it by name. RUN CHAIN applies every op in ONE ffmpeg pass (filters concatenated) and writes one file. Normalize inside a chain is single-pass loudnorm — the two-pass analysis only runs when Normalize is executed directly. Mix/Join/Duck/Clip/Convert cannot be chained — they need a second file or a different shape.'),
                   _wmh('BATCH QUEUE'),
@@ -1606,7 +1829,7 @@ class _TabWorkbenchState extends State<TabWorkbench> {
                   _wmh('WAVE SELECTION'),
                   _wmb('Drag on WAVEFORM STUDIO to select a region — DELETE REGION removes exactly that selection to the millisecond. Typing bounds by hand clears the exact selection and uses the typed HH:MM:SS instead.'),
                   _wmh('FILTER FAULTS'),
-                  _wmb('If a filter is missing from this FFmpeg build (sidechaincompress, chorus, compand, firequalizer, volumedetect, silencedetect are all unverified on device), the op fails loudly with the filter name and its real docs — never a silent no-op.'),
+                  _wmb('If a filter is missing from this FFmpeg build (sidechaincompress, chorus, compand, firequalizer, volumedetect, silencedetect are all unverified on device), the op fails loudly with the filter name and its real docs — never a silent no-op. Missing encoders (libx264, libvpx-vp9) fail the same loud way with their real -h docs.'),
                   _wmh('WHISPER'),
                   _wmb('Transcribe produces a plain text block and writes a sidecar .srt. First run extracts the bundled 141MB model. Cancel stops the FFmpeg session and discards the partial output.'),
                   _wmh('RECORDER'),
@@ -1931,6 +2154,164 @@ class _TabWorkbenchState extends State<TabWorkbench> {
                         ),
                       ],
                     ),
+                  ],
+
+                  if (_selectedOperation == "Video Trim (Re-Encode)") ...[
+                    Row(
+                      children: [
+                        Expanded(
+                          child: TextField(
+                            controller: _startCtrl,
+                            onChanged: (_) { _waveSelInMs = null; _waveSelOutMs = null; },
+                            style: TextStyle(fontFamily: 'ShareTechMono', color: themeColor),
+                            decoration: InputDecoration(
+                              labelText: 'START [HH:MM:SS]',
+                              labelStyle: const TextStyle(fontFamily: 'ShareTechMono', color: Colors.white54),
+                              enabledBorder: OutlineInputBorder(borderSide: BorderSide(color: themeColor.withAlpha(76))),
+                              focusedBorder: OutlineInputBorder(borderSide: BorderSide(color: themeColor)),
+                              filled: true,
+                              fillColor: Colors.black,
+                            ),
+                            enabled: !_isProcessing
+                          )
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: TextField(
+                            controller: _endCtrl,
+                            onChanged: (_) { _waveSelInMs = null; _waveSelOutMs = null; },
+                            style: TextStyle(fontFamily: 'ShareTechMono', color: themeColor),
+                            decoration: InputDecoration(
+                              labelText: 'END [HH:MM:SS]',
+                              labelStyle: const TextStyle(fontFamily: 'ShareTechMono', color: Colors.white54),
+                              enabledBorder: OutlineInputBorder(borderSide: BorderSide(color: themeColor.withAlpha(76))),
+                              focusedBorder: OutlineInputBorder(borderSide: BorderSide(color: themeColor)),
+                              filled: true,
+                              fillColor: Colors.black,
+                            ),
+                            enabled: !_isProcessing
+                          )
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    const Text("Re-encodes for frame-accurate cuts. Clip is -c copy (keyframe boundaries only).", style: TextStyle(fontFamily: 'ShareTechMono', fontSize: 10, color: Colors.white38)),
+                  ],
+
+                  if (_selectedOperation == "Video Rotate / Flip") ...[
+                    Container(
+                      margin: const EdgeInsets.only(top: 12),
+                      padding: const EdgeInsets.all(16),
+                      decoration: BoxDecoration(color: Colors.black, border: Border.all(color: themeColor.withAlpha(127))),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              const Text("ROTATE:", style: TextStyle(fontFamily: 'ShareTechMono', fontSize: 12, color: Colors.white54)),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: DropdownButtonHideUnderline(
+                                  child: DropdownButton<String>(
+                                    value: _videoRotate,
+                                    isExpanded: true,
+                                    dropdownColor: Colors.black,
+                                    icon: Icon(Icons.arrow_drop_down, color: themeColor),
+                                    items: const ["NONE", "90 CW", "180", "90 CCW"].map((r) => DropdownMenuItem<String>(
+                                      value: r,
+                                      child: Text(r, style: const TextStyle(fontFamily: 'ShareTechMono', fontSize: 13, color: Colors.white)),
+                                    )).toList(),
+                                    onChanged: _isProcessing ? null : (v) { if (v != null) setState(() => _videoRotate = v); },
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                          SwitchListTile(
+                            title: const Text("FLIP HORIZONTAL", style: TextStyle(fontFamily: 'ShareTechMono', fontWeight: FontWeight.bold, color: Colors.white70)),
+                            activeThumbColor: themeColor,
+                            activeTrackColor: themeColor.withAlpha(76),
+                            value: _videoFlipH,
+                            onChanged: _isProcessing ? null : (val) => setState(() => _videoFlipH = val),
+                          ),
+                          SwitchListTile(
+                            title: const Text("FLIP VERTICAL", style: TextStyle(fontFamily: 'ShareTechMono', fontWeight: FontWeight.bold, color: Colors.white70)),
+                            activeThumbColor: themeColor,
+                            activeTrackColor: themeColor.withAlpha(76),
+                            value: _videoFlipV,
+                            onChanged: _isProcessing ? null : (val) => setState(() => _videoFlipV = val),
+                          ),
+                          const Text("Rotation runs first (transpose), then flips. Audio is copied untouched.", style: TextStyle(fontFamily: 'ShareTechMono', fontSize: 10, color: Colors.white38)),
+                        ],
+                      ),
+                    ),
+                  ],
+
+                  if (_selectedOperation == "Video Scale / Resize") ...[
+                    Container(
+                      margin: const EdgeInsets.only(top: 12),
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                      decoration: BoxDecoration(color: Colors.black, border: Border.all(color: themeColor.withAlpha(127))),
+                      child: DropdownButtonHideUnderline(
+                        child: DropdownButton<String>(
+                          value: _videoScale,
+                          isExpanded: true,
+                          dropdownColor: Colors.black,
+                          icon: Icon(Icons.arrow_drop_down, color: themeColor),
+                          items: const ["1080p", "720p", "480p"].map((s) => DropdownMenuItem<String>(
+                            value: s,
+                            child: Text("SCALE TO $s (aspect preserved)", style: const TextStyle(fontFamily: 'ShareTechMono', color: Colors.white)),
+                          )).toList(),
+                          onChanged: _isProcessing ? null : (v) { if (v != null) setState(() => _videoScale = v); },
+                        ),
+                      ),
+                    ),
+                  ],
+
+                  if (_selectedOperation == "Video Crop (Center)") ...[
+                    Container(
+                      margin: const EdgeInsets.only(top: 12),
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                      decoration: BoxDecoration(color: Colors.black, border: Border.all(color: themeColor.withAlpha(127))),
+                      child: DropdownButtonHideUnderline(
+                        child: DropdownButton<String>(
+                          value: _videoCropAspect,
+                          isExpanded: true,
+                          dropdownColor: Colors.black,
+                          icon: Icon(Icons.arrow_drop_down, color: themeColor),
+                          items: const ["16:9", "4:3", "1:1", "9:16"].map((a) => DropdownMenuItem<String>(
+                            value: a,
+                            child: Text("CENTER CROP $a", style: const TextStyle(fontFamily: 'ShareTechMono', color: Colors.white)),
+                          )).toList(),
+                          onChanged: _isProcessing ? null : (v) { if (v != null) setState(() => _videoCropAspect = v); },
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    const Text("Center crop — the frame is cut equally from both sides.", style: TextStyle(fontFamily: 'ShareTechMono', fontSize: 10, color: Colors.white38)),
+                  ],
+
+                  if (_selectedOperation == "Video Convert (Container)") ...[
+                    Container(
+                      margin: const EdgeInsets.only(top: 12),
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                      decoration: BoxDecoration(color: Colors.black, border: Border.all(color: themeColor.withAlpha(127))),
+                      child: DropdownButtonHideUnderline(
+                        child: DropdownButton<String>(
+                          value: _targetVideoFormat,
+                          isExpanded: true,
+                          dropdownColor: Colors.black,
+                          icon: Icon(Icons.arrow_drop_down, color: themeColor),
+                          items: _videoFormats.map((fmt) => DropdownMenuItem<String>(
+                            value: fmt,
+                            child: Text("TARGET CONTAINER: .$fmt", style: const TextStyle(fontFamily: 'ShareTechMono', color: Colors.white)),
+                          )).toList(),
+                          onChanged: _isProcessing ? null : (v) { if (v != null) setState(() => _targetVideoFormat = v); },
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    const Text("libx264 + aac for mp4/mkv, libvpx-vp9 + opus for webm. A missing encoder fails loudly with its real docs.", style: TextStyle(fontFamily: 'ShareTechMono', fontSize: 10, color: Colors.white38)),
                   ],
 
                   if (_selectedOperation == "Convert Format") ...[
@@ -2610,7 +2991,7 @@ class _TabWorkbenchState extends State<TabWorkbench> {
                     ),
                   ],
 
-                  if (_selectedOperation == "Crossfade Join" || _selectedOperation == "Sidechain Duck (sidechaincompress)" || _selectedOperation == "Gapless Join (concat)") ...[
+                  if (_selectedOperation == "Crossfade Join" || _selectedOperation == "Sidechain Duck (sidechaincompress)" || _selectedOperation == "Gapless Join (concat)" || _selectedOperation == "Mux Video + Audio") ...[
                     Container(
                       margin: const EdgeInsets.only(top: 12),
                       padding: const EdgeInsets.all(16),
@@ -2648,6 +3029,10 @@ class _TabWorkbenchState extends State<TabWorkbench> {
                           if (_selectedOperation == "Gapless Join (concat)") ...[
                             const SizedBox(height: 8),
                             const Text("Butt-join, no crossfade, no gap. Both files resampled to 48k stereo first.", style: TextStyle(fontFamily: 'ShareTechMono', fontSize: 10, color: Colors.white54)),
+                          ],
+                          if (_selectedOperation == "Mux Video + Audio") ...[
+                            const SizedBox(height: 8),
+                            const Text("MAIN = VIDEO • SECOND = AUDIO TRACK. Video is copied, audio re-encoded (aac / opus for webm).", style: TextStyle(fontFamily: 'ShareTechMono', fontSize: 10, color: Colors.white54)),
                           ],
                         ],
                       ),
@@ -2801,7 +3186,7 @@ class _TabWorkbenchState extends State<TabWorkbench> {
                       ),
                   ],
 
-                  if (_selectedOperation != "Clip Media (The Scalpel)" && _selectedOperation != "Extract Audio (Video to MP3)") ...[
+                  if (_selectedOperation != "Clip Media (The Scalpel)" && _selectedOperation != "Extract Audio (Video to MP3)" && !_isVideoOp(_selectedOperation)) ...[
                     Builder(builder: (context) {
                       final pathParts = _selectedFilePath.split('.');
                       final srcE = pathParts.length > 1 ? pathParts.last.toLowerCase() : "";
