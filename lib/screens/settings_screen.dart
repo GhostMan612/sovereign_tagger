@@ -120,7 +120,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       final success = await const MethodChannel('com.sovereign.tagger/storage').invokeMethod('exportConfig', {'data': encryptedData});
       if (!mounted) return;
       if (success == true) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('> EXPORTED CONFIG BINARY TO DOWNLOADS FOLDER.', style: TextStyle(fontFamily: 'ShareTechMono')), backgroundColor: Colors.black, shape: RoundedRectangleBorder(side: BorderSide(color: Colors.cyanAccent))));
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('> CONFIG EXPORTED TO DOWNLOADS. NOT ENCRYPTED; CONTAINS API KEYS.', style: TextStyle(fontFamily: 'ShareTechMono')), backgroundColor: Colors.black, shape: RoundedRectangleBorder(side: BorderSide(color: Colors.cyanAccent))));
       } else {
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('> ERR: FAILED TO EXPORT CONFIG.', style: TextStyle(fontFamily: 'ShareTechMono')), backgroundColor: Colors.black, shape: RoundedRectangleBorder(side: BorderSide(color: Colors.redAccent))));
       }
@@ -362,7 +362,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       
       if (!mounted) return;
       if (success == true) {
-        setState(() => _backupStatus = "BACKUP COMPLETE ✓\nEncrypted binary written to Downloads.");
+        setState(() => _backupStatus = "BACKUP COMPLETE ✓\nNOT ENCRYPTED. Contains API keys; keep this file private.");
       } else {
         setState(() => _backupStatus = "ERR: Backup write failed.");
       }
@@ -1022,7 +1022,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
             actions: [
               IconButton(icon: const Icon(Icons.file_download, color: Colors.cyanAccent), tooltip: "MANUAL IMPORT .BIN", onPressed: _importConfig),
-              IconButton(icon: const Icon(Icons.file_upload, color: Colors.cyanAccent), tooltip: "EXPORT .BIN TO DOWNLOADS", onPressed: _exportConfig),
+              IconButton(icon: const Icon(Icons.file_upload, color: Colors.cyanAccent), tooltip: "EXPORT .BIN TO DOWNLOADS (NOT ENCRYPTED)", onPressed: _exportConfig),
             ],
           ),
           body: Stack(
@@ -1415,7 +1415,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
                 const Text("> BACKUP & RESTORE", style: TextStyle(fontFamily: 'ShareTechMono', fontSize: 16, fontWeight: FontWeight.bold, color: Colors.greenAccent)),
                 const SizedBox(height: 8),
-                const Text("EXPORT/IMPORT SETTINGS + PLAYLISTS + EQ PRESETS AS ENCRYPTED JSON BINARY.", style: TextStyle(fontFamily: 'ShareTechMono', color: Colors.white54, fontSize: 11)),
+                const Text("BACKUP CONTAINS API KEYS. .BIN IS OBFUSCATED, NOT ENCRYPTED; KEEP PRIVATE.", style: TextStyle(fontFamily: 'ShareTechMono', color: Colors.white54, fontSize: 11)),
                 const SizedBox(height: 16),
                 Row(
                   children: [
