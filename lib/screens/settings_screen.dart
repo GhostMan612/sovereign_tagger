@@ -49,6 +49,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   bool _isDoctorRunning = false;
   String _doctorReport = "";
   String _fullStackStatus = "Idle.";
+  bool _dartSpider = false;
   bool _isProbing = false;
   String _probeReport = "";
 
@@ -73,6 +74,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       _acrKeyCtrl.text = prefs.getString('acr_key') ?? "";
       _acrSecretCtrl.text = prefs.getString('acr_secret') ?? "";
       _hfTokenCtrl.text = prefs.getString('hf_token') ?? "";
+      _dartSpider = prefs.getBool('dart_spider') ?? false;
     });
 
     GhostSettings.load(prefs);
@@ -1284,6 +1286,20 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       ],
                     ],
                   ),
+                ),
+                SwitchListTile(
+                  dense: true,
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text("DART SPIDER (EXPERIMENTAL)", style: TextStyle(fontFamily: 'ShareTechMono', fontSize: 12, color: Colors.white70)),
+                  subtitle: const Text("route metadata + lyrics through the pure-Dart cascade instead of the Python spider", style: TextStyle(fontFamily: 'ShareTechMono', fontSize: 10, color: Colors.white38)),
+                  value: _dartSpider,
+                  activeThumbColor: themeColor,
+                  onChanged: (x) async {
+                    final prefs = await SharedPreferences.getInstance();
+                    await prefs.setBool('dart_spider', x);
+                    if (!mounted) return;
+                    setState(() => _dartSpider = x);
+                  },
                 ),
                 const SizedBox(height: 16),
                 Container(

@@ -8,6 +8,7 @@ import 'dart:io';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:ffmpeg_kit_extended_flutter/ffmpeg_kit_extended_flutter.dart';
+import 'dart_spider.dart';
 import 'ffmpeg_executor.dart';
 import 'media_probe.dart';
 import 'storage_client.dart';
@@ -123,14 +124,19 @@ class MetadataSources {
   static Future<SpiderResult> search({required String artist, required String title, String album = '', int durationMs = 0}) async {
     final prefs = await SharedPreferences.getInstance();
     final geniusKey = prefs.getString('genius_key') ?? '';
-    final raw = await _spider.invokeMethod('scrape', {
-      'artist': artist,
-      'title': title,
-      'album': album,
-      'durationMs': durationMs,
-      'geniusKey': geniusKey,
-    });
-    final data = jsonDecode(raw.toString()) as Map<String, dynamic>;
+    final Map<String, dynamic> data;
+    if (prefs.getBool('dart_spider') ?? false) {
+      data = await DartSpider.scrapeMetadata(artist: artist, title: title, album: album, durationMs: durationMs, geniusToken: geniusKey);
+    } else {
+      final raw = await _spider.invokeMethod('scrape', {
+        'artist': artist,
+        'title': title,
+        'album': album,
+        'durationMs': durationMs,
+        'geniusKey': geniusKey,
+      });
+      data = jsonDecode(raw.toString()) as Map<String, dynamic>;
+    }
     if (data['status'] != 'success') throw MetadataException(data['message']?.toString() ?? 'Spider fault');
     final query = (data['query'] as Map?)?.cast<String, dynamic>() ?? const {};
     return SpiderResult(
@@ -147,6 +153,11 @@ class MetadataSources {
   }
 
   static Future<({String plain, String synced})> fetchLyrics({required String artist, required String title, String album = '', int durationMs = 0}) async {
+    final prefs = await SharedPreferences.getInstance();
+    if (prefs.getBool('dart_spider') ?? false) {
+      final r = await DartSpider.fetchLyrics(artist: artist, title: title, album: album, durationMs: durationMs);
+      return (plain: r.plain, synced: r.synced);
+    }
     final raw = await _spider.invokeMethod('fetchLyrics', {'artist': artist, 'title': title, 'album': album, 'durationMs': durationMs});
     final data = jsonDecode(raw.toString()) as Map<String, dynamic>;
     return (plain: data['plain']?.toString() ?? '', synced: data['synced']?.toString() ?? '');
@@ -155,6 +166,10 @@ class MetadataSources {
   static Future<String?> fetchArtworkBase64(String url) async {
     if (url.isEmpty) return null;
     try {
+      final prefs = await SharedPreferences.getInstance();
+      if (prefs.getBool('dart_spider') ?? false) {
+        return await DartSpider.fetchArtwork(url);
+      }
       final raw = await _spider.invokeMethod('fetchArtwork', {'url': url});
       final data = jsonDecode(raw.toString()) as Map<String, dynamic>;
       if (data['status'] != 'success') return null;
