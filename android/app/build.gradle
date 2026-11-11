@@ -60,9 +60,9 @@ android {
             // Chaquopy LTS is 3.11; 3.14 is bleeding edge and will fail if chaquopy plugin <15.x. If Gradle sync fails with "Python 3.14 not found", change to "3.11".
             version "3.14"
             pip {
-                install "yt-dlp"
-                install "mutagen"
-                install "lyricsgenius"
+                install "yt-dlp==2026.10.26"
+                install "mutagen==1.48.1"
+                install "lyricsgenius==3.15.0"
             }
         }
     }
