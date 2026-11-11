@@ -13,6 +13,7 @@ import '../core/ffmpeg_executor.dart';
 import '../core/cyber_tap_feedback.dart';
 import '../core/forge_request.dart';
 import '../core/metadata_sources.dart';
+import '../core/sentinel_policy.dart';
 import '../core/storage_client.dart';
 import '../core/tag_io.dart';
 import '../core/title_cleaner.dart';
@@ -301,8 +302,7 @@ class _TabPipelineState extends State<TabPipeline> {
         final mismatch = TagIO.verify(merged, await TagIO.read(working));
         if (mismatch.isNotEmpty) throw Exception("Read-back mismatch on ${mismatch.join('/')}");
 
-        final ext = TitleCleaner.extensionOf(item.path);
-        final newName = _renameFiles ? TitleCleaner.buildFileName(artist: merged['ARTIST'] ?? '', title: merged['TITLE'] ?? '', trackNo: merged['TRACK'] ?? '', ext: ext) : null;
+        final newName = _renameFiles ? SentinelPolicy.expectedFileName(merged, displayName: item.path.split('/').last) : null;
         SaveResult result;
         if (fixInPlace && item.uri != null) {
           _updateItem(item, "Fixing Original In Place...");
@@ -500,7 +500,7 @@ class _TabPipelineState extends State<TabPipeline> {
                   _pbh('REVIEW'),
                   _pbb('Match confidence 80% and above is marked confident. The rest wait in REVIEW for you to confirm manually. OPEN IN FORGE opens a selected track for exact edits. EXECUTE BATCH starts the batch.'),
                   _pbh('WRITE POLICY'),
-                  _pbb('Confident matches are written back over their originals instead of making duplicates. You can toggle RENAME FILES TO ARTIST - TITLE and USE COPIES before running. DELETE FROM DEVICE removes a misplaced file after Android confirms it.'),
+                  _pbb('Confident matches are written back over their originals instead of making duplicates. You can toggle RENAME FILES TO POLICY NAME and USE COPIES before running. DELETE FROM DEVICE removes a misplaced file after Android confirms it.'),
                   _pbh('RUNNINGS'),
                   _pbb('Long-press a track to RE-IDENTIFY FROM SCRATCH or OPEN IN FORGE. ADD more tracks to the library picker or FILES adds another group to the existing run. REMOVE FROM BATCH pulls it out before EXECUTING. When complete, PROCESSED items play or send to the Forge.'),
                 ],
@@ -574,7 +574,7 @@ class _TabPipelineState extends State<TabPipeline> {
                     Wrap(
                       spacing: 8,
                       children: [
-                        _toggle("RENAME FILES TO ARTIST - TITLE", _renameFiles, (v) => setState(() => _renameFiles = v), themeColor),
+                        _toggle("RENAME FILES TO POLICY NAME", _renameFiles, (v) => setState(() => _renameFiles = v), themeColor),
                         _toggle("INCLUDE PRISTINE", _includePristine, (v) => setState(() => _includePristine = v), themeColor),
                       ],
                     ),

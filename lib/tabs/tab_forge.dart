@@ -13,6 +13,7 @@ import '../core/cyber_tap_feedback.dart';
 import '../core/forge_request.dart';
 import '../core/lrc.dart';
 import '../core/metadata_sources.dart';
+import '../core/sentinel_policy.dart';
 import '../core/storage_client.dart';
 import '../core/tag_io.dart';
 import '../core/title_cleaner.dart';
@@ -421,8 +422,10 @@ class _TabForgeState extends State<TabForge> {
   }
 
   void _autoName({bool silent = false}) {
-    final ext = TitleCleaner.extensionOf(_workingPath);
-    final name = TitleCleaner.buildFileName(artist: _v('ARTIST'), title: _v('TITLE'), trackNo: _v('TRACK'), ext: ext);
+    final name = SentinelPolicy.expectedFileName(
+      {'TITLE': _v('TITLE'), 'ARTIST': _v('ARTIST'), 'ALBUM_ARTIST': _v('ALBUM_ARTIST'), 'TRACK': _v('TRACK')},
+      displayName: _workingPath.split('/').last,
+    );
     _fileNameCtrl.text = name;
     _fileNameTouched = !silent;
     if (!silent) setState(() => _dirty = true);
@@ -610,7 +613,7 @@ class _TabForgeState extends State<TabForge> {
     final meta = _formMetadata();
     final title = _v('TITLE');
     final desiredName = TitleCleaner.withExtension(
-      _fileNameCtrl.text.trim().isEmpty ? TitleCleaner.buildFileName(artist: _v('ARTIST'), title: title, trackNo: _v('TRACK'), ext: ext) : _fileNameCtrl.text.trim(),
+      _fileNameCtrl.text.trim().isEmpty ? SentinelPolicy.expectedFileName(meta, displayName: _workingPath.split('/').last) : _fileNameCtrl.text.trim(),
       ext,
     );
 

@@ -452,7 +452,7 @@ class GhostBrain {
     _KbEntry('forge', 'Editing tags', 'forge tag edit fix title artist album year genre mount file rename name song',
       [
         "FORGE is the tag editor. MOUNT AUDIO FILE, or use EDIT IN FORGE from the Library or the player. Nothing touches the file until you save.",
-        "FILE NAME ON SAVE renames it too - AUTO NAME FROM TAGS builds 'NN - Artist - Title'. STRIP TO CORE and CLEAR ALL FIELDS only change the form.",
+        "FILE NAME ON SAVE renames it too - AUTO NAME FROM TAGS builds 'TT - Album Artist · Title'. STRIP TO CORE and CLEAR ALL FIELDS only change the form.",
         "Say 'extract metadata and find lyrics' and I'll pull tags + synced LRC into the Forge automatically.",
       ],
       ['Extract metadata & lyrics', 'Save & fix original', 'Find lyrics']),
@@ -484,7 +484,7 @@ class GhostBrain {
     _KbEntry('batch', 'How does batch work?', 'batch many multiple bulk all library execute review fix whole collection',
       [
         "BATCH fixes many songs at once: FROM LIBRARY picks them, EXECUTE BATCH runs the search. Android asks once for permission to modify them all.",
-        "Confident matches are fixed in place; unsure ones wait in REVIEW - OPEN IN FORGE to finish them. RENAME FILES TO ARTIST - TITLE and USE COPIES are options. Long-press to RE-IDENTIFY FROM SCRATCH.",
+        "Confident matches are fixed in place; unsure ones wait in REVIEW - OPEN IN FORGE to finish them. RENAME FILES TO POLICY NAME and USE COPIES are options. Long-press to RE-IDENTIFY FROM SCRATCH.",
       ],
       ['Save & fix original']),
     _KbEntry('library', 'The library', 'library songs albums artists folders new browse search find play all shuffle long press menu delete',
@@ -623,9 +623,9 @@ class GhostBrain {
       ['Editing tags', 'Why is this file named like that?']),
     _KbEntry('whyname', 'Why is this file named like that?', 'file name named naming policy format title artist track',
       [
-        "Today AUTO NAME FROM TAGS builds 'NN - Artist - Title'. The locked policy is 'TT - Album Artist · Title' - two-digit track, album artist, middle dot, title.",
+        "AUTO NAME FROM TAGS builds the locked policy form 'TT - Album Artist · Title' - two-digit track, album artist, middle dot, title.",
         "Featured artists go at the end as 'ft. X & Y' in both TITLE and ARTIST; ALBUM ARTIST stays the main artist only. Version noise like (Remastered) is stripped from the file name, kept in the tag.",
-        "When Sentinel lands, it will list every file whose name doesn't match its tags.",
+        "Sentinel lists every file whose name doesn't match its tags - open the Library shield to see the hit-list.",
       ],
       ['Editing tags', 'Save & fix original']),
     _KbEntry('self', 'What can you do?', 'ghost you your help commands abilities can do what who are',
@@ -1250,7 +1250,7 @@ class GhostBrain {
     if (text.contains(' fix this ') || text.contains(' tag this ') || text.contains(' edit this ') || text.contains(' forge this ') || text.contains(' fix it ') || text.contains(' fix the tags ') || (text.contains(' rename ') && text.contains(' policy ')) || (set.contains('forge') && (set.contains('this') || set.contains('current') || set.contains('it')))) {
       if (text.contains(' rename ') && text.contains(' policy ')) {
         if (!world.forgeCurrent()) return const GhostReply("Nothing is playing to fix. Mount a file in the FORGE, or play a song first.");
-        return const GhostReply("Mounted in the FORGE. Type the policy name in FILE NAME ON SAVE - 'TT - Album Artist · Title'. The new auto-name lands with Sentinel; until then AUTO NAME still builds the old 'NN - Artist - Title'.", tone: GhostTone.happy, chips: ['Save & fix original']);
+        return const GhostReply("Mounted in the FORGE. Tap AUTO NAME FROM TAGS and the file name fills in as 'TT - Album Artist · Title'.", tone: GhostTone.happy, chips: ['Save & fix original']);
       }
       if ((text.contains(' fetch ') || text.contains(' get ')) && (set.contains('art') || q.rawSet.contains('cover') || q.rawSet.contains('artwork') || q.rawSet.contains('art'))) {
         final res = await world.forgeExtract(fetchMetadata: true, fetchLyrics: false);

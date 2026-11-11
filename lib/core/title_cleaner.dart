@@ -131,6 +131,18 @@ class TitleCleaner {
     return e.isEmpty ? base : '$base.$e';
   }
 
+  static String buildSentinelFileName({required String albumArtist, required String title, String trackNo = '', required String ext}) {
+    final a = sanitizeFileName(albumArtist);
+    final t = sanitizeFileName(title);
+    var base = [if (a.isNotEmpty) a, if (t.isNotEmpty) t].join(' · ');
+    if (base.isEmpty) base = 'Untitled';
+    final n = trackNo.trim().split('/').first.trim();
+    final parsed = int.tryParse(n);
+    base = '${parsed == null ? '00' : parsed.toString().padLeft(2, '0')} - $base';
+    final e = ext.startsWith('.') ? ext.substring(1) : ext;
+    return e.isEmpty ? base : '$base.$e';
+  }
+
   static String extensionOf(String path) {
     final name = path.split('/').last;
     final dot = name.lastIndexOf('.');
