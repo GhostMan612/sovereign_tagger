@@ -330,10 +330,41 @@ class SentinelScanner {
     }
   }
 
+  Future<SentinelHit?> rescanOne(SentinelHit hit) async {
+    if (_scanning) throw StateError('A Sentinel scan is already running');
+    await store.ensureLoaded();
+    final row = _MediaRow(
+      uri: hit.uri,
+      path: hit.path,
+      title: hit.tagSnapshot.title,
+      artist: hit.tagSnapshot.artist,
+      album: hit.tagSnapshot.album,
+      albumArtist: hit.tagSnapshot.albumArtist,
+      genre: hit.tagSnapshot.genre,
+      track: int.tryParse(hit.tagSnapshot.track) ?? 0,
+      year: int.tryParse(hit.tagSnapshot.year) ?? 0,
+      dateAdded: hit.dateAdded,
+      mime: '',
+      size: hit.size,
+      displayName: hit.displayName,
+    );
+    final result = await _auditRow(row, hit.scanId, false);
+    if (result != null) {
+      await store.upsertAll([result]);
+      await _applyCollisions(result.scanId);
+      return store.byId(result.id);
+    }
+    return store.byId(hit.id);
+  }
+
   Future<SentinelHit?> _auditRow(_MediaRow row, String scanId, bool sampled) async {
     final now = DateTime.now().toIso8601String();
     final id = SentinelHit.fingerprintFor(row.uri, row.size, row.dateAdded);
     final existing = store.byId(id);
+    final keepStatus = existing != null &&
+        (existing.status == SentinelStatus.ignored || existing.status == SentinelStatus.uncompletable);
+    final stickyStatus = keepStatus ? existing!.status : SentinelStatus.open;
+    final stickyReason = keepStatus ? existing!.statusReason : '';
     if (row.path.isEmpty) {
       final snapshot = <String, String>{
         'TITLE': row.title,
@@ -358,8 +389,8 @@ class SentinelScanner {
         severity: 'high',
         tagSnapshot: _snapshotOf(snapshot),
         evidence: {'mediaStoreTitle': row.title, 'sidecarLyrics': false, 'sampled': sampled, 'reason': 'NO_FILE_PATH'},
-        status: 'open',
-        statusReason: '',
+        status: stickyStatus,
+        statusReason: stickyReason,
         firstSeen: existing?.firstSeen ?? now,
         lastSeen: now,
         scanId: scanId,
@@ -390,8 +421,8 @@ class SentinelScanner {
         severity: 'high',
         tagSnapshot: _snapshotOf(snapshot),
         evidence: {'mediaStoreTitle': row.title, 'sidecarLyrics': false, 'sampled': sampled, 'reason': 'TAG_READ_EMPTY'},
-        status: 'open',
-        statusReason: '',
+        status: stickyStatus,
+        statusReason: stickyReason,
         firstSeen: existing?.firstSeen ?? now,
         lastSeen: now,
         scanId: scanId,
@@ -459,8 +490,8 @@ class SentinelScanner {
       severity: SentinelPolicy.severityFor(issues),
       tagSnapshot: _snapshotOf(snapshot),
       evidence: {'mediaStoreTitle': row.title, 'sidecarLyrics': sidecar, 'sampled': sampled, 'artworkVia': artworkVia},
-      status: 'open',
-      statusReason: '',
+      status: stickyStatus,
+      statusReason: stickyReason,
       firstSeen: existing?.firstSeen ?? now,
       lastSeen: now,
       scanId: scanId,

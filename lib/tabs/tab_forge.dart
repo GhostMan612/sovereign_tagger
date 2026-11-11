@@ -310,6 +310,18 @@ class _TabForgeState extends State<TabForge> {
       _statusMessage = "Media Ejected. Working Copy Purged. Original Untouched.";
     });
     _suppressDirty = false;
+    _drainForgeQueue();
+  }
+
+  void _drainForgeQueue() {
+    if (!mounted || _isProcessing) return;
+    if (SovereignState.pendingForge.value != null) {
+      _onPendingRequest();
+      return;
+    }
+    if (SovereignState.forgeQueue.isNotEmpty) {
+      SovereignState.pendingForge.value = SovereignState.forgeQueue.removeAt(0);
+    }
   }
 
   void _resetForm() {
