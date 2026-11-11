@@ -26,7 +26,7 @@ Session-end law: update rows 2–4 every session (+ row 5 when a new gotcha is l
 - `flutter test` -> `All 6 tests passed!`.
 - `impellerc` -> `shaders/backdrop.frag` & `shaders/ghost.frag` compile cleanly across GLES, Vulkan, and SkSL.
 - `flutter build apk --debug --target-platform android-arm64` -> `LiteRT 1.4.0` + `EmbeddingGemmaBridge.kt` + `SentencePieceTokenizer.kt` + `shaders/ghost.frag` compile cleanly.
-- **Motorola Moto G (2025) Hardware Smoke Test (Android 16 / API 36, Device ID `ZT4222BMWN`): ALL PASS** — `FlutterTextureView` (`RenderMode.texture`) eliminated BLASTBufferQueue frame saturation; native hardware Equalizer/LoudnessEnhancer attached cleanly without NPE; live 256-D neural self-test verified via LiteRT; GhostBot decoupled `ValueNotifier` chat history verified without red `ErrorWidget` boxes.
+- **Motorola Moto G (2025) Hardware Smoke Test (Android 16 / API 36, Device ID `ZT4222BMWN`): ALL PASS** — `FlutterTextureView` (`RenderMode.texture`) eliminated BLASTBufferQueue frame saturation; native hardware Equalizer/LoudnessEnhancer attached cleanly without NPE (`audioSessionId=18945`, 5 bands); live 256-D neural self-test verified via LiteRT; GhostBot decoupled `ValueNotifier` chat history verified without red `ErrorWidget` boxes; Sentinel Slice 1 live run verified with Media3 / AudioTrack 48kHz stereo decode (`c2.android.mp3.decoder`), ID3 tag handling (`00 - Metallica · Until It Sleeps.mp3`), and multi-track playback queue restored cleanly (`ProcessingState.ready`).
 **Branch:** `main` is the single canonical branch.
 
 ## What shipped — PR #4 Sentinel Slice 1: Policy Engine, Two-Tier Scanner, Hit-List Store, Scan UI (2026-11-11)
