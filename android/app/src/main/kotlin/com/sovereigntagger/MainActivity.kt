@@ -299,6 +299,37 @@ class MainActivity: AudioServiceActivity() {
                     val size = call.argument<Int>("size") ?: 256
                     runAsync(result, "STORAGE_ERROR") { storageBridge.loadArtwork(uri, size) }
                 }
+                "queryPhotos" -> runAsync(result, "STORAGE_ERROR") { storageBridge.queryPhotos() }
+                "loadPhotoThumbnail" -> {
+                    val uri = call.argument<String>("uri") ?: ""
+                    val size = call.argument<Int>("size") ?: 256
+                    runAsync(result, "STORAGE_ERROR") { storageBridge.loadPhotoThumbnail(uri, size) }
+                }
+                "loadPhoto" -> {
+                    val uri = call.argument<String>("uri") ?: ""
+                    val maxSize = call.argument<Int>("maxSize") ?: 2048
+                    runAsync(result, "STORAGE_ERROR") { storageBridge.loadPhoto(uri, maxSize) }
+                }
+                "exportPhotoToPictures" -> {
+                    val uri = call.argument<String>("uri") ?: ""
+                    val displayName = call.argument<String>("displayName")
+                    runAsync(result, "STORAGE_ERROR") { storageBridge.exportPhotoToPictures(uri, displayName) }
+                }
+                "sharePhoto" -> {
+                    val uri = call.argument<String>("uri") ?: ""
+                    val mime = call.argument<String>("mimeType") ?: "image/jpeg"
+                    try {
+                        val intent = Intent(Intent.ACTION_SEND).apply {
+                            type = mime
+                            putExtra(Intent.EXTRA_STREAM, Uri.parse(uri))
+                            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                        }
+                        startActivity(Intent.createChooser(intent, "Share photo"))
+                        result.success(true)
+                    } catch (e: Exception) {
+                        result.error("SHARE_ERROR", e.message, null)
+                    }
+                }
                 "resolveMediaUri" -> {
                     val identifier = call.argument<String>("identifier")
                     val path = call.argument<String>("path")

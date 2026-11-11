@@ -12,6 +12,8 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.Matrix
+import android.media.ExifInterface
 import android.media.MediaMetadataRetriever
 import android.media.MediaScannerConnection
 import android.net.Uri
@@ -135,6 +137,156 @@ class StorageBridge(private val context: Context) {
             }
         }
         return out
+    }
+
+    fun queryPhotos(): List<Map<String, Any?>> {
+        val out = mutableListOf<Map<String, Any?>>()
+        val collection = MediaStore.Images.Media.EXTERNAL_CONTENT_URI
+        val columns = arrayOf(
+            MediaStore.Images.Media._ID,
+            MediaStore.Images.Media.DISPLAY_NAME,
+            MediaStore.Images.Media.MIME_TYPE,
+            MediaStore.Images.Media.SIZE,
+            MediaStore.Images.Media.DATE_ADDED,
+            MediaStore.Images.Media.WIDTH,
+            MediaStore.Images.Media.HEIGHT,
+            MediaStore.Images.Media.DATA
+        )
+        val sortOrder = "${MediaStore.Images.Media.DATE_ADDED} DESC"
+        context.contentResolver.query(collection, columns, null, null, sortOrder)?.use { c ->
+            fun str(col: String): String? {
+                val i = c.getColumnIndex(col)
+                return if (i >= 0 && !c.isNull(i)) c.getString(i) else null
+            }
+            fun long(col: String): Long {
+                val i = c.getColumnIndex(col)
+                return if (i >= 0 && !c.isNull(i)) c.getLong(i) else 0L
+            }
+            while (c.moveToNext()) {
+                val id = long(MediaStore.Images.Media._ID)
+                out.add(mapOf(
+                    "id" to id,
+                    "uri" to ContentUris.withAppendedId(collection, id).toString(),
+                    "path" to (str(MediaStore.Images.Media.DATA) ?: ""),
+                    "displayName" to (str(MediaStore.Images.Media.DISPLAY_NAME) ?: ""),
+                    "mime" to (str(MediaStore.Images.Media.MIME_TYPE) ?: ""),
+                    "size" to long(MediaStore.Images.Media.SIZE),
+                    "dateAdded" to long(MediaStore.Images.Media.DATE_ADDED),
+                    "width" to long(MediaStore.Images.Media.WIDTH),
+                    "height" to long(MediaStore.Images.Media.HEIGHT)
+                ))
+            }
+        }
+        return out
+    }
+
+    fun loadPhotoThumbnail(uriString: String, size: Int): ByteArray? {
+        val uri = Uri.parse(uriString)
+        val edge = if (size in 32..2048) size else 256
+        var bitmap: Bitmap? = null
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && uri.scheme == "content") {
+            try {
+                bitmap = context.contentResolver.loadThumbnail(uri, Size(edge, edge), null)
+            } catch (_: Exception) {}
+        }
+        if (bitmap == null) {
+            bitmap = decodeSampled(uri, edge)
+        }
+        val bmp = bitmap ?: return null
+        val stream = ByteArrayOutputStream()
+        bmp.compress(Bitmap.CompressFormat.JPEG, 88, stream)
+        return stream.toByteArray()
+    }
+
+    fun loadPhoto(uriString: String, maxSize: Int): ByteArray? {
+        val uri = Uri.parse(uriString)
+        val cap = if (maxSize in 256..8192) maxSize else 2048
+        val decoded = decodeSampled(uri, cap) ?: return null
+        val oriented = applyExifRotation(uri, decoded)
+        val stream = ByteArrayOutputStream()
+        oriented.compress(Bitmap.CompressFormat.JPEG, 90, stream)
+        return stream.toByteArray()
+    }
+
+    fun exportPhotoToPictures(uriString: String, displayName: String?): String? {
+        val uri = Uri.parse(uriString)
+        val safeName = (displayName?.takeIf { it.isNotEmpty() } ?: describe(uri)["displayName"] ?: "sovereign_photo.jpg")
+            .replace(Regex("[\\\\/:*?\"<>|]"), "_").trim().ifEmpty { "sovereign_photo.jpg" }
+        return try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                val values = ContentValues().apply {
+                    put(MediaStore.MediaColumns.DISPLAY_NAME, safeName)
+                    put(MediaStore.MediaColumns.MIME_TYPE, mimeForPhoto(safeName))
+                    put(MediaStore.MediaColumns.RELATIVE_PATH, "${Environment.DIRECTORY_PICTURES}/Sovereign Tagger")
+                    put(MediaStore.MediaColumns.IS_PENDING, 1)
+                }
+                val target = context.contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values) ?: return null
+                try {
+                    val input = context.contentResolver.openInputStream(uri) ?: throw IllegalStateException("Photo unreadable")
+                    context.contentResolver.openOutputStream(target)?.use { out -> input.use { it.copyTo(out) } }
+                        ?: throw IllegalStateException("Pictures output refused")
+                } catch (e: Exception) {
+                    context.contentResolver.delete(target, null, null)
+                    throw e
+                }
+                values.clear()
+                values.put(MediaStore.MediaColumns.IS_PENDING, 0)
+                context.contentResolver.update(target, values, null, null)
+                "Pictures/Sovereign Tagger/$safeName"
+            } else {
+                val dir = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES), "Sovereign Tagger")
+                if (!dir.exists()) dir.mkdirs()
+                val file = File(dir, safeName)
+                context.contentResolver.openInputStream(uri)?.use { input -> file.outputStream().use { out -> input.copyTo(out) } }
+                    ?: throw IllegalStateException("Photo unreadable")
+                scan(file.absolutePath)
+                file.absolutePath
+            }
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    private fun decodeSampled(uri: Uri, maxEdge: Int): Bitmap? {
+        return try {
+            val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            context.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, bounds) }
+            var sample = 1
+            val longest = maxOf(bounds.outWidth, bounds.outHeight)
+            while (longest / (sample * 2) >= maxEdge) sample *= 2
+            val opts = BitmapFactory.Options().apply { inSampleSize = sample }
+            context.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, opts) }
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    private fun applyExifRotation(uri: Uri, bitmap: Bitmap): Bitmap {
+        return try {
+            val orientation = context.contentResolver.openInputStream(uri)?.use { input ->
+                ExifInterface(input).getAttributeInt(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL)
+            } ?: ExifInterface.ORIENTATION_NORMAL
+            val degrees = when (orientation) {
+                ExifInterface.ORIENTATION_ROTATE_90 -> 90f
+                ExifInterface.ORIENTATION_ROTATE_180 -> 180f
+                ExifInterface.ORIENTATION_ROTATE_270 -> 270f
+                else -> 0f
+            }
+            if (degrees == 0f) return bitmap
+            val matrix = Matrix().apply { postRotate(degrees) }
+            Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
+        } catch (_: Exception) {
+            bitmap
+        }
+    }
+
+    private fun mimeForPhoto(name: String): String = when (name.substringAfterLast('.', "").lowercase(Locale.getDefault())) {
+        "png" -> "image/png"
+        "webp" -> "image/webp"
+        "gif" -> "image/gif"
+        "bmp" -> "image/bmp"
+        "heic", "heif" -> "image/heic"
+        else -> "image/jpeg"
     }
 
     fun loadArtwork(uriString: String, size: Int): ByteArray? {

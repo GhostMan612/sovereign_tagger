@@ -13,6 +13,7 @@ import '../core/playlists.dart';
 import '../core/storage_client.dart';
 import '../screens/main_shell.dart';
 import '../screens/media_inspector_screen.dart';
+import '../screens/photos_screen.dart';
 import '../screens/sentinel_screen.dart';
 import '../widgets/playlist_picker.dart';
 
@@ -816,6 +817,11 @@ class _TabLibraryState extends State<TabLibrary> with AutomaticKeepAliveClientMi
                         tooltip: "SENTINEL",
                         icon: Icon(Icons.shield_outlined, color: themeColor),
                         onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const SentinelScreen())),
+                      ),
+                      IconButton(
+                        tooltip: "PHOTOS",
+                        icon: Icon(Icons.photo_library_outlined, color: themeColor),
+                        onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const PhotosScreen())),
                       ),
                       IconButton(
                         tooltip: "RESCAN",

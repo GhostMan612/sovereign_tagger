@@ -147,6 +147,54 @@ class StorageClient {
     }
   }
 
+  static Future<bool> requestPhotosPermission() async {
+    final sdk = await sdkInt();
+    final permission = sdk >= 33 ? Permission.photos : Permission.storage;
+    var status = await permission.status;
+    if (!status.isGranted) status = await permission.request();
+    return status.isGranted || status.isLimited;
+  }
+
+  static Future<List<Map<String, Object?>>> queryPhotos() async {
+    final List<Object?>? raw = await _channel.invokeMethod('queryPhotos');
+    return (raw ?? const [])
+        .whereType<Map<Object?, Object?>>()
+        .map((m) => m.map((k, v) => MapEntry(k.toString(), v)))
+        .toList();
+  }
+
+  static Future<Uint8List?> loadPhotoThumbnail(String uri, {int size = 256}) async {
+    try {
+      return await _channel.invokeMethod<Uint8List>('loadPhotoThumbnail', {'uri': uri, 'size': size});
+    } catch (_) {
+      return null;
+    }
+  }
+
+  static Future<Uint8List?> loadPhoto(String uri, {int maxSize = 2048}) async {
+    try {
+      return await _channel.invokeMethod<Uint8List>('loadPhoto', {'uri': uri, 'maxSize': maxSize});
+    } catch (_) {
+      return null;
+    }
+  }
+
+  static Future<String?> exportPhotoToPictures({required String uri, String? displayName}) async {
+    try {
+      return await _channel.invokeMethod<String>('exportPhotoToPictures', {'uri': uri, 'displayName': displayName});
+    } catch (_) {
+      return null;
+    }
+  }
+
+  static Future<bool> sharePhoto({required String uri, String mimeType = 'image/jpeg'}) async {
+    try {
+      return await _channel.invokeMethod<bool>('sharePhoto', {'uri': uri, 'mimeType': mimeType}) ?? false;
+    } catch (_) {
+      return false;
+    }
+  }
+
   static Future<String> copyToStaging(String sourcePath, {String prefix = 'forge'}) async {
     final temp = await tempDir();
     final dir = Directory('$temp/staging');
