@@ -1196,7 +1196,7 @@ class _TabGrabberState extends State<TabGrabber> {
     return Row(
       children: [
         Expanded(child: Text(label, style: TextStyle(fontFamily: 'ShareTechMono', fontSize: 12, color: enabled ? Colors.white70 : Colors.white24, fontWeight: FontWeight.bold))),
-        Switch(value: value, onChanged: enabled ? onChanged : null, activeColor: SovereignState.accentColor.value),
+        Switch(value: value, onChanged: enabled ? onChanged : null, activeThumbColor: SovereignState.accentColor.value),
       ],
     );
   }
