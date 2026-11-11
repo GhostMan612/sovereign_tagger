@@ -75,6 +75,7 @@ abstract class GhostWorld {
   bool forgeCurrent();
   bool toggleFavoriteCurrent();
   Future<bool> openUrl(String url);
+  Future<bool> openWebPage(String url, String title);
 
 
   Future<List<GrabberSearchHit>> searchGrabber(String query, {String source = 'youtube'}) async => const [];
@@ -1136,12 +1137,12 @@ class GhostBrain {
 
   Future<GhostReply?> _special(String text) async {
     if (text.contains(' open genius ') || text.contains(' genius signup ') || text.contains(' genius sign up ')) {
-      final ok = await world.openUrl('https://genius.com/api-clients');
-      return GhostReply(ok ? "Genius API page launched. Create a client, copy the CLIENT ACCESS TOKEN, paste it in SETTINGS -> WRITE TO KERNEL." : "Browser fault. Open genius.com/api-clients yourself.");
+      final ok = await world.openWebPage('https://genius.com/api-clients', 'Genius API');
+      return GhostReply(ok ? "Genius API page opened in the app. Create a client, copy the CLIENT ACCESS TOKEN, paste it in SETTINGS -> WRITE TO KERNEL." : "Browser fault. Open genius.com/api-clients yourself.");
     }
     if (text.contains(' open acr ') || text.contains(' acr console ') || text.contains(' acr signup ') || text.contains(' open acrcloud ')) {
-      final ok = await world.openUrl('https://console.acrcloud.com/');
-      return GhostReply(ok ? "ACRCloud console launched. Audio & Video Recognition -> Create Project -> Recorded Audio, then copy host, key and secret into SETTINGS." : "Browser fault. Open console.acrcloud.com yourself.");
+      final ok = await world.openWebPage('https://console.acrcloud.com/', 'ACRCloud Console');
+      return GhostReply(ok ? "ACRCloud console opened in the app. Audio & Video Recognition -> Create Project -> Recorded Audio, then copy host, key and secret into SETTINGS." : "Browser fault. Open console.acrcloud.com yourself.");
     }
     return null;
   }

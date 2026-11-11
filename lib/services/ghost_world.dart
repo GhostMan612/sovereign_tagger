@@ -22,6 +22,7 @@ import '../screens/main_shell.dart';
 import '../screens/media_inspector_screen.dart';
 import '../screens/playback_engine_screen.dart';
 import '../screens/settings_screen.dart';
+import '../screens/tagger_web_screen.dart';
 import '../tabs/tab_library.dart';
 import '../tabs/tab_player.dart';
 import 'ghost_brain.dart';
@@ -287,6 +288,26 @@ class AppGhostWorld implements GhostWorld {
   Future<bool> openUrl(String url) async {
     try {
       await _storageChannel.invokeMethod('openUrl', {'url': url});
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  @override
+  Future<bool> openWebPage(String url, String title) async {
+    final uri = Uri.tryParse(url);
+    if (uri == null || _navigator == null) return false;
+    try {
+      _push(
+        TaggerWebScreen(
+          uri: uri,
+          title: title,
+          onOpenExternal: (u) async {
+            await openUrl(u.toString());
+          },
+        ),
+      );
       return true;
     } catch (_) {
       return false;

@@ -24,6 +24,8 @@ dependencies:
   audio_waveforms: ^2.0.2
   flutter_colorpicker: ^1.1.0
   wakelock_plus: ^1.8.1
+  webview_flutter: 4.14.1
+  webview_flutter_android: 4.14.1
 
 dev_dependencies:
   flutter_test:
