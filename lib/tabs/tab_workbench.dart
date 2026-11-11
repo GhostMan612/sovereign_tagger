@@ -66,6 +66,18 @@ class _TabWorkbenchState extends State<TabWorkbench> {
   double _silenceSec = 2.0;
   double _xfadeSec = 3.0;
   double _deessIntensity = 0.5;
+  String _volumeReport = "";
+  String _silenceReport = "";
+  String _filterFaultReport = "";
+  double _duckThresholdDb = -20.0;
+  double _duckRatio = 8.0;
+  double _duckAttackMs = 200.0;
+  double _duckReleaseMs = 500.0;
+  double _chorusDepthMs = 2.0;
+  double _compandGainDb = 0.0;
+  final List<_MixTrack> _mixTracks = [];
+  int? _waveSelInMs;
+  int? _waveSelOutMs;
   double _limitLevel = 0.9;
   double _toneFreq = 440.0;
   double _toneDurSec = 5.0;
@@ -172,20 +184,28 @@ class _TabWorkbenchState extends State<TabWorkbench> {
     "Apply Fades",
     "Fold To Mono",
     "Trim Silence",
+    "Trim To Silence (Precise)",
     "AI Denoise (afftdn)",
     "Parametric EQ",
     "Compress Dynamics",
     "15-Band Equalizer (AutoEq)",
     "Scan ReplayGain (EBU R128)",
+    "Scan Volume (volumedetect)",
+    "Scan Silence (silencedetect)",
     "Transcribe (Whisper AI)",
     "Insert Silence",
     "Delete Region",
     "Mix With File",
     "Crossfade Join",
+    "Gapless Join (concat)",
+    "Sidechain Duck (sidechaincompress)",
     "Click/Pop Repair (adeclick)",
     "De-Esser",
     "Limiter",
     "Multiband Compress (mcompand)",
+    "Chorus (spatial)",
+    "Compand (dynamic shaping)",
+    "Firequalizer Curve EQ",
     "DC/Rumble Fix (highpass)",
     "Tone Generator (Test Signals)",
     "Spectrogram Snapshot"
@@ -281,6 +301,132 @@ class _TabWorkbenchState extends State<TabWorkbench> {
     } finally {
       if (mounted) setState(() => _isProcessing = false);
     }
+  }
+
+  String? _filterFaultHint(String output) {
+    final noSuch = RegExp(r"No such filter:\s*'([^']+)'").firstMatch(output);
+    if (noSuch != null) return noSuch.group(1);
+    final unknown = RegExp(r"Unknown filter\s*'([^']+)'").firstMatch(output);
+    if (unknown != null) return unknown.group(1);
+    return null;
+  }
+
+  Future<void> _reportFilterFault(String filterName, String output) async {
+    String docs = "";
+    try {
+      final docsSession = await FFmpegExecutor.execute('-hide_banner -h filter=$filterName');
+      docs = docsSession.getOutput() ?? "";
+    } catch (_) {}
+    if (!mounted) return;
+    setState(() {
+      _filterFaultReport = docs.isEmpty
+          ? "FILTER '$filterName' NOT IN THIS FFMPEG BUILD. No docs returned — check Settings > FFmpeg filter list on device."
+          : docs;
+      _statusMessage = "ERR: FILTER '$filterName' UNAVAILABLE IN THIS BUILD. See filter docs below — do not retry blindly.";
+    });
+  }
+
+  Future<void> _scanVolume() async {
+    if (_selectedFilePath.isEmpty || _isProcessing) return;
+    setState(() { _isProcessing = true; _volumeReport = "Scanning Volume (volumedetect)..."; });
+    try {
+      final session = await FFmpegExecutor.execute('-y -i "$_selectedFilePath" -af volumedetect -f null -');
+      final output = session.getOutput() ?? "";
+      final fault = _filterFaultHint(output);
+      if (!mounted) return;
+      if (fault != null) {
+        setState(() => _volumeReport = "ERR: FILTER '$fault' NOT IN THIS FFMPEG BUILD.");
+        await _reportFilterFault(fault, output);
+        return;
+      }
+      final mean = RegExp(r'mean_volume:\s*(-?\d+\.?\d*)\s*dB').firstMatch(output);
+      final max = RegExp(r'max_volume:\s*(-?\d+\.?\d*)\s*dB').firstMatch(output);
+      final samples = RegExp(r'\bn:\s*(\d+)').firstMatch(output);
+      if (!mounted) return;
+      if (mean != null && max != null) {
+        final meanDb = double.tryParse(mean.group(1) ?? "") ?? 0.0;
+        final headroom = -1.0 - (double.tryParse(max.group(1) ?? "") ?? 0.0);
+        setState(() => _volumeReport = "Mean Volume: ${mean.group(1)} dB\nMax Volume: ${max.group(1)} dB\nHeadroom To -1 dBTP: ${headroom.toStringAsFixed(1)} dB${samples != null ? '\nSamples: ${samples.group(1)}' : ''}");
+      } else {
+        setState(() => _volumeReport = "Scan Complete. No Volume Reading Parsed (check source).");
+      }
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _volumeReport = "ERR: Volume Scan Fault: $e");
+    } finally {
+      if (mounted) setState(() => _isProcessing = false);
+    }
+  }
+
+  Future<void> _scanSilence() async {
+    if (_selectedFilePath.isEmpty || _isProcessing) return;
+    setState(() { _isProcessing = true; _silenceReport = "Scanning Silence (silencedetect -45dB / 0.3s)..."; });
+    try {
+      final session = await FFmpegExecutor.execute('-y -i "$_selectedFilePath" -af silencedetect=noise=-45dB:d=0.3 -f null -');
+      final output = session.getOutput() ?? "";
+      final fault = _filterFaultHint(output);
+      if (!mounted) return;
+      if (fault != null) {
+        setState(() => _silenceReport = "ERR: FILTER '$fault' NOT IN THIS FFMPEG BUILD.");
+        await _reportFilterFault(fault, output);
+        return;
+      }
+      final starts = RegExp(r'silence_start:\s*([\d.]+)').allMatches(output).map((m) => double.tryParse(m.group(1) ?? "") ?? 0.0).toList();
+      final ends = RegExp(r'silence_end:\s*([\d.]+)\s*\|\s*silence_duration:\s*([\d.]+)').allMatches(output).map((m) => (double.tryParse(m.group(1) ?? "") ?? 0.0, double.tryParse(m.group(2) ?? "") ?? 0.0)).toList();
+      if (!mounted) return;
+      if (starts.isEmpty && ends.isEmpty) {
+        setState(() => _silenceReport = "No Silence Found (threshold -45dB, min 0.3s).");
+        return;
+      }
+      double total = 0.0;
+      for (final e in ends) { total += e.$2; }
+      final lines = <String>[];
+      for (int i = 0; i < starts.length && i < 12; i++) {
+        if (i < ends.length) {
+          lines.add("${starts[i].toStringAsFixed(2)}s -> ${ends[i].$1.toStringAsFixed(2)}s (${ends[i].$2.toStringAsFixed(2)}s)");
+        } else {
+          lines.add("${starts[i].toStringAsFixed(2)}s -> EOF (open)");
+        }
+      }
+      if (starts.length > 12) lines.add("... +${starts.length - 12} more");
+      setState(() => _silenceReport = "Silences: ${starts.length} • Total: ${total.toStringAsFixed(2)}s\n${lines.join('\n')}");
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _silenceReport = "ERR: Silence Scan Fault: $e");
+    } finally {
+      if (mounted) setState(() => _isProcessing = false);
+    }
+  }
+
+  Future<void> _pickMixTrack() async {
+    if (_isProcessing || _isRecording) return;
+    try {
+      final file = await FilePicker.pickFile(type: FileType.any);
+      if (file != null && file.path != null) {
+        final dur = await probeDurationMs(file.path!);
+        if (!mounted) return;
+        setState(() => _mixTracks.add(_MixTrack(path: file.path!, durationMs: dur)));
+      }
+    } on PlatformException catch (e) {
+      if (!mounted) return;
+      setState(() => _statusMessage = "ERR: Mix Track Picker Fault: ${e.message}");
+    } catch (_) {}
+  }
+
+  int _mixTotalDurationMs(List<_MixTrack> tracks) {
+    int total = _wbDurationMs ?? 0;
+    for (final t in tracks) { total += t.durationMs ?? 0; }
+    return total;
+  }
+
+  String? _mixGuardWarning(List<_MixTrack> tracks) {
+    final count = 1 + tracks.length;
+    final totalMs = _mixTotalDurationMs(tracks);
+    if (count > 7) return "MIX CAP IS 7 TRACKS. Remove tracks before executing.";
+    if (count > 3 || totalMs > 900000) {
+      return "HEAVY MIX — $count tracks / ${_fmtHms(Duration(milliseconds: totalMs))} total. EmbeddingGemma unloads first via the RAM guard; long renders take minutes on low-end hardware.";
+    }
+    return null;
   }
 
   static const RecorderSettings _recorderSettings = RecorderSettings(
@@ -699,6 +845,14 @@ class _TabWorkbenchState extends State<TabWorkbench> {
       await _scanReplayGain();
       return;
     }
+    if (_selectedOperation == "Scan Volume (volumedetect)") {
+      await _scanVolume();
+      return;
+    }
+    if (_selectedOperation == "Scan Silence (silencedetect)") {
+      await _scanSilence();
+      return;
+    }
     if (_selectedOperation == "Lossless Audio Extract (-c:a copy)" ||
         _selectedOperation == "Split Chapters Losslessly (-c copy)" ||
         _selectedOperation == "Fake-Lossless & DR Audit") {
@@ -716,7 +870,7 @@ class _TabWorkbenchState extends State<TabWorkbench> {
       final parts = _selectedFilePath.split('.');
       final srcExt = parts.length > 1 ? parts.last.toLowerCase() : "";
       final isVideoSrc = ['mp4', 'mkv', 'webm'].contains(srcExt);
-      final bool preserveOp = ["Normalize Audio (LUFS -14)", "Granular Audio DSP (Speed/Reverb)", "Apply Fades", "Fold To Mono", "Trim Silence", "AI Denoise (afftdn)", "Parametric EQ", "Compress Dynamics", "15-Band Equalizer (AutoEq)", "Insert Silence", "Delete Region", "Click/Pop Repair (adeclick)", "De-Esser", "Limiter", "Multiband Compress (mcompand)", "DC/Rumble Fix (highpass)"].contains(_selectedOperation);
+      final bool preserveOp = ["Normalize Audio (LUFS -14)", "Granular Audio DSP (Speed/Reverb)", "Apply Fades", "Fold To Mono", "Trim Silence", "Trim To Silence (Precise)", "AI Denoise (afftdn)", "Parametric EQ", "Compress Dynamics", "15-Band Equalizer (AutoEq)", "Insert Silence", "Delete Region", "Click/Pop Repair (adeclick)", "De-Esser", "Limiter", "Multiband Compress (mcompand)", "Chorus (spatial)", "Compand (dynamic shaping)", "Firequalizer Curve EQ", "DC/Rumble Fix (highpass)"].contains(_selectedOperation);
 
       String ext;
       if (_selectedOperation == "Spectrogram Snapshot") {
@@ -768,11 +922,47 @@ class _TabWorkbenchState extends State<TabWorkbench> {
       } else if (_selectedOperation == "Spectrogram Snapshot") {
         command = '-y -i "$_selectedFilePath" -lavfi "showspectrumpic=s=1280x720:legend=1" -frames:v 1 "$outPath"';
       } else if (_selectedOperation == "Mix With File") {
+        final extra = List<_MixTrack>.from(_mixTracks);
+        if (extra.isEmpty && _secondFilePath.isNotEmpty) {
+          extra.add(_MixTrack(path: _secondFilePath, durationMs: await probeDurationMs(_secondFilePath)));
+        }
+        if (extra.isEmpty) {
+          setState(() { _isProcessing = false; _statusMessage = "ERR: ADD AT LEAST ONE MIX TRACK FIRST."; });
+          return;
+        }
+        if (1 + extra.length > 7) {
+          setState(() { _isProcessing = false; _statusMessage = "ERR: MIX CAP IS 7 TRACKS (main + 6). Remove tracks before executing."; });
+          return;
+        }
+        final warn = _mixGuardWarning(extra);
+        if (warn != null) setState(() => _statusMessage = "WARN: $warn");
+        final inputs = <String>[_selectedFilePath, ...extra.map((t) => t.path)];
+        final chainParts = <String>[];
+        final mixLabels = <String>[];
+        for (int i = 0; i < inputs.length; i++) {
+          final gain = i == 0 ? 1.0 : extra[i - 1].gain;
+          final pan = i == 0 ? 0.0 : extra[i - 1].pan;
+          final left = (pan <= 0 ? 1.0 : 1.0 - pan).toStringAsFixed(2);
+          final right = (pan >= 0 ? 1.0 : 1.0 + pan).toStringAsFixed(2);
+          chainParts.add("[$i:a]aresample=48000:ocl=stereo:resampler=soxr,volume=${gain.toStringAsFixed(2)},pan=stereo|c0=$left*c0|c1=$right*c1[a$i]");
+          mixLabels.add("[a$i]");
+        }
+        final filterComplex = "${chainParts.join(';')};${mixLabels.join('')}amix=inputs=${inputs.length}:duration=longest:normalize=0,alimiter=limit=0.95:attack=5:release=50";
+        final inputArgs = inputs.map((p) => '-i "$p"').join(' ');
+        command = '-y $inputArgs -filter_complex "$filterComplex" ${_audioCodecArgs(ext)} "$outPath"';
+      } else if (_selectedOperation == "Gapless Join (concat)") {
         if (_secondFilePath.isEmpty) {
           setState(() { _isProcessing = false; _statusMessage = "ERR: MOUNT SECOND MEDIA FIRST."; });
           return;
         }
-        command = '-y -i "$_selectedFilePath" -i "$_secondFilePath" -filter_complex "[0:a][1:a]amix=inputs=2:duration=longest:normalize=0" ${_audioCodecArgs(ext)} "$outPath"';
+        command = '-y -i "$_selectedFilePath" -i "$_secondFilePath" -filter_complex "[0:a]aresample=48000:ocl=stereo:resampler=soxr[a0];[1:a]aresample=48000:ocl=stereo:resampler=soxr[a1];[a0][a1]concat=n=2:v=0:a=1[out]" -map "[out]" ${_audioCodecArgs(ext)} "$outPath"';
+      } else if (_selectedOperation == "Sidechain Duck (sidechaincompress)") {
+        if (_secondFilePath.isEmpty) {
+          setState(() { _isProcessing = false; _statusMessage = "ERR: MOUNT VOICE MEDIA FIRST (SECOND FILE = SIDECHAIN)."; });
+          return;
+        }
+        final thresh = pow(10.0, _duckThresholdDb / 20.0).clamp(0.015625, 1.0).toDouble();
+        command = '-y -i "$_selectedFilePath" -i "$_secondFilePath" -filter_complex "[0:a][1:a]sidechaincompress=threshold=${thresh.toStringAsFixed(4)}:ratio=${_duckRatio.toStringAsFixed(1)}:attack=${_duckAttackMs.toStringAsFixed(0)}:release=${_duckReleaseMs.toStringAsFixed(0)}[out]" -map "[out]" -vn ${_audioCodecArgs(ext)} "$outPath"';
       } else if (_selectedOperation == "Crossfade Join") {
         if (_secondFilePath.isEmpty) {
           setState(() { _isProcessing = false; _statusMessage = "ERR: MOUNT SECOND MEDIA FIRST."; });
@@ -831,8 +1021,10 @@ class _TabWorkbenchState extends State<TabWorkbench> {
             break;
           }
           case "Delete Region": {
-            final sSec = _parseHmsSafe(_startCtrl.text).inMilliseconds / 1000.0;
-            final eSec = _parseHmsSafe(_endCtrl.text).inMilliseconds / 1000.0;
+            final sMs = _waveSelInMs ?? _parseHmsSafe(_startCtrl.text).inMilliseconds;
+            final eMs = _waveSelOutMs ?? _parseHmsSafe(_endCtrl.text).inMilliseconds;
+            final sSec = sMs / 1000.0;
+            final eSec = eMs / 1000.0;
             if (eSec <= sSec) {
               setState(() { _isProcessing = false; _statusMessage = "ERR: END Must Exceed START (use wave selection)."; });
               return;
@@ -858,6 +1050,24 @@ class _TabWorkbenchState extends State<TabWorkbench> {
           case "Trim Silence":
             filters.add("silenceremove=start_periods=1:start_duration=0.3:start_threshold=-45dB:stop_periods=-1:stop_duration=0.8:stop_threshold=-45dB");
             break;
+          case "Trim To Silence (Precise)":
+            filters.add("silenceremove=start_periods=1:start_threshold=-50dB:start_silence=0.05:stop_periods=-1:stop_threshold=-50dB:stop_silence=0.05");
+            break;
+          case "Chorus (spatial)":
+            filters.add("chorus=0.7:0.9:55:0.4:0.25:${_chorusDepthMs.toStringAsFixed(1)}");
+            break;
+          case "Compand (dynamic shaping)":
+            filters.add("compand=attacks=0.05:decays=0.3:points=-80/-80|-60/-50|-30/-25|-10/-8|0/0:gain=${_compandGainDb.toStringAsFixed(1)}");
+            break;
+          case "Firequalizer Curve EQ": {
+            final curve = "firequalizer=gain_entry='entry(100,${_eqBass.toStringAsFixed(1)});entry(320,${_eqLowMid.toStringAsFixed(1)});entry(1000,${_eqMid.toStringAsFixed(1)});entry(3500,${_eqHighMid.toStringAsFixed(1)});entry(8000,${_eqTreble.toStringAsFixed(1)})'";
+            if (_eqBass == 0 && _eqLowMid == 0 && _eqMid == 0 && _eqHighMid == 0 && _eqTreble == 0) {
+              setState(() { _isProcessing = false; _statusMessage = "ERR: All EQ Bands At Zero. Nothing To Apply."; });
+              return;
+            }
+            filters.add(curve);
+            break;
+          }
           case "Granular Audio DSP (Speed/Reverb)":
             if (_isReversed) filters.add("areverse");
             if (_audioSpeed != 1.0) {
@@ -945,7 +1155,15 @@ class _TabWorkbenchState extends State<TabWorkbench> {
         setState(() { _isProcessing = false; _statusMessage = payloadNote; });
       } else {
         if (!mounted) return;
-        setState(() { _isProcessing = false; _statusMessage = "ERR: Kernel Panic. FFmpeg Segfault."; });
+        final output = session.getOutput() ?? "";
+        final fault = _filterFaultHint(output);
+        if (fault != null) {
+          setState(() => _isProcessing = false);
+          await _reportFilterFault(fault, output);
+        } else {
+          final tail = output.length > 300 ? output.substring(output.length - 300) : output;
+          setState(() { _isProcessing = false; _statusMessage = "ERR: FFmpeg Failed (rc=${session.getReturnCode()}). Last output:\n$tail"; });
+        }
       }
     } catch (e) {
       if (!mounted) return;
@@ -986,6 +1204,16 @@ class _TabWorkbenchState extends State<TabWorkbench> {
                   _wmb('Master status: 48k/16-bit WAV via STUDIO REC, or AAC fallback. Use COPY MODE for same-format passthrough. Fold to mono produces a WAV master by default. No re-encodes unless the operation needs one.'),
                   _wmh('COMMON OPS'),
                   _wmb('EXTRACT AUDIO, CLIP, CONVERT FORMAT, NORMALIZE LOUDNORM, GRANULAR DSP, FADE IN/OUT, FOLD TO MONO, TRIM SILENCE, and WHISPER. Each op has its own duration/start/end fields as shown below. EXECUTE writes only into temp paths or a new file.'),
+                  _wmh('READOUTS'),
+                  _wmb('SCAN VOLUME (volumedetect) reports mean/max volume and headroom to -1 dBTP. SCAN SILENCE (silencedetect) lists every silence at -45dB / 0.3s with start, end, and duration. Both are read-only.'),
+                  _wmh('NEW DSP'),
+                  _wmb('SIDECHAIN DUCK: main file is the music to duck, second file is the voice sidechain — threshold/ratio/attack/release. CHORUS: spatial depth in ms. COMPAND: gentle dynamic curve with makeup gain. FIREQUALIZER: smooth curve EQ driven by the 5 Parametric EQ sliders. TRIM TO SILENCE (PRECISE): 50ms windows at -50dB, tighter than TRIM SILENCE.'),
+                  _wmh('MULTITRACK MIX'),
+                  _wmb('MIX WITH FILE layers the main file with up to 6 extra tracks, each with gain and pan. Tracks resample to 48k stereo (soxr) and mix through amix with a 0.95 limiter. Over 3 tracks or 15 minutes total is flagged HEAVY — the RAM guard unloads EmbeddingGemma first. GAPLESS JOIN butt-joins two files with no crossfade and no gap.'),
+                  _wmh('WAVE SELECTION'),
+                  _wmb('Drag on WAVEFORM STUDIO to select a region — DELETE REGION removes exactly that selection to the millisecond. Typing bounds by hand clears the exact selection and uses the typed HH:MM:SS instead.'),
+                  _wmh('FILTER FAULTS'),
+                  _wmb('If a filter is missing from this FFmpeg build (sidechaincompress, chorus, compand, firequalizer, volumedetect, silencedetect are all unverified on device), the op fails loudly with the filter name and its real docs — never a silent no-op.'),
                   _wmh('WHISPER'),
                   _wmb('Transcribe produces a plain text block and writes a sidecar .srt. First run extracts the bundled 141MB model. Cancel stops the FFmpeg session and discards the partial output.'),
                   _wmh('RECORDER'),
@@ -1197,6 +1425,8 @@ class _TabWorkbenchState extends State<TabWorkbench> {
                     initialOut: _parseHmsSafe(_endCtrl.text, fallbackFull: true),
                     onSelection: (selIn, selOut) {
                       setState(() {
+                        _waveSelInMs = selIn.inMilliseconds;
+                        _waveSelOutMs = selOut.inMilliseconds;
                         _startCtrl.text = _fmtHms(selIn);
                         _endCtrl.text = _fmtHms(selOut);
                       });
@@ -1275,7 +1505,8 @@ class _TabWorkbenchState extends State<TabWorkbench> {
                       children: [
                         Expanded(
                           child: TextField(
-                            controller: _startCtrl, 
+                            controller: _startCtrl,
+                            onChanged: (_) { _waveSelInMs = null; _waveSelOutMs = null; },
                             style: TextStyle(fontFamily: 'ShareTechMono', color: themeColor),
                             decoration: InputDecoration(
                               labelText: 'START [HH:MM:SS]', 
@@ -1291,7 +1522,8 @@ class _TabWorkbenchState extends State<TabWorkbench> {
                         const SizedBox(width: 12),
                         Expanded(
                           child: TextField(
-                            controller: _endCtrl, 
+                            controller: _endCtrl,
+                            onChanged: (_) { _waveSelInMs = null; _waveSelOutMs = null; },
                             style: TextStyle(fontFamily: 'ShareTechMono', color: themeColor),
                             decoration: InputDecoration(
                               labelText: 'END [HH:MM:SS]', 
@@ -1445,6 +1677,203 @@ class _TabWorkbenchState extends State<TabWorkbench> {
               ),
             ],
 
+            if (_selectedOperation == "Scan Volume (volumedetect)") ...[
+              Container(
+                margin: const EdgeInsets.only(top: 12),
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.black,
+                  border: Border.all(color: Colors.cyanAccent.withAlpha(127)),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    const Text("VOLUME SCANNER (VOLUMEDETECT)", style: TextStyle(fontFamily: 'ShareTechMono', fontSize: 12, fontWeight: FontWeight.bold, color: Colors.cyanAccent)),
+                    const SizedBox(height: 6),
+                    const Text("Reports mean volume, max volume, and headroom to -1 dBTP. Read-only — writes nothing.", style: TextStyle(fontFamily: 'ShareTechMono', fontSize: 10, color: Colors.white54)),
+                    const SizedBox(height: 12),
+                    OutlinedButton.icon(
+                      onPressed: _isProcessing ? null : _scanVolume,
+                      icon: const Icon(Icons.volume_up, color: Colors.cyanAccent, size: 18),
+                      label: const Text("SCAN VOLUME", style: TextStyle(fontFamily: 'ShareTechMono', fontSize: 12, color: Colors.cyanAccent, fontWeight: FontWeight.bold)),
+                      style: OutlinedButton.styleFrom(side: const BorderSide(color: Colors.cyanAccent), padding: const EdgeInsets.symmetric(vertical: 12)),
+                    ),
+                    if (_volumeReport.isNotEmpty) ...[
+                      const SizedBox(height: 8),
+                      Container(
+                        padding: const EdgeInsets.all(8),
+                        decoration: BoxDecoration(color: Colors.black, border: Border.all(color: Colors.cyanAccent.withAlpha(76))),
+                        child: Text("> $_volumeReport", style: const TextStyle(fontFamily: 'VT323', fontSize: 14, color: Colors.white70, height: 1.3)),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ],
+
+            if (_selectedOperation == "Scan Silence (silencedetect)") ...[
+              Container(
+                margin: const EdgeInsets.only(top: 12),
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.black,
+                  border: Border.all(color: Colors.amberAccent.withAlpha(127)),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    const Text("SILENCE SCANNER (SILENCEDETECT)", style: TextStyle(fontFamily: 'ShareTechMono', fontSize: 12, fontWeight: FontWeight.bold, color: Colors.amberAccent)),
+                    const SizedBox(height: 6),
+                    const Text("Lists every silence (threshold -45dB, min 0.3s) with start, end, and duration. Read-only — writes nothing.", style: TextStyle(fontFamily: 'ShareTechMono', fontSize: 10, color: Colors.white54)),
+                    const SizedBox(height: 12),
+                    OutlinedButton.icon(
+                      onPressed: _isProcessing ? null : _scanSilence,
+                      icon: const Icon(Icons.graphic_eq, color: Colors.amberAccent, size: 18),
+                      label: const Text("SCAN SILENCE", style: TextStyle(fontFamily: 'ShareTechMono', fontSize: 12, color: Colors.amberAccent, fontWeight: FontWeight.bold)),
+                      style: OutlinedButton.styleFrom(side: const BorderSide(color: Colors.amberAccent), padding: const EdgeInsets.symmetric(vertical: 12)),
+                    ),
+                    if (_silenceReport.isNotEmpty) ...[
+                      const SizedBox(height: 8),
+                      Container(
+                        padding: const EdgeInsets.all(8),
+                        decoration: BoxDecoration(color: Colors.black, border: Border.all(color: Colors.amberAccent.withAlpha(76))),
+                        child: Text("> $_silenceReport", style: const TextStyle(fontFamily: 'VT323', fontSize: 14, color: Colors.white70, height: 1.3)),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ],
+
+            if (_selectedOperation == "Sidechain Duck (sidechaincompress)") ...[
+              Container(
+                margin: const EdgeInsets.only(top: 12),
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(color: Colors.black, border: Border.all(color: themeColor.withAlpha(127))),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text("SIDECHAIN DUCKING — VOICE DUCKS MUSIC", style: TextStyle(fontFamily: 'ShareTechMono', fontSize: 11, fontWeight: FontWeight.bold, color: Colors.white70)),
+                    const SizedBox(height: 12),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        const Text("THRESHOLD", style: TextStyle(fontFamily: 'ShareTechMono', fontWeight: FontWeight.bold, color: Colors.cyanAccent)),
+                        Text("${_duckThresholdDb.toStringAsFixed(0)} dB", style: const TextStyle(fontFamily: 'ShareTechMono', color: Colors.white)),
+                      ],
+                    ),
+                    Slider(
+                      value: _duckThresholdDb, min: -40, max: -1, divisions: 39,
+                      activeColor: Colors.cyanAccent, inactiveColor: Colors.white24,
+                      onChanged: _isProcessing ? null : (val) => setState(() => _duckThresholdDb = val),
+                    ),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        const Text("RATIO", style: TextStyle(fontFamily: 'ShareTechMono', fontWeight: FontWeight.bold, color: Colors.tealAccent)),
+                        Text("${_duckRatio.toStringAsFixed(1)}:1", style: const TextStyle(fontFamily: 'ShareTechMono', color: Colors.white)),
+                      ],
+                    ),
+                    Slider(
+                      value: _duckRatio, min: 2, max: 20, divisions: 36,
+                      activeColor: Colors.tealAccent, inactiveColor: Colors.white24,
+                      onChanged: _isProcessing ? null : (val) => setState(() => _duckRatio = val),
+                    ),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        const Text("ATTACK", style: TextStyle(fontFamily: 'ShareTechMono', fontWeight: FontWeight.bold, color: Colors.amberAccent)),
+                        Text("${_duckAttackMs.toStringAsFixed(0)} ms", style: const TextStyle(fontFamily: 'ShareTechMono', color: Colors.white)),
+                      ],
+                    ),
+                    Slider(
+                      value: _duckAttackMs, min: 10, max: 1000, divisions: 33,
+                      activeColor: Colors.amberAccent, inactiveColor: Colors.white24,
+                      onChanged: _isProcessing ? null : (val) => setState(() => _duckAttackMs = val),
+                    ),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        const Text("RELEASE", style: TextStyle(fontFamily: 'ShareTechMono', fontWeight: FontWeight.bold, color: Colors.purpleAccent)),
+                        Text("${_duckReleaseMs.toStringAsFixed(0)} ms", style: const TextStyle(fontFamily: 'ShareTechMono', color: Colors.white)),
+                      ],
+                    ),
+                    Slider(
+                      value: _duckReleaseMs, min: 50, max: 2000, divisions: 39,
+                      activeColor: Colors.purpleAccent, inactiveColor: Colors.white24,
+                      onChanged: _isProcessing ? null : (val) => setState(() => _duckReleaseMs = val),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+
+            if (_selectedOperation == "Chorus (spatial)") ...[
+              Container(
+                margin: const EdgeInsets.only(top: 12),
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(color: Colors.black, border: Border.all(color: themeColor.withAlpha(127))),
+                child: Column(
+                  children: [
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        const Text("CHORUS DEPTH", style: TextStyle(fontFamily: 'ShareTechMono', fontWeight: FontWeight.bold, color: Colors.cyanAccent)),
+                        Text("${_chorusDepthMs.toStringAsFixed(1)} ms", style: const TextStyle(fontFamily: 'ShareTechMono', color: Colors.white)),
+                      ],
+                    ),
+                    Slider(
+                      value: _chorusDepthMs, min: 0.5, max: 5, divisions: 18,
+                      activeColor: Colors.cyanAccent, inactiveColor: Colors.white24,
+                      onChanged: _isProcessing ? null : (val) => setState(() => _chorusDepthMs = val),
+                    ),
+                    const Text("in 0.7 / out 0.9 • delay 55ms • decay 0.4 • speed 0.25Hz", style: TextStyle(fontFamily: 'ShareTechMono', fontSize: 10, color: Colors.white38)),
+                  ],
+                ),
+              ),
+            ],
+
+            if (_selectedOperation == "Compand (dynamic shaping)") ...[
+              Container(
+                margin: const EdgeInsets.only(top: 12),
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(color: Colors.black, border: Border.all(color: themeColor.withAlpha(127))),
+                child: Column(
+                  children: [
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        const Text("MAKEUP GAIN", style: TextStyle(fontFamily: 'ShareTechMono', fontWeight: FontWeight.bold, color: Colors.tealAccent)),
+                        Text("${_compandGainDb >= 0 ? '+' : ''}${_compandGainDb.toStringAsFixed(1)} dB", style: const TextStyle(fontFamily: 'ShareTechMono', color: Colors.white)),
+                      ],
+                    ),
+                    Slider(
+                      value: _compandGainDb, min: -12, max: 12, divisions: 24,
+                      activeColor: Colors.tealAccent, inactiveColor: Colors.white24,
+                      onChanged: _isProcessing ? null : (val) => setState(() => _compandGainDb = val),
+                    ),
+                    const Text("Gentle curve: -80/-80 • -60/-50 • -30/-25 • -10/-8 • 0/0 • attack 50ms • release 300ms", style: TextStyle(fontFamily: 'ShareTechMono', fontSize: 10, color: Colors.white38)),
+                  ],
+                ),
+              ),
+            ],
+
+            if (_selectedOperation == "Trim To Silence (Precise)") ...[
+              Container(
+                margin: const EdgeInsets.only(top: 12),
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(color: Colors.black, border: Border.all(color: themeColor.withAlpha(76))),
+                child: const Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text("PRECISE TRIM — 50ms WINDOWS AT -50dB", style: TextStyle(fontFamily: 'ShareTechMono', fontSize: 11, fontWeight: FontWeight.bold, color: Colors.white70)),
+                    SizedBox(height: 4),
+                    Text("Tighter than TRIM SILENCE (0.3s/0.8s windows at -45dB). Cuts leading and trailing silence to the frame.", style: TextStyle(fontFamily: 'ShareTechMono', fontSize: 10, color: Colors.white54)),
+                  ],
+                ),
+              ),
+            ],
+
             if (_selectedOperation == "Apply Fades") ...[
                     Container(
                       margin: const EdgeInsets.only(top: 12),
@@ -1485,7 +1914,7 @@ class _TabWorkbenchState extends State<TabWorkbench> {
                     ),
                   ],
 
-                  if (_selectedOperation == "Parametric EQ") ...[
+                  if (_selectedOperation == "Parametric EQ" || _selectedOperation == "Firequalizer Curve EQ") ...[
                     Container(
                       margin: const EdgeInsets.only(top: 12),
                       padding: const EdgeInsets.all(16),
@@ -1649,21 +2078,106 @@ class _TabWorkbenchState extends State<TabWorkbench> {
                         children: [
                           const Text("REGION TO ERASE (HH:MM:SS)", style: TextStyle(fontFamily: 'ShareTechMono', fontSize: 11, fontWeight: FontWeight.bold, color: Colors.redAccent)),
                           const SizedBox(height: 4),
-                          const Text("Drag a selection on the WAVEFORM STUDIO above, or type bounds below.", style: TextStyle(fontFamily: 'ShareTechMono', fontSize: 9, color: Colors.white38)),
+                          const Text("Drag a selection on the WAVEFORM STUDIO above — it deletes to the exact millisecond — or type bounds below.", style: TextStyle(fontFamily: 'ShareTechMono', fontSize: 9, color: Colors.white38)),
                           const SizedBox(height: 10),
                           Row(
                             children: [
-                              Expanded(child: TextField(controller: _startCtrl, style: const TextStyle(fontFamily: 'ShareTechMono', color: Colors.greenAccent), decoration: const InputDecoration(labelText: "IN", labelStyle: TextStyle(color: Colors.white38), enabledBorder: OutlineInputBorder(borderSide: BorderSide(color: Colors.white24))))),
+                              Expanded(child: TextField(controller: _startCtrl, onChanged: (_) { _waveSelInMs = null; _waveSelOutMs = null; }, style: const TextStyle(fontFamily: 'ShareTechMono', color: Colors.greenAccent), decoration: const InputDecoration(labelText: "IN", labelStyle: TextStyle(color: Colors.white38), enabledBorder: OutlineInputBorder(borderSide: BorderSide(color: Colors.white24))))),
                               const Padding(padding: EdgeInsets.symmetric(horizontal: 8), child: Text("→", style: TextStyle(color: Colors.white24))),
-                              Expanded(child: TextField(controller: _endCtrl, style: const TextStyle(fontFamily: 'ShareTechMono', color: Colors.redAccent), decoration: const InputDecoration(labelText: "OUT", labelStyle: TextStyle(color: Colors.white38), enabledBorder: OutlineInputBorder(borderSide: BorderSide(color: Colors.white24))))),
+                              Expanded(child: TextField(controller: _endCtrl, onChanged: (_) { _waveSelInMs = null; _waveSelOutMs = null; }, style: const TextStyle(fontFamily: 'ShareTechMono', color: Colors.redAccent), decoration: const InputDecoration(labelText: "OUT", labelStyle: TextStyle(color: Colors.white38), enabledBorder: OutlineInputBorder(borderSide: BorderSide(color: Colors.white24))))),
                             ],
+                          ),
+                          const SizedBox(height: 12),
+                          OutlinedButton.icon(
+                            onPressed: _isProcessing || _isRecording ? null : _executeOperation,
+                            icon: const Icon(Icons.content_cut, color: Colors.redAccent, size: 18),
+                            label: const Text("DELETE WAVE SELECTION NOW", style: TextStyle(fontFamily: 'ShareTechMono', fontSize: 12, color: Colors.redAccent, fontWeight: FontWeight.bold)),
+                            style: OutlinedButton.styleFrom(side: const BorderSide(color: Colors.redAccent), padding: const EdgeInsets.symmetric(vertical: 12)),
                           ),
                         ],
                       ),
                     ),
                   ],
 
-                  if (_selectedOperation == "Mix With File" || _selectedOperation == "Crossfade Join") ...[
+                  if (_selectedOperation == "Mix With File") ...[
+                    Container(
+                      margin: const EdgeInsets.only(top: 12),
+                      padding: const EdgeInsets.all(16),
+                      decoration: BoxDecoration(color: Colors.black, border: Border.all(color: themeColor.withAlpha(127))),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              const Expanded(child: Text("MULTITRACK MIX (MAIN + UP TO 6)", style: TextStyle(fontFamily: 'ShareTechMono', fontSize: 11, fontWeight: FontWeight.bold, color: Colors.white70))),
+                              OutlinedButton.icon(
+                                onPressed: _isProcessing ? null : _pickMixTrack,
+                                icon: const Icon(Icons.library_add, size: 16),
+                                label: const Text("ADD TRACK", style: TextStyle(fontFamily: 'ShareTechMono', fontSize: 11)),
+                                style: OutlinedButton.styleFrom(side: BorderSide(color: themeColor), padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6)),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 4),
+                          Text("MAIN: ${_selectedFilePath.split('/').last} (gain 1.00 / center)", style: const TextStyle(fontFamily: 'ShareTechMono', fontSize: 10, color: Colors.white54)),
+                          if (_mixTracks.isEmpty)
+                            const Padding(
+                              padding: EdgeInsets.only(top: 8),
+                              child: Text("No extra tracks yet — ADD TRACK to layer audio over the main file.", style: TextStyle(fontFamily: 'ShareTechMono', fontSize: 10, color: Colors.white38)),
+                            ),
+                          for (int i = 0; i < _mixTracks.length; i++) ...[
+                            const Divider(color: Colors.white12, height: 20),
+                            Row(
+                              children: [
+                                Expanded(child: Text("TRACK ${i + 1}: ${_mixTracks[i].path.split('/').last}", style: const TextStyle(fontFamily: 'ShareTechMono', fontSize: 10, color: Colors.white70))),
+                                IconButton(
+                                  icon: const Icon(Icons.close, size: 16, color: Colors.redAccent),
+                                  tooltip: "REMOVE TRACK",
+                                  constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+                                  padding: EdgeInsets.zero,
+                                  onPressed: _isProcessing ? null : () => setState(() => _mixTracks.removeAt(i)),
+                                ),
+                              ],
+                            ),
+                            Row(
+                              children: [
+                                const Text("GAIN", style: TextStyle(fontFamily: 'ShareTechMono', fontSize: 10, color: Colors.white70)),
+                                Expanded(
+                                  child: Slider(
+                                    value: _mixTracks[i].gain, min: 0, max: 2, divisions: 40,
+                                    activeColor: themeColor, inactiveColor: Colors.white24,
+                                    onChanged: _isProcessing ? null : (v) => setState(() => _mixTracks[i].gain = v),
+                                  ),
+                                ),
+                                Text("${_mixTracks[i].gain.toStringAsFixed(2)}x", style: const TextStyle(fontFamily: 'ShareTechMono', fontSize: 10, color: Colors.white)),
+                              ],
+                            ),
+                            Row(
+                              children: [
+                                const Text("PAN", style: TextStyle(fontFamily: 'ShareTechMono', fontSize: 10, color: Colors.white70)),
+                                Expanded(
+                                  child: Slider(
+                                    value: _mixTracks[i].pan, min: -1, max: 1, divisions: 20,
+                                    activeColor: themeColor, inactiveColor: Colors.white24,
+                                    onChanged: _isProcessing ? null : (v) => setState(() => _mixTracks[i].pan = v),
+                                  ),
+                                ),
+                                Text(_mixTracks[i].pan == 0 ? "C" : (_mixTracks[i].pan < 0 ? "L${(-_mixTracks[i].pan * 100).round()}%" : "R${(_mixTracks[i].pan * 100).round()}%"), style: const TextStyle(fontFamily: 'ShareTechMono', fontSize: 10, color: Colors.white)),
+                              ],
+                            ),
+                          ],
+                          if (_mixGuardWarning(_mixTracks) != null) ...[
+                            const SizedBox(height: 8),
+                            Text("> ${_mixGuardWarning(_mixTracks)!}", style: const TextStyle(fontFamily: 'VT323', fontSize: 13, color: Colors.amberAccent)),
+                          ],
+                          const SizedBox(height: 4),
+                          const Text("All tracks resampled to 48k stereo (soxr), mixed with amix, peak-limited at 0.95.", style: TextStyle(fontFamily: 'ShareTechMono', fontSize: 9, color: Colors.white38)),
+                        ],
+                      ),
+                    ),
+                  ],
+
+                  if (_selectedOperation == "Crossfade Join" || _selectedOperation == "Sidechain Duck (sidechaincompress)" || _selectedOperation == "Gapless Join (concat)") ...[
                     Container(
                       margin: const EdgeInsets.only(top: 12),
                       padding: const EdgeInsets.all(16),
@@ -1693,6 +2207,14 @@ class _TabWorkbenchState extends State<TabWorkbench> {
                                 Text("${_xfadeSec.toStringAsFixed(1)}s", style: const TextStyle(fontFamily: 'ShareTechMono', fontSize: 11, color: Colors.white)),
                               ],
                             ),
+                          ],
+                          if (_selectedOperation == "Sidechain Duck (sidechaincompress)") ...[
+                            const SizedBox(height: 8),
+                            const Text("MAIN = MUSIC TO DUCK • SECOND = VOICE / SIDECHAIN", style: TextStyle(fontFamily: 'ShareTechMono', fontSize: 10, color: Colors.white54)),
+                          ],
+                          if (_selectedOperation == "Gapless Join (concat)") ...[
+                            const SizedBox(height: 8),
+                            const Text("Butt-join, no crossfade, no gap. Both files resampled to 48k stereo first.", style: TextStyle(fontFamily: 'ShareTechMono', fontSize: 10, color: Colors.white54)),
                           ],
                         ],
                       ),
@@ -2002,6 +2524,20 @@ class _TabWorkbenchState extends State<TabWorkbench> {
                     )
                   ],
 
+                  if (_filterFaultReport.isNotEmpty) ...[
+                    Container(
+                      margin: const EdgeInsets.only(top: 12),
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: Colors.black,
+                        border: Border.all(color: Colors.orangeAccent.withAlpha(127)),
+                      ),
+                      child: SingleChildScrollView(
+                        child: Text(_filterFaultReport, style: const TextStyle(fontFamily: 'monospace', fontSize: 10, color: Colors.white70, height: 1.3)),
+                      ),
+                    ),
+                  ],
+
                   const SizedBox(height: 32),
                   CyberTapFeedback(
                     child: ElevatedButton.icon(
@@ -2049,4 +2585,12 @@ class _PcmWavePainter extends CustomPainter {
 
   @override
   bool shouldRepaint(_PcmWavePainter oldDelegate) => true;
+}
+
+class _MixTrack {
+  final String path;
+  final int? durationMs;
+  double gain;
+  double pan;
+  _MixTrack({required this.path, this.durationMs, this.gain = 1.0, this.pan = 0.0});
 }
