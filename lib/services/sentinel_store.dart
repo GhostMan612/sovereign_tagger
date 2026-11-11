@@ -23,6 +23,11 @@ class SentinelIssue {
   static const String missingGenre = 'MISSING_GENRE';
   static const String missingLyrics = 'MISSING_LYRICS';
   static const String missingArtwork = 'MISSING_ARTWORK';
+  static const String artistAlbumArtistMismatch = 'ARTIST_ALBUM_ARTIST_MISMATCH';
+  static const String nameCollision = 'NAME_COLLISION';
+  static const String unreadableTags = 'UNREADABLE_TAGS';
+  static const String featNotCanonical = 'FEAT_NOT_CANONICAL';
+  static const String titleCaseDrift = 'TITLE_CASE_DRIFT';
 }
 
 class SentinelStatus {
