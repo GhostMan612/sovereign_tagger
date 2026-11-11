@@ -10,6 +10,8 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
 
+import '../core/sentinel_policy.dart';
+
 class SentinelIssue {
   static const String nameMismatch = 'NAME_MISMATCH';
   static const String missingTitle = 'MISSING_TITLE';
@@ -21,6 +23,11 @@ class SentinelIssue {
   static const String missingGenre = 'MISSING_GENRE';
   static const String missingLyrics = 'MISSING_LYRICS';
   static const String missingArtwork = 'MISSING_ARTWORK';
+  static const String artistAlbumArtistMismatch = 'ARTIST_ALBUM_ARTIST_MISMATCH';
+  static const String nameCollision = 'NAME_COLLISION';
+  static const String unreadableTags = 'UNREADABLE_TAGS';
+  static const String featNotCanonical = 'FEAT_NOT_CANONICAL';
+  static const String titleCaseDrift = 'TITLE_CASE_DRIFT';
 }
 
 class SentinelStatus {
@@ -137,7 +144,17 @@ class SentinelHit {
     required this.scanId,
   });
 
-  SentinelHit copyWith({String? status, String? statusReason, String? lastSeen, String? scanId}) {
+  SentinelHit copyWith({
+    String? expectedName,
+    List<String>? issues,
+    String? severity,
+    SentinelTagSnapshot? tagSnapshot,
+    Map<String, dynamic>? evidence,
+    String? status,
+    String? statusReason,
+    String? lastSeen,
+    String? scanId,
+  }) {
     return SentinelHit(
       id: id,
       uri: uri,
@@ -145,11 +162,11 @@ class SentinelHit {
       size: size,
       dateAdded: dateAdded,
       displayName: displayName,
-      expectedName: expectedName,
-      issues: issues,
-      severity: severity,
-      tagSnapshot: tagSnapshot,
-      evidence: evidence,
+      expectedName: expectedName ?? this.expectedName,
+      issues: issues ?? this.issues,
+      severity: severity ?? this.severity,
+      tagSnapshot: tagSnapshot ?? this.tagSnapshot,
+      evidence: evidence ?? this.evidence,
       status: status ?? this.status,
       statusReason: statusReason ?? this.statusReason,
       firstSeen: firstSeen,
@@ -157,6 +174,11 @@ class SentinelHit {
       scanId: scanId ?? this.scanId,
     );
   }
+
+  static String fingerprintFor(String uri, int size, int dateAdded) =>
+      SentinelStore._stableHash('$uri|$size|$dateAdded');
+
+  String get fingerprint => fingerprintFor(uri, size, dateAdded);
 
   Map<String, dynamic> toJson() => {
         'id': id,
@@ -225,114 +247,105 @@ class SentinelSummary {
 }
 
 class SentinelNamingPolicy {
-  static const Set<String> _smallWords = {
-    'a', 'an', 'the', 'and', 'but', 'or', 'nor', 'for', 'of',
-    'to', 'in', 'on', 'at', 'by', 'with', 'from', 'as', 'per', 'vs', 'ft.',
-  };
-
-  static const Map<String, String> _properExceptions = {
-    'dmx': 'DMX', 'ac/dc': 'AC/DC', 'mcdonald': 'McDonald', "o'brien": "O'Brien",
-    '2pac': '2Pac', 'll': 'LL', 'dj': 'DJ', 'ep': 'EP', 'lp': 'LP',
-    'ii': 'II', 'iii': 'III', 'iv': 'IV',
-  };
-
-  static final List<RegExp> _noisePatterns = [
-    RegExp(r'\(\s*remaster(?:ed)?(?:\s+\d{4})?\s*\)', caseSensitive: false),
-    RegExp(r'\[\s*remaster(?:ed)?(?:\s+\d{4})?\s*\]', caseSensitive: false),
-    RegExp(r'\(\s*deluxe(?:\s+edition|\s+version)?\s*\)', caseSensitive: false),
-    RegExp(r'\[\s*deluxe(?:\s+edition|\s+version)?\s*\]', caseSensitive: false),
-    RegExp(r'\(\s*bonus\s+track\s*\)', caseSensitive: false),
-    RegExp(r'\[\s*explicit\s*\]', caseSensitive: false),
-    RegExp(r'\(\s*explicit\s*\)', caseSensitive: false),
-    RegExp(r'\(\s*official\s+(?:music\s+)?video\s*\)', caseSensitive: false),
-    RegExp(r'\[\s*official\s+(?:music\s+)?video\s*\]', caseSensitive: false),
-    RegExp(r'\(\s*official\s+audio\s*\)', caseSensitive: false),
-    RegExp(r'\[\s*official\s+audio\s*\]', caseSensitive: false),
-    RegExp(r'\(\s*lyric(?:s)?\s+video\s*\)', caseSensitive: false),
-    RegExp(r'\(\s*audio\s*\)', caseSensitive: false),
-  ];
+  static Map<String, String> _tagsOf(SentinelTagSnapshot tags) {
+    return <String, String>{
+      'TITLE': tags.title,
+      'ARTIST': tags.artist,
+      'ALBUM_ARTIST': tags.albumArtist,
+      'ALBUM': tags.album,
+      'TRACK': tags.track,
+      'YEAR': tags.year,
+      'GENRE': tags.genre,
+      'LYRICS': tags.lyrics,
+      'ARTWORK': tags.artwork ? 'true' : 'false',
+    };
+  }
 
   static String stripNoiseAndNormalizeFeat(String raw) {
-    var out = raw;
-    for (final rx in _noisePatterns) {
-      out = out.replaceAll(rx, '');
-    }
-    out = out.replaceAll(RegExp(r'\b(?:featuring|feat\.?|\bft\b)\.?\s+', caseSensitive: false), 'ft. ');
-    return out.replaceAll(RegExp(r'\s+'), ' ').trim();
+    final stripped = SentinelPolicy.stripVersionNoise(raw);
+    final normalized = stripped.replaceAll(
+        RegExp(r'\b(?:featuring|feat\.?|\bft\b)\.?\s+', caseSensitive: false), 'ft. ');
+    return normalized.replaceAll(RegExp(r'\s+'), ' ').trim();
   }
 
   static String toTitleCase(String input) {
-    final cleaned = stripNoiseAndNormalizeFeat(input);
-    if (cleaned.isEmpty) return '';
-    final words = cleaned.split(' ');
-    final out = <String>[];
-    for (var i = 0; i < words.length; i++) {
-      final rawWord = words[i];
-      if (rawWord.isEmpty) continue;
-      final lower = rawWord.toLowerCase();
-      if (lower == 'ft.' || lower == 'ft') {
-        out.add('ft.');
-        continue;
-      }
-      if (_properExceptions.containsKey(lower)) {
-        out.add(_properExceptions[lower]!);
-        continue;
-      }
-      if (i > 0 && i < words.length - 1 && _smallWords.contains(lower)) {
-        out.add(lower);
-        continue;
-      }
-      out.add(_capitalizeToken(rawWord));
-    }
-    return out.join(' ').replaceAll(RegExp(r'\bLl Cool J\b', caseSensitive: false), 'LL Cool J');
-  }
-
-  static String _capitalizeToken(String token) {
-    if (token.isEmpty) return token;
-    final lower = token.toLowerCase();
-    if (_properExceptions.containsKey(lower)) return _properExceptions[lower]!;
-    if (lower.startsWith('mc') && lower.length > 2) return 'Mc${lower[2].toUpperCase()}${lower.substring(3)}';
-    if (lower.startsWith("o'") && lower.length > 2) return "O'${lower[2].toUpperCase()}${lower.substring(3)}";
-    return '${token[0].toUpperCase()}${token.substring(1).toLowerCase()}';
+    return SentinelPolicy.titleCase(stripNoiseAndNormalizeFeat(input));
   }
 
   static String formatExpectedFilename({required SentinelTagSnapshot tags, required String currentFilename}) {
-    final extIndex = currentFilename.lastIndexOf('.');
-    final ext = extIndex > 0 ? currentFilename.substring(extIndex + 1).toLowerCase() : 'mp3';
-    final rawTrack = tags.track.trim().split('/').first.trim();
-    final trackNum = int.tryParse(rawTrack) ?? 0;
-    final trackPadded = trackNum > 0 ? trackNum.toString().padLeft(2, '0') : '00';
-    final primaryArtist = tags.albumArtist.trim().isNotEmpty
-        ? tags.albumArtist.trim()
-        : (tags.artist.trim().isNotEmpty ? tags.artist.trim() : 'Unknown Artist');
-    return '$trackPadded - ${toTitleCase(primaryArtist)} - ${toTitleCase(tags.title.trim().isNotEmpty ? tags.title.trim() : 'Untitled')}.$ext';
+    return SentinelPolicy.expectedFileName(_tagsOf(tags), displayName: currentFilename);
   }
 
   static List<String> evaluateIssues({required SentinelTagSnapshot tags, required String displayName}) {
-    final issues = <String>[];
-    if (displayName != formatExpectedFilename(tags: tags, currentFilename: displayName)) {
-      issues.add(SentinelIssue.nameMismatch);
-    }
-    if (tags.title.trim().isEmpty) issues.add(SentinelIssue.missingTitle);
-    if (tags.artist.trim().isEmpty) issues.add(SentinelIssue.missingArtist);
-    if (tags.albumArtist.trim().isEmpty) issues.add(SentinelIssue.missingAlbumArtist);
-    if (tags.album.trim().isEmpty) issues.add(SentinelIssue.missingAlbum);
-    if (tags.track.trim().isEmpty) issues.add(SentinelIssue.missingTrack);
-    if (tags.year.trim().isEmpty) issues.add(SentinelIssue.missingYear);
-    if (tags.genre.trim().isEmpty) issues.add(SentinelIssue.missingGenre);
-    if (tags.lyrics.trim().isEmpty) issues.add(SentinelIssue.missingLyrics);
-    if (!tags.artwork) issues.add(SentinelIssue.missingArtwork);
-    return issues;
+    return SentinelPolicy.audit(_tagsOf(tags), displayName).issues;
   }
 
   static String computeSeverity(List<String> issues) {
-    if (issues.contains(SentinelIssue.missingTitle) ||
-        issues.contains(SentinelIssue.missingArtist) ||
-        issues.contains(SentinelIssue.nameMismatch) ||
-        issues.length >= 3) {
-      return 'high';
+    return SentinelPolicy.severityFor(issues);
+  }
+}
+
+class SentinelScanProgress {
+  final String scanId;
+  final String startedAt;
+  final int total;
+  final int scanned;
+  final int hits;
+  final int sampled;
+  final int sampleHits;
+  final List<String> pendingUris;
+  final List<String> sampledUris;
+
+  const SentinelScanProgress({
+    required this.scanId,
+    required this.startedAt,
+    required this.total,
+    required this.scanned,
+    required this.hits,
+    required this.sampled,
+    required this.sampleHits,
+    required this.pendingUris,
+    this.sampledUris = const [],
+  });
+
+  Map<String, dynamic> toJson() => {
+        'scanId': scanId,
+        'startedAt': startedAt,
+        'total': total,
+        'scanned': scanned,
+        'hits': hits,
+        'sampled': sampled,
+        'sampleHits': sampleHits,
+        'pendingUris': pendingUris,
+        'sampledUris': sampledUris,
+      };
+
+  factory SentinelScanProgress.fromJson(Map<String, dynamic> json) {
+    final pending = <String>[];
+    final rawPending = json['pendingUris'];
+    if (rawPending is List) {
+      for (final item in rawPending) {
+        pending.add(item.toString());
+      }
     }
-    return issues.length == 2 ? 'medium' : 'low';
+    final sampled = <String>[];
+    final rawSampled = json['sampledUris'];
+    if (rawSampled is List) {
+      for (final item in rawSampled) {
+        sampled.add(item.toString());
+      }
+    }
+    return SentinelScanProgress(
+      scanId: (json['scanId'] ?? '').toString(),
+      startedAt: (json['startedAt'] ?? '').toString(),
+      total: (json['total'] is num) ? (json['total'] as num).toInt() : 0,
+      scanned: (json['scanned'] is num) ? (json['scanned'] as num).toInt() : 0,
+      hits: (json['hits'] is num) ? (json['hits'] as num).toInt() : 0,
+      sampled: (json['sampled'] is num) ? (json['sampled'] as num).toInt() : 0,
+      sampleHits: (json['sampleHits'] is num) ? (json['sampleHits'] as num).toInt() : 0,
+      pendingUris: pending,
+      sampledUris: sampled,
+    );
   }
 }
 
@@ -349,6 +362,7 @@ class SentinelStore extends ChangeNotifier {
   final List<SentinelHit> _hits = <SentinelHit>[];
   String? _lastScanId;
   String? _generatedAt;
+  SentinelScanProgress? _scanProgress;
   Future<void>? _loadFuture;
   Future<void> _pendingSave = Future<void>.value();
   bool _scanning = false;
@@ -356,6 +370,7 @@ class SentinelStore extends ChangeNotifier {
 
   bool get isScanning => _scanning;
   List<SentinelHit> get allHits => List.unmodifiable(_hits);
+  SentinelScanProgress? get scanProgress => _scanProgress;
 
   Future<File> _resolveStoreFile() async {
     final directory = await getApplicationDocumentsDirectory();
@@ -391,6 +406,11 @@ class SentinelStore extends ChangeNotifier {
         ..addAll(loadedHits);
       _lastScanId = decoded['scanId']?.toString();
       _generatedAt = decoded['generatedAt']?.toString();
+      _scanProgress = null;
+      final rawProgress = decoded['progress'];
+      if (rawProgress is Map) {
+        _scanProgress = SentinelScanProgress.fromJson(rawProgress.cast<String, dynamic>());
+      }
       notifyListeners();
     } catch (error, stackTrace) {
       _loadFuture = null;
@@ -419,6 +439,7 @@ class SentinelStore extends ChangeNotifier {
       'scanId': _lastScanId ?? nowIso,
       'generatedAt': _generatedAt ?? nowIso,
       'hits': _hits.map((hit) => hit.toJson()).toList(),
+      'progress': _scanProgress?.toJson(),
     };
     await partFile.writeAsString(
       const JsonEncoder.withIndent('  ').convert(payload),
@@ -465,6 +486,91 @@ class SentinelStore extends ChangeNotifier {
       if (h.id == id) return h;
     }
     return null;
+  }
+
+  SentinelHit? byId(String id) {
+    for (final h in _hits) {
+      if (h.id == id) return h;
+    }
+    return null;
+  }
+
+  SentinelHit? byUri(String uri) {
+    for (final h in _hits) {
+      if (h.uri == uri) return h;
+    }
+    return null;
+  }
+
+  Future<void> upsertAll(List<SentinelHit> incoming) async {
+    await ensureLoaded();
+    for (final hit in incoming) {
+      final idx = _hits.indexWhere((h) => h.id == hit.id);
+      if (idx >= 0) {
+        _hits[idx] = hit;
+      } else {
+        _hits.add(hit);
+      }
+    }
+    await saveAtomically();
+    notifyListeners();
+  }
+
+  Future<void> removeAll(List<String> ids) async {
+    await ensureLoaded();
+    final before = _hits.length;
+    _hits.removeWhere((h) => ids.contains(h.id));
+    if (_hits.length != before) {
+      await saveAtomically();
+      notifyListeners();
+    }
+  }
+
+  Future<bool> setStatus(String hitId, String status, String reason) =>
+      _transitionStatus(hitId, status: status, reason: reason);
+
+  Future<void> markStaleForMissing(Set<String> seenUris) async {
+    await ensureLoaded();
+    var changed = false;
+    final nowIso = DateTime.now().toUtc().toIso8601String();
+    for (var i = 0; i < _hits.length; i++) {
+      final hit = _hits[i];
+      if (hit.status == SentinelStatus.stale) continue;
+      if (hit.uri.isEmpty || seenUris.contains(hit.uri)) continue;
+      _hits[i] = hit.copyWith(status: SentinelStatus.stale, statusReason: 'File no longer in MediaStore', lastSeen: nowIso);
+      changed = true;
+    }
+    if (changed) {
+      await saveAtomically();
+      notifyListeners();
+    }
+  }
+
+  Future<void> pruneStale() async {
+    await ensureLoaded();
+    final before = _hits.length;
+    _hits.removeWhere((h) => h.status == SentinelStatus.stale);
+    if (_hits.length != before) {
+      await saveAtomically();
+      notifyListeners();
+    }
+  }
+
+  Future<void> setScanMetadata(String scanId, String generatedAt) async {
+    _lastScanId = scanId;
+    _generatedAt = generatedAt;
+    await saveAtomically();
+  }
+
+  Future<void> saveScanProgress(SentinelScanProgress value) async {
+    _scanProgress = value;
+    await saveAtomically();
+  }
+
+  Future<void> clearScanProgress() async {
+    if (_scanProgress == null) return;
+    _scanProgress = null;
+    await saveAtomically();
   }
 
   Future<SentinelSummary> sentinelScan({Future<List<Map<String, dynamic>>> Function()? trackProvider}) async {

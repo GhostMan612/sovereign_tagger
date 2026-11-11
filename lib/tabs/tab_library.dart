@@ -13,6 +13,7 @@ import '../core/playlists.dart';
 import '../core/storage_client.dart';
 import '../screens/main_shell.dart';
 import '../screens/media_inspector_screen.dart';
+import '../screens/sentinel_screen.dart';
 import '../widgets/playlist_picker.dart';
 
 class LibTrack {
@@ -810,6 +811,11 @@ class _TabLibraryState extends State<TabLibrary> with AutomaticKeepAliveClientMi
                           for (final s in _Sort.values)
                             PopupMenuItem(value: s, child: Text(_sortLabel(s), style: TextStyle(fontFamily: 'ShareTechMono', color: s == _sort ? themeColor : Colors.white))),
                         ],
+                      ),
+                      IconButton(
+                        tooltip: "SENTINEL",
+                        icon: Icon(Icons.shield_outlined, color: themeColor),
+                        onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const SentinelScreen())),
                       ),
                       IconButton(
                         tooltip: "RESCAN",

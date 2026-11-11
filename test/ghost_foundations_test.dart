@@ -22,9 +22,9 @@ void main() {
 
   test('Sentinel naming policy preserves extension and identifies missing tags', () {
     const tags = SentinelTagSnapshot(
-      title: 'the long road',
-      artist: 'dmx',
-      albumArtist: 'dmx',
+      title: 'The Long Road',
+      artist: 'DMX',
+      albumArtist: 'DMX',
       album: 'Example Album',
       track: '3/12',
       year: '2022',
@@ -37,12 +37,12 @@ void main() {
         tags: tags,
         currentFilename: 'old.flac',
       ),
-      '03 - DMX - The Long Road.flac',
+      '03 - DMX · The Long Road.flac',
     );
     expect(
       SentinelNamingPolicy.evaluateIssues(
         tags: tags,
-        displayName: '03 - DMX - The Long Road.flac',
+        displayName: '03 - DMX · The Long Road.flac',
       ),
       isEmpty,
     );
