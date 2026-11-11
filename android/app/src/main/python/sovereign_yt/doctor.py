@@ -86,10 +86,7 @@ def diagnose(error_log: str = ""):
 
         ytdlp_version = "unknown"
         try:
-            import yt_dlp
-            ytdlp_version = getattr(yt_dlp, 'version', getattr(yt_dlp, '__version__', 'unknown'))
-            if callable(ytdlp_version):
-                ytdlp_version = ytdlp_version()
+            from yt_dlp.version import __version__ as ytdlp_version
         except Exception:
             pass
 
