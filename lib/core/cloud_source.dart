@@ -1,7 +1,7 @@
-// ===================================================
+// ============================================================
 // As Above, So Below. As Within, So Without.
 // The Future Dictates the Past and the Past is Always Present.
-// ===================================================
+// ============================================================
 
 enum CloudRegion {
   us('api.pcloud.com'),
@@ -11,8 +11,10 @@ enum CloudRegion {
   const CloudRegion(this.host);
 
   static CloudRegion fromHost(String rawHost) {
-    if (rawHost.toLowerCase().contains('eapi')) return CloudRegion.eu;
-    return CloudRegion.us;
+    final host = rawHost.trim().toLowerCase();
+    if (host == CloudRegion.eu.host) return CloudRegion.eu;
+    if (host == CloudRegion.us.host) return CloudRegion.us;
+    throw ArgumentError.value(rawHost, 'rawHost', 'Unsupported pCloud API host');
   }
 }
 
