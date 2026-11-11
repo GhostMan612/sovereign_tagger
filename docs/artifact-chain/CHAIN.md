@@ -94,6 +94,16 @@ next intent. Git history is the audit trail.
   Hub / mission-contract outcome removed 11 November 2026 at Glenn's
   direction — Sentinel is on-device only. No code started; not part
   of the hands-free goal. Next: plan, on Glenn's approval of the spec.
+- **Sentinel slice 5 spec, 11 November 2026** — `spec/sentinel-slice5.md`:
+  auto-apply spec-only (no code), with a DRAFT allowlist (classes
+  A1–A7, all proposed OFF, catalog threshold 0.95, 25-file run cap),
+  safety gates (preview-first, re-verify at apply time, Forge's
+  verified write path, per-file undo, mutual exclusion, audit log),
+  and six decisions for Glenn (D-S5-1–D-S5-6). Slice 1 merged, slice 2
+  in draft PR #13. Note: the Sentinel plan (`plan/sentinel.md`) is not
+  in this repo — it lives only in the local chain — and its S11 is the
+  Moto G smoke test, not slice 5; the plan change is a new task S12,
+  drafted in the spec's §7 for the local chain.
 - **Addendum, 11 November 2026** — `spec/sentinel-ghost-cloud-addendum.md`:
   Ghost ↔ Sentinel, pCloud in the player, more GhostBrain. Plans
   written the same day, in Glenn's order — pCloud first
