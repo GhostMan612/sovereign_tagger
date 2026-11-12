@@ -5,11 +5,13 @@
 
 import 'dart:async';
 import 'dart:io';
+import 'package:path_provider/path_provider.dart';
 import 'package:ffmpeg_kit_extended_flutter/ffmpeg_kit_extended_flutter.dart';
 import '../core/ffmpeg_executor.dart';
 import 'dsp_builders.dart';
 import 'video_dsp_builders.dart';
 import 'workbench_models.dart';
+import 'pending_import_store.dart';
 
 class WorkbenchQueue {
   final List<BatchJob> _jobs = [];
@@ -77,6 +79,7 @@ class WorkbenchQueue {
   Future<String> execute({
     required Future<String> Function(String op, String inputPath, String outPath, int? durationMs) commandBuilder,
     required Future<String> Function() getTempDirectory,
+    Future<String> Function()? getRecoveryDirectory,
     required Future<String?> Function(String outPath, String title) mediaStoreInjector,
     required Future<int?> Function(String path) durationProbe,
     required Future<Map<String, int>> Function(String path) streamProbe,
@@ -103,6 +106,7 @@ class WorkbenchQueue {
 
     final lines = <String>[];
     int okCount = 0;
+    int pendingCount = 0;
     int failCount = 0;
     int skipCount = 0;
 
@@ -297,51 +301,68 @@ class WorkbenchQueue {
 
           if (handleCancellationIfRequested(stagedOutPath)) continue;
 
+          Future<void> keepForRecovery(String reason) async {
+            final staged = File(outPath);
+            if (!await staged.exists() || await staged.length() <= 0) {
+              job.status = BatchJobStatus.failed;
+              job.errorMessage = '$reason; output file is missing';
+              job.completedAt = DateTime.now();
+              failCount++;
+              lines.add('FAIL ${job.fileName}: OUTPUT MISSING AFTER IMPORT FAILURE');
+              return;
+            }
+            try {
+              final persistentRoot = getRecoveryDirectory == null
+                  ? (await getApplicationSupportDirectory()).path
+                  : await getRecoveryDirectory();
+              final store = PendingImportStore(Directory(persistentRoot));
+              final retained = await store.preserve(
+                staged: staged,
+                jobId: job.id,
+                title: title,
+              );
+              job.status = BatchJobStatus.pendingImport;
+              job.progress = 1.0;
+              job.outputUri = retained.filePath;
+              job.errorMessage = reason;
+              job.completedAt = DateTime.now();
+              pendingCount++;
+              lines.add('PENDING IMPORT ${job.fileName}: ${retained.filePath} ($reason)');
+              if (await staged.exists()) await staged.delete();
+            } catch (recoveryError) {
+              // Retain the original staged bytes if durable relocation failed.
+              job.status = BatchJobStatus.failed;
+              job.outputUri = outPath;
+              job.errorMessage =
+                  '$reason; DURABLE RECOVERY FAILED ($recoveryError). TEMPORARY FILE AT $outPath';
+              job.completedAt = DateTime.now();
+              failCount++;
+              lines.add('FAIL ${job.fileName}: ${job.errorMessage}');
+            }
+          }
+
           try {
             final uriString = await mediaStoreInjector(outPath, title);
-            final trimmed = uriString?.trim();
-            if (trimmed != null && trimmed.isNotEmpty) {
+            final trimmed = uriString?.trim() ?? '';
+            final parsed = Uri.tryParse(trimmed);
+            if (parsed != null &&
+                ((parsed.scheme == 'content' && parsed.hasAuthority) ||
+                    (parsed.scheme == 'file' && parsed.path.isNotEmpty))) {
               job.status = BatchJobStatus.completed;
               job.progress = 1.0;
               job.outputUri = trimmed;
               job.completedAt = DateTime.now();
               okCount++;
-              lines.add("OK ${job.fileName} -> $trimmed");
+              lines.add('OK ${job.fileName} -> $trimmed');
               try {
-                final f = File(outPath);
-                if (f.existsSync()) f.deleteSync();
+                final rendered = File(outPath);
+                if (rendered.existsSync()) rendered.deleteSync();
               } catch (_) {}
             } else {
-              if (File(outPath).existsSync()) {
-                job.status = BatchJobStatus.completed;
-                job.progress = 1.0;
-                job.outputUri = outPath;
-                job.completedAt = DateTime.now();
-                okCount++;
-                lines.add("CACHE ONLY ${job.fileName}: $outPath");
-              } else {
-                job.status = BatchJobStatus.failed;
-                job.errorMessage = 'Output missing from cache after empty MediaStore response';
-                job.completedAt = DateTime.now();
-                failCount++;
-                lines.add("FAIL ${job.fileName}: OUTPUT MISSING");
-              }
+              await keepForRecovery('MediaStore did not return a committed URI');
             }
           } catch (injectErr) {
-            if (File(outPath).existsSync()) {
-              job.status = BatchJobStatus.completed;
-              job.progress = 1.0;
-              job.outputUri = outPath;
-              job.completedAt = DateTime.now();
-              okCount++;
-              lines.add("CACHE ONLY ${job.fileName}: $outPath");
-            } else {
-              job.status = BatchJobStatus.failed;
-              job.errorMessage = injectErr.toString();
-              job.completedAt = DateTime.now();
-              failCount++;
-              lines.add("FAIL ${job.fileName}: $injectErr");
-            }
+            await keepForRecovery('MediaStore import failed: $injectErr');
           }
 
           final stepOverall = ((i + 1) / _jobs.length).clamp(0.0, 1.0);
@@ -394,7 +415,8 @@ class WorkbenchQueue {
       _currentJobDescription = null;
     }
 
-    return "Batch Done: $okCount/${_jobs.length} OK"
+    return "Batch Done: $okCount/${_jobs.length} SAVED"
+        "${pendingCount > 0 ? ' ($pendingCount pending library import)' : ''}"
         "${skipCount > 0 ? ' ($skipCount skipped)' : ''}"
         "${failCount > 0 ? ' ($failCount failed)' : ''}.\n"
         "${lines.join('\n')}";
