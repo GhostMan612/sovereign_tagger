@@ -201,6 +201,7 @@ enum BatchJobStatus {
   pending,
   running,
   completed,
+  pendingImport,
   failed,
   skipped,
 }
@@ -237,6 +238,7 @@ class BatchJob {
 
   bool get isFinished =>
       status == BatchJobStatus.completed ||
+      status == BatchJobStatus.pendingImport ||
       status == BatchJobStatus.failed ||
       status == BatchJobStatus.skipped;
 
@@ -250,6 +252,8 @@ class BatchJob {
         return "RUNNING (${(progress * 100).toInt()}%)";
       case BatchJobStatus.completed:
         return outputUri != null ? "OK -> $outputUri" : "OK";
+      case BatchJobStatus.pendingImport:
+        return "PENDING LIBRARY IMPORT: ${outputUri ?? 'RECOVERY FILE MISSING'}";
       case BatchJobStatus.failed:
         return "FAIL: ${errorMessage ?? 'Unknown error'}";
       case BatchJobStatus.skipped:
