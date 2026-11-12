@@ -18,6 +18,7 @@ class PendingWorkbenchImport {
     required this.sha256Hex,
     required this.createdAt,
     required this.available,
+    this.committedUri,
   });
 
   final String id;
@@ -28,6 +29,7 @@ class PendingWorkbenchImport {
   final String sha256Hex;
   final DateTime createdAt;
   final bool available;
+  final String? committedUri;
 
   Map<String, Object> toJson() => {
         'v': 1,
@@ -37,6 +39,7 @@ class PendingWorkbenchImport {
         'bytes': bytes,
         'sha256': sha256Hex,
         'createdAt': createdAt.toUtc().toIso8601String(),
+        if (committedUri != null) 'committedUri': committedUri!,
       };
 }
 
@@ -146,6 +149,7 @@ class PendingImportStore {
           createdAt: DateTime.tryParse(data['createdAt'] as String? ?? '') ??
               DateTime.fromMillisecondsSinceEpoch(0, isUtc: true),
           available: valid,
+          committedUri: data['committedUri'] as String?,
         ));
       } on FormatException {
         // Invalid manifests are never imported or erased automatically.
@@ -167,11 +171,38 @@ class PendingImportStore {
     if (current.isEmpty || !current.single.available) {
       throw StateError('Recovery file is missing or failed its SHA-256 integrity check');
     }
-    final uri = (await importer(current.single.filePath, current.single.title))?.trim();
-    if (uri == null || uri.isEmpty || !uri.startsWith('content://')) {
-      throw StateError('MediaStore did not return a committed media content URI');
+    final priorCommit = current.single.committedUri;
+    if (priorCommit != null && priorCommit.isNotEmpty) {
+      await discard(current.single);
+      return priorCommit;
     }
-    await discard(item);
+    final uri = (await importer(current.single.filePath, current.single.title))?.trim();
+    if (uri == null || uri.isEmpty ||
+        !(uri.startsWith('content://') || uri.startsWith('file://'))) {
+      throw StateError('MediaStore did not return a committed media URI');
+    }
+    // Persist proof of a committed URI before removing the recovery file.
+    // If cleanup fails, the next retry does NOT import the media a second time.
+    final committed = PendingWorkbenchImport(
+      id: current.single.id,
+      title: current.single.title,
+      fileName: current.single.fileName,
+      filePath: current.single.filePath,
+      bytes: current.single.bytes,
+      sha256Hex: current.single.sha256Hex,
+      createdAt: current.single.createdAt,
+      available: true,
+      committedUri: uri,
+    );
+    final marker = _manifest(committed.id);
+    final part = File('${marker.path}.committed.part');
+    try {
+      await part.writeAsString(jsonEncode(committed.toJson()), flush: true);
+      await part.rename(marker.path);
+    } finally {
+      if (await part.exists()) await part.delete();
+    }
+    await discard(committed);
     return uri;
   }
 
