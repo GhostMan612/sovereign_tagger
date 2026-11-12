@@ -42,7 +42,7 @@ class SpeechFallback {
       checkCancelled();
       if (!ready) {
         if (!permitPrepare) {
-          throw const StateError('Fallback speech model is not installed');
+          throw StateError('Fallback speech model is not installed');
         }
         onStatus?.call('LOADING ${engine.label} MODEL...');
         await engine.prepare();
