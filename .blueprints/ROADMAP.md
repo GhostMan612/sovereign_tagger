@@ -332,6 +332,14 @@
 - [x] **38.1.5 Device Identity & Blueprint Accuracy** — Disclosed both verified hardware devices in records: Motorola Moto G 2025 (`ZT4222BMWN`, Android 16 / API 36) and BLU View 5 (`7040016025040287` / B160V, Android 14 / API 34). Corrected `"rwt"` documentation.
 - Gate: `flutter analyze --no-pub` -> `No issues found!`; `flutter test` -> all tests passed; Python doctor tests -> `2/2 passed`.
 
+## Phase 38.2 — Reliability and Vault Verification Closeout [x]
+- [x] **38.2.1 Operator-Visible Crash Recovery Workflow** — Surfaced an actionable `CRASH RECOVERY VAULT` card in `SettingsScreen` showing pending uncommitted `.bak` files from `sov_recovery`. Added 1-tap `RESTORE` (writing back to MediaStore with byte-for-byte SHA-256 verification readback) and `DISCARD` (permanent purge). Surfaced startup scanner in `main.dart` with an amber alert banner and Settings badge in `MainShell`.
+- [x] **38.2.2 Cryptographic SHA-256 Content Verification** — Replaced pure byte-count checks in `StorageBridge.overwriteMedia` with streaming SHA-256 computation before and after overwrite; destination content URI is re-read and hashed directly via `contentResolver.openInputStream(uri)`, asserting `destSha == srcSha`. In-place restore asserts both byte count and `restoredSha == bakSha`.
+- [x] **38.2.3 Legacy Phase 38 SOV2 Migration Compatibility** — Supported seamless decryption of intermediate Phase 38 `SOV2:<salt>:<iv>:<cipher>` envelopes using `LEGACY_PHASE38_SECRET` (`"SovereignVault::KernelMasterKey::v2"`) if user passphrase is omitted or fails.
+- [x] **38.2.4 Stronger Key Stretching & Explicit KDF Envelope** — Upgraded default PBKDF2 iterations to 250,000 for portable passphrase backups. Parameterized format as `SOV2:P:<iterations>:<salt>:<iv>:<cipher>` with backward compatibility for legacy 10,000-iteration envelopes (`SOV2:P:<salt>:<iv>:<cipher>`). Attempted `setIsStrongBoxBacked(true)` on Android KeyStore with graceful TEE fallback.
+- [x] **38.2.5 Test Suite Expansion & End-of-Plan Verification** — Added comprehensive tests in `test/backup_crypto_test.dart` for iteration parsing, legacy Phase 38 envelope fallback delegation, vault reports parsing, restore execution with SHA-256 verification, and discard operations.
+- Gate: `flutter analyze --no-pub` -> `No issues found!`; `flutter test` -> `All 44 tests passed!`; Python doctor tests -> `2/2 passed`.
+
 ## Phase S0–S4 — SOVEREIGN SDK EDITION [-] PARKED 2026-10-01 — spec only, do not start
 
 > **OPERATOR DECISION 2026-10-01: PARKED.** The operator needs to research the

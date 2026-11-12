@@ -103,6 +103,7 @@ class _SplashScreenState extends State<SplashScreen> {
 
     try {
       final pending = await StorageClient.recoverPendingOverwrites();
+      SovereignState.pendingRecoveriesCount.value = pending.length;
       if (pending.isNotEmpty) {
         debugPrint("BOOT: Recovered ${pending.length} pending overwrite backups from crash vault");
       }

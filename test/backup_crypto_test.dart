@@ -108,5 +108,117 @@ void main() {
         throwsA(isA<PlatformException>()),
       );
     });
+
+    test('decryptConfig forwards parameterized SOV2:P with iterations to native bridge', () async {
+      String? recordedPayload;
+      String? recordedPassphrase;
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger.setMockMethodCallHandler(
+        channel,
+        (MethodCall call) async {
+          if (call.method == 'decryptConfig') {
+            recordedPayload = call.arguments['data'];
+            recordedPassphrase = call.arguments['passphrase'];
+            return '{"stretched":true}';
+          }
+          return null;
+        },
+      );
+
+      final decrypted = await StorageClient.decryptConfig(
+        'SOV2:P:250000:mockSaltB64:mockIvB64:mockCipherB64',
+        passphrase: 'high-entropy-pass',
+      );
+      expect(decrypted, '{"stretched":true}');
+      expect(recordedPayload, 'SOV2:P:250000:mockSaltB64:mockIvB64:mockCipherB64');
+      expect(recordedPassphrase, 'high-entropy-pass');
+    });
+
+    test('decryptConfig supports legacy Phase 38 SOV2 envelope delegation', () async {
+      String? recordedPayload;
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger.setMockMethodCallHandler(
+        channel,
+        (MethodCall call) async {
+          if (call.method == 'decryptConfig') {
+            recordedPayload = call.arguments['data'];
+            return '{"legacy_phase38":true}';
+          }
+          return null;
+        },
+      );
+
+      final decrypted = await StorageClient.decryptConfig('SOV2:saltB64:ivB64:cipherB64');
+      expect(decrypted, '{"legacy_phase38":true}');
+      expect(recordedPayload, 'SOV2:saltB64:ivB64:cipherB64');
+    });
+
+    test('recoverPendingOverwrites parses and casts vault reports', () async {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger.setMockMethodCallHandler(
+        channel,
+        (MethodCall call) async {
+          if (call.method == 'recoverPendingOverwrites') {
+            return [
+              {
+                'backupPath': '/data/user/0/sov_recovery/sov_rec_1.bak',
+                'backupName': 'sov_rec_1.bak',
+                'uri': 'content://media/external/audio/media/100',
+                'size': '4096',
+                'sha256': 'abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890',
+                'status': 'RETAINED_FAILED_RESTORE',
+              }
+            ];
+          }
+          return null;
+        },
+      );
+
+      final reports = await StorageClient.recoverPendingOverwrites();
+      expect(reports.length, 1);
+      expect(reports[0]['backupName'], 'sov_rec_1.bak');
+      expect(reports[0]['sha256'], 'abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890');
+      expect(reports[0]['status'], 'RETAINED_FAILED_RESTORE');
+    });
+
+    test('restorePendingOverwrite invokes native channel and returns verification outcome', () async {
+      String? targetPath;
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger.setMockMethodCallHandler(
+        channel,
+        (MethodCall call) async {
+          if (call.method == 'restorePendingOverwrite') {
+            targetPath = call.arguments['backupPath'];
+            return {
+              'status': 'RESTORED',
+              'uri': 'content://media/external/audio/media/100',
+              'sha256': '1122334455667788990011223344556677889900112233445566778899001122',
+              'bytes': '4096',
+            };
+          }
+          return null;
+        },
+      );
+
+      final res = await StorageClient.restorePendingOverwrite('/data/user/0/sov_recovery/sov_rec_1.bak');
+      expect(targetPath, '/data/user/0/sov_recovery/sov_rec_1.bak');
+      expect(res['status'], 'RESTORED');
+      expect(res['bytes'], '4096');
+      expect(res['sha256'], '1122334455667788990011223344556677889900112233445566778899001122');
+    });
+
+    test('discardPendingOverwrite invokes native channel and returns true', () async {
+      String? discardedPath;
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger.setMockMethodCallHandler(
+        channel,
+        (MethodCall call) async {
+          if (call.method == 'discardPendingOverwrite') {
+            discardedPath = call.arguments['backupPath'];
+            return true;
+          }
+          return null;
+        },
+      );
+
+      final ok = await StorageClient.discardPendingOverwrite('/data/user/0/sov_recovery/sov_rec_1.bak');
+      expect(ok, isTrue);
+      expect(discardedPath, '/data/user/0/sov_recovery/sov_rec_1.bak');
+    });
   });
 }

@@ -72,6 +72,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
   bool _isBackingUp = false;
   bool _isRestoring = false;
   String _backupStatus = "System Ready.";
+  List<Map<String, String>> _pendingRecoveries = [];
+  bool _isLoadingRecoveries = false;
+  String _recoveryStatus = "";
 
   @override
   void initState() {
@@ -79,6 +82,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     ModelLifecycle.instance.ensureInitialized();
     unawaited(GhostVectorIndex.instance.loadFromDiskIfNeeded());
     _loadKeys();
+    _loadPendingRecoveries();
   }
 
   Future<void> _loadKeys() async {
@@ -671,6 +675,252 @@ class _SettingsScreenState extends State<SettingsScreen> {
     } finally {
       if (mounted) setState(() => _isRestoring = false);
     }
+  }
+
+  Future<void> _loadPendingRecoveries() async {
+    setState(() => _isLoadingRecoveries = true);
+    try {
+      final list = await StorageClient.recoverPendingOverwrites();
+      if (!mounted) return;
+      setState(() {
+        _pendingRecoveries = list;
+        SovereignState.pendingRecoveriesCount.value = list.length;
+      });
+    } catch (_) {
+    } finally {
+      if (mounted) setState(() => _isLoadingRecoveries = false);
+    }
+  }
+
+  Future<void> _restorePendingMedia(String backupPath) async {
+    TapFeedback.machineTap();
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: Colors.black,
+        shape: RoundedRectangleBorder(
+          side: BorderSide(color: SovereignState.accentColor.value),
+          borderRadius: BorderRadius.zero,
+        ),
+        title: Text('RESTORE ORIGINAL MEDIA', style: TextStyle(fontFamily: 'ShareTechMono', fontSize: 13, color: SovereignState.accentColor.value)),
+        content: const Text('THIS WILL WRITE THE PRE-OVERWRITE BACKUP DIRECTLY BACK TO MEDIASTORE AND VERIFY BYTE-FOR-BYTE VIA SHA-256 HASH.', style: TextStyle(fontFamily: 'ShareTechMono', fontSize: 11, color: Colors.white70)),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('CANCEL', style: TextStyle(fontFamily: 'ShareTechMono', color: Colors.white38)),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('RESTORE', style: TextStyle(fontFamily: 'ShareTechMono', color: Colors.greenAccent)),
+          ),
+        ],
+      ),
+    );
+    if (confirm != true) return;
+    setState(() {
+      _isLoadingRecoveries = true;
+      _recoveryStatus = "Restoring & verifying SHA-256...";
+    });
+    try {
+      final res = await StorageClient.restorePendingOverwrite(backupPath);
+      await _loadPendingRecoveries();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('> RESTORE VERIFIED: ${res['displayName'] ?? res['uri']} (${res['bytes']} bytes, SHA-256 match).', style: const TextStyle(fontFamily: 'ShareTechMono')),
+          backgroundColor: Colors.black,
+          shape: const RoundedRectangleBorder(side: BorderSide(color: Colors.greenAccent)),
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('> ERR: RESTORE FAILED: $e', style: const TextStyle(fontFamily: 'ShareTechMono')),
+          backgroundColor: Colors.black,
+          shape: const RoundedRectangleBorder(side: BorderSide(color: Colors.redAccent)),
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _isLoadingRecoveries = false);
+    }
+  }
+
+  Future<void> _discardPendingMedia(String backupPath) async {
+    TapFeedback.machineTap();
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: Colors.black,
+        shape: const RoundedRectangleBorder(
+          side: BorderSide(color: Colors.redAccent),
+          borderRadius: BorderRadius.zero,
+        ),
+        title: const Text('DISCARD RECOVERY BACKUP', style: TextStyle(fontFamily: 'ShareTechMono', fontSize: 13, color: Colors.redAccent)),
+        content: const Text('ARE YOU SURE? THIS PURGES THE BACKUP FILE PERMANENTLY. ANY PRESERVED ORIGINAL BYTES WILL BE LOST.', style: TextStyle(fontFamily: 'ShareTechMono', fontSize: 11, color: Colors.white70)),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('CANCEL', style: TextStyle(fontFamily: 'ShareTechMono', color: Colors.white38)),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('DISCARD', style: TextStyle(fontFamily: 'ShareTechMono', color: Colors.redAccent)),
+          ),
+        ],
+      ),
+    );
+    if (confirm != true) return;
+    try {
+      await StorageClient.discardPendingOverwrite(backupPath);
+      await _loadPendingRecoveries();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('> RECOVERY BACKUP PURGED.', style: TextStyle(fontFamily: 'ShareTechMono')),
+          backgroundColor: Colors.black,
+          shape: RoundedRectangleBorder(side: BorderSide(color: Colors.redAccent)),
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('> ERR: DISCARD FAILED: $e', style: const TextStyle(fontFamily: 'ShareTechMono')),
+          backgroundColor: Colors.black,
+          shape: const RoundedRectangleBorder(side: BorderSide(color: Colors.redAccent)),
+        ),
+      );
+    }
+  }
+
+  Widget _buildCrashRecoveryVault(Color themeColor) {
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.black,
+        border: Border.all(
+          color: _pendingRecoveries.isNotEmpty ? Colors.amberAccent : themeColor.withValues(alpha: 0.5),
+        ),
+      ),
+      padding: const EdgeInsets.all(12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              Icon(
+                Icons.restore_page,
+                color: _pendingRecoveries.isNotEmpty ? Colors.amberAccent : themeColor,
+                size: 18,
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  "> CRASH RECOVERY VAULT [${_pendingRecoveries.length} PENDING]",
+                  style: TextStyle(
+                    fontFamily: 'ShareTechMono',
+                    fontWeight: FontWeight.bold,
+                    color: _pendingRecoveries.isNotEmpty ? Colors.amberAccent : Colors.white,
+                    fontSize: 13,
+                  ),
+                ),
+              ),
+              IconButton(
+                icon: _isLoadingRecoveries
+                    ? SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2, color: themeColor))
+                    : Icon(Icons.refresh, size: 18, color: themeColor),
+                onPressed: _isLoadingRecoveries ? null : _loadPendingRecoveries,
+                tooltip: 'Refresh Recovery Vault',
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          if (_pendingRecoveries.isEmpty)
+            const Text(
+              "NO INTERRUPTED WRITE-BACKS. ALL MEDIASTORE OVERWRITES WERE VERIFIED OR CLEANED UP.",
+              style: TextStyle(fontFamily: 'ShareTechMono', fontSize: 10, color: Colors.white38),
+            )
+          else ...[
+            const Text(
+              "CRITICAL: UNCOMMITTED OVERWRITE BACKUPS DETECTED. PRE-OVERWRITE BYTES WERE PRESERVED AND CAN BE RESTORED TO MEDIASTORE WITH FULL SHA-256 INTEGRITY VERIFICATION.",
+              style: TextStyle(fontFamily: 'ShareTechMono', fontSize: 10, color: Colors.amberAccent),
+            ),
+            const SizedBox(height: 12),
+            ..._pendingRecoveries.map((item) {
+              final path = item['backupPath'] ?? '';
+              final name = item['backupName'] ?? path.split('/').last;
+              final uri = item['uri'] ?? 'UNKNOWN URI';
+              final size = item['size'] ?? '0';
+              final sha256 = item['sha256'] ?? '';
+              final status = item['status'] ?? 'PENDING';
+              return Container(
+                margin: const EdgeInsets.only(bottom: 8),
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.04),
+                  border: Border.all(color: Colors.white24),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Text(
+                      name,
+                      style: const TextStyle(fontFamily: 'ShareTechMono', fontSize: 11, fontWeight: FontWeight.bold, color: Colors.white),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      "DESTINATION: $uri",
+                      style: const TextStyle(fontFamily: 'ShareTechMono', fontSize: 10, color: Colors.white70),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      "SIZE: $size BYTES | STATUS: $status",
+                      style: const TextStyle(fontFamily: 'ShareTechMono', fontSize: 10, color: Colors.white38),
+                    ),
+                    if (sha256.isNotEmpty) ...[
+                      const SizedBox(height: 2),
+                      Text(
+                        "SHA-256: ${sha256.length > 20 ? '${sha256.substring(0, 16)}...' : sha256}",
+                        style: const TextStyle(fontFamily: 'ShareTechMono', fontSize: 9, color: Colors.cyanAccent),
+                      ),
+                    ],
+                    const SizedBox(height: 8),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.end,
+                      children: [
+                        OutlinedButton(
+                          onPressed: () => _discardPendingMedia(path),
+                          style: OutlinedButton.styleFrom(
+                            side: const BorderSide(color: Colors.redAccent),
+                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                          ),
+                          child: const Text('DISCARD', style: TextStyle(fontFamily: 'ShareTechMono', fontSize: 10, color: Colors.redAccent)),
+                        ),
+                        const SizedBox(width: 8),
+                        OutlinedButton(
+                          onPressed: () => _restorePendingMedia(path),
+                          style: OutlinedButton.styleFrom(
+                            side: const BorderSide(color: Colors.greenAccent),
+                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                          ),
+                          child: const Text('RESTORE', style: TextStyle(fontFamily: 'ShareTechMono', fontSize: 10, color: Colors.greenAccent, fontWeight: FontWeight.bold)),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              );
+            }),
+          ],
+          if (_recoveryStatus.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Text("> $_recoveryStatus", textAlign: TextAlign.center, style: const TextStyle(fontFamily: 'VT323', fontSize: 14, color: Colors.amberAccent)),
+          ],
+        ],
+      ),
+    );
   }
 
   Future<void> _runDoctor() async {
@@ -1810,6 +2060,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 ),
                 const SizedBox(height: 8),
                 Text("> $_backupStatus", textAlign: TextAlign.center, style: const TextStyle(fontFamily: 'VT323', fontSize: 14, color: Colors.white70)),
+
+                const SizedBox(height: 24),
+                _buildCrashRecoveryVault(themeColor),
 
                 const SizedBox(height: 48),
               ],

@@ -1,5 +1,12 @@
-# CURRENT_STATE.md — Sovereign Tagger v2 (post-Phase 38.1)
-> Snapshot as of 2026-11-11 — Phases 0–38.1 + PR #1–#22 COMPLETE (`flutter analyze --no-pub` -> `No issues found!`; `flutter test` -> 39/39 passed; Python doctor tests -> 2/2 passed; Moto G 2025 `ZT4222BMWN` + BLU View 5 `7040016025040287` hardware verification ALL PASS).
+# CURRENT_STATE.md — Sovereign Tagger v2 (post-Phase 38.2)
+> Snapshot as of 2026-11-12 — Phases 0–38.2 + PR #1–#22 COMPLETE (`flutter analyze --no-pub` -> `No issues found!`; `flutter test` -> 44/44 passed; Python doctor tests -> 2/2 passed; Moto G 2025 `ZT4222BMWN` + BLU View 5 `7040016025040287` hardware verification ALL PASS).
+>
+> **Phase 38.2 deltas (Reliability & Vault Verification Closeout):**
+> - **Operator-Visible Crash Recovery Workflow**: Surfaced actionable Crash Recovery Vault card in `SettingsScreen` showing pending backups in `sov_recovery`, with 1-tap restore to MediaStore (with SHA-256 verification) and discard. Added startup recovery scan in `main.dart` with an amber alert banner and Settings badge in `MainShell`.
+> - **Cryptographic SHA-256 Content Verification**: Replaced pure byte-count checks in `StorageBridge.overwriteMedia` with streaming SHA-256 digest computation before and after overwrite; destination stream is re-read and hashed directly via `contentResolver.openInputStream(uri)`, asserting `destSha == srcSha`. In-place restore asserts both byte count and `restoredSha == bakSha`.
+> - **Legacy Phase 38 SOV2 Migration Compatibility**: Supported seamless decryption of intermediate Phase 38 `SOV2:<salt>:<iv>:<cipher>` envelopes using `LEGACY_PHASE38_SECRET` (`"SovereignVault::KernelMasterKey::v2"`) if user passphrase is omitted or fails.
+> - **Stronger Key Stretching & Explicit KDF Envelope**: Upgraded default PBKDF2 iterations to 250,000; parameterized format as `SOV2:P:<iterations>:<salt>:<iv>:<cipher>` with backward compatibility for legacy 10,000-iteration envelopes; attempted `setIsStrongBoxBacked(true)` on Android KeyStore with graceful TEE fallback.
+> - **Expanded Test Suite**: Added tests in `test/backup_crypto_test.dart` for iteration parsing, legacy Phase 38 envelope fallback delegation, vault reports parsing, restore execution with SHA-256 verification, and discard operations.
 >
 > **Phase 38.1 deltas (Security & Data Integrity Hardening Corrections):**
 > - **Operator Passphrase & Android Keystore Cryptography (P0 Fixed)**: Eliminated hardcoded master key in `StorageBridge.kt`. Passphrase-based exports derive AES-256 keys via PBKDF2WithHmacSHA256 (10,000 iterations, 16-byte random salt, 12-byte IV, 128-bit GCM tag) yielding portable `SOV2:P:` envelopes. Device-local exports lock to the device via hardware-backed `AndroidKeyStore` (`SovereignLocalVaultKey`) yielding `SOV2:K:` envelopes.

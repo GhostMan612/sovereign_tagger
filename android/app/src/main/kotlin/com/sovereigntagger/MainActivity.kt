@@ -412,6 +412,14 @@ class MainActivity: AudioServiceActivity() {
                 "recoverPendingOverwrites" -> {
                     runAsync(result, "STORAGE_ERROR") { storageBridge.recoverPendingOverwrites() }
                 }
+                "restorePendingOverwrite" -> {
+                    val backupPath = call.argument<String>("backupPath") ?: ""
+                    runAsync(result, "STORAGE_ERROR") { storageBridge.restorePendingOverwrite(backupPath) }
+                }
+                "discardPendingOverwrite" -> {
+                    val backupPath = call.argument<String>("backupPath") ?: ""
+                    runAsync(result, "STORAGE_ERROR") { storageBridge.discardPendingOverwrite(backupPath) }
+                }
                 "exportConfig" -> {
                     val data = call.argument<String>("data") ?: ""
                     runAsync(result, "STORAGE_ERROR") { storageBridge.exportConfig(data) }

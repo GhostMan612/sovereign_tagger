@@ -30,6 +30,7 @@ import android.util.Size
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.security.KeyStore
+import java.security.MessageDigest
 import java.security.SecureRandom
 import java.util.Locale
 import javax.crypto.Cipher
@@ -46,12 +47,34 @@ class StorageBridge(private val context: Context) {
         private const val TAG = "StorageBridge"
         private const val KEYSTORE_ALIAS = "SovereignLocalVaultKey"
         private const val ANDROID_KEYSTORE = "AndroidKeyStore"
+        private const val DEFAULT_PBKDF2_ITERATIONS = 250000
+        private const val LEGACY_PBKDF2_ITERATIONS = 10000
+        private const val LEGACY_PHASE38_SECRET = "SovereignVault::KernelMasterKey::v2"
     }
+
+    private data class Quad<A, B, C, D>(val first: A, val second: B, val third: C, val fourth: D)
 
     private fun getOrCreateKeystoreKey(): SecretKey {
         val keyStore = KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }
         if (!keyStore.containsAlias(KEYSTORE_ALIAS)) {
             val keyGenerator = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, ANDROID_KEYSTORE)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                try {
+                    val strongBoxSpec = KeyGenParameterSpec.Builder(
+                        KEYSTORE_ALIAS,
+                        KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT
+                    )
+                        .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
+                        .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
+                        .setKeySize(256)
+                        .setIsStrongBoxBacked(true)
+                        .build()
+                    keyGenerator.init(strongBoxSpec)
+                    return keyGenerator.generateKey()
+                } catch (_: Throwable) {
+                    Log.i(TAG, "StrongBox unavailable, falling back to standard TEE Keystore")
+                }
+            }
             val spec = KeyGenParameterSpec.Builder(
                 KEYSTORE_ALIAS,
                 KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT
@@ -68,10 +91,36 @@ class StorageBridge(private val context: Context) {
         return entry.secretKey
     }
 
-    private fun derivePassphraseKey(passphrase: String, salt: ByteArray): SecretKey {
+    private fun derivePassphraseKey(passphrase: String, salt: ByteArray, iterations: Int = DEFAULT_PBKDF2_ITERATIONS): SecretKey {
         val factory = SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256")
-        val spec = PBEKeySpec(passphrase.toCharArray(), salt, 10000, 256)
+        val spec = PBEKeySpec(passphrase.toCharArray(), salt, iterations, 256)
         return SecretKeySpec(factory.generateSecret(spec).encoded, "AES")
+    }
+
+    private fun computeSha256(file: File): String {
+        val md = MessageDigest.getInstance("SHA-256")
+        file.inputStream().use { input ->
+            val buf = ByteArray(64 * 1024)
+            while (true) {
+                val n = input.read(buf)
+                if (n <= 0) break
+                md.update(buf, 0, n)
+            }
+        }
+        return md.digest().joinToString("") { "%02x".format(it) }
+    }
+
+    private fun computeSha256(uri: Uri): String {
+        val md = MessageDigest.getInstance("SHA-256")
+        context.contentResolver.openInputStream(uri)?.use { input ->
+            val buf = ByteArray(64 * 1024)
+            while (true) {
+                val n = input.read(buf)
+                if (n <= 0) break
+                md.update(buf, 0, n)
+            }
+        } ?: throw IllegalStateException("Cannot read stream to compute SHA-256: $uri")
+        return md.digest().joinToString("") { "%02x".format(it) }
     }
 
     fun addToMediaStore(filePath: String, title: String): Map<String, String> {
@@ -529,17 +578,22 @@ class StorageBridge(private val context: Context) {
         val recoveryFile = File(recoveryDir, "sov_rec_${opId}.bak")
         val metaFile = File(recoveryDir, "sov_rec_${opId}.meta")
 
+        val srcSha = computeSha256(src)
+        val bakSha: String
+        val bakLen: Long
+
         try {
             context.contentResolver.openInputStream(uri)?.use { inStream ->
                 recoveryFile.outputStream().use { outStream ->
                     inStream.copyTo(outStream)
                 }
             } ?: throw IllegalStateException("Could not read original media from $uri")
-            val bakLen = recoveryFile.length()
+            bakLen = recoveryFile.length()
             if (bakLen <= 0L) {
                 throw IllegalStateException("Original media backup returned 0 bytes")
             }
-            metaFile.writeText("URI=$uriString\nSIZE=$bakLen\nTIME=$opId\nSTATUS=PENDING\n")
+            bakSha = computeSha256(recoveryFile)
+            metaFile.writeText("URI=$uriString\nSIZE=$bakLen\nSHA256=$bakSha\nTIME=$opId\nSTATUS=PENDING\n")
         } catch (e: Throwable) {
             try { recoveryFile.delete() } catch (_: Throwable) {}
             try { metaFile.delete() } catch (_: Throwable) {}
@@ -590,7 +644,8 @@ class StorageBridge(private val context: Context) {
                                 rOut.flush()
                             }
                         }
-                        restoreVerified = (restoredBytes == recoveryFile.length())
+                        val restoredSha = computeSha256(uri)
+                        restoreVerified = (restoredBytes == recoveryFile.length() && restoredSha == bakSha)
                     }
                 } catch (re: Throwable) {
                     Log.e(TAG, "Restoration attempt failed: ${re.message}")
@@ -598,9 +653,9 @@ class StorageBridge(private val context: Context) {
                 if (restoreVerified) {
                     try { recoveryFile.delete() } catch (_: Throwable) {}
                     try { metaFile.delete() } catch (_: Throwable) {}
-                    throw IllegalStateException("Write-back failed after $written of $srcLen bytes. Original media verified and restored ($restoredBytes bytes): ${e.message}")
+                    throw IllegalStateException("Write-back failed after $written of $srcLen bytes. Original media verified and restored ($restoredBytes bytes, SHA-256 match): ${e.message}")
                 } else {
-                    metaFile.writeText("URI=$uriString\nSIZE=${recoveryFile.length()}\nTIME=$opId\nSTATUS=RETAINED_FAILED_RESTORE\nRESTORED=$restoredBytes\n")
+                    metaFile.writeText("URI=$uriString\nSIZE=${recoveryFile.length()}\nSHA256=$bakSha\nTIME=$opId\nSTATUS=RETAINED_FAILED_RESTORE\nRESTORED=$restoredBytes\n")
                     throw IllegalStateException("CRITICAL: Write-back failed AND in-place restore could not be verified. Original bytes PRESERVED in recovery file: ${recoveryFile.absolutePath}")
                 }
             }
@@ -627,7 +682,8 @@ class StorageBridge(private val context: Context) {
                                 rOut.flush()
                             }
                         }
-                        restoreVerified = (restoredBytes == recoveryFile.length())
+                        val restoredSha = computeSha256(uri)
+                        restoreVerified = (restoredBytes == recoveryFile.length() && restoredSha == bakSha)
                     }
                 } catch (re: Throwable) {
                     Log.e(TAG, "Restoration attempt failed: ${re.message}")
@@ -635,12 +691,52 @@ class StorageBridge(private val context: Context) {
                 if (restoreVerified) {
                     try { recoveryFile.delete() } catch (_: Throwable) {}
                     try { metaFile.delete() } catch (_: Throwable) {}
-                    throw IllegalStateException("Write-back short: $written of $srcLen bytes landed. Original media verified and restored ($restoredBytes bytes).")
+                    throw IllegalStateException("Write-back short: $written of $srcLen bytes landed. Original media verified and restored ($restoredBytes bytes, SHA-256 match).")
                 } else {
-                    metaFile.writeText("URI=$uriString\nSIZE=${recoveryFile.length()}\nTIME=$opId\nSTATUS=RETAINED_FAILED_RESTORE\nRESTORED=$restoredBytes\n")
+                    metaFile.writeText("URI=$uriString\nSIZE=${recoveryFile.length()}\nSHA256=$bakSha\nTIME=$opId\nSTATUS=RETAINED_FAILED_RESTORE\nRESTORED=$restoredBytes\n")
                     throw IllegalStateException("CRITICAL: Write-back short AND in-place restore could not be verified. Original bytes PRESERVED in recovery file: ${recoveryFile.absolutePath}")
                 }
             }
+
+            val destSha = computeSha256(uri)
+            if (destSha != srcSha) {
+                var restoredBytes = 0L
+                var restoreVerified = false
+                try {
+                    val rStream = try {
+                        context.contentResolver.openOutputStream(uri, "rwt")
+                    } catch (_: Exception) {
+                        context.contentResolver.openOutputStream(uri, "wt")
+                    }
+                    if (rStream != null) {
+                        rStream.use { rOut ->
+                            recoveryFile.inputStream().use { rIn ->
+                                val rBuf = ByteArray(64 * 1024)
+                                while (true) {
+                                    val n = rIn.read(rBuf)
+                                    if (n <= 0) break
+                                    rOut.write(rBuf, 0, n)
+                                    restoredBytes += n
+                                }
+                                rOut.flush()
+                            }
+                        }
+                        val restoredSha = computeSha256(uri)
+                        restoreVerified = (restoredBytes == recoveryFile.length() && restoredSha == bakSha)
+                    }
+                } catch (re: Throwable) {
+                    Log.e(TAG, "Restoration attempt failed: ${re.message}")
+                }
+                if (restoreVerified) {
+                    try { recoveryFile.delete() } catch (_: Throwable) {}
+                    try { metaFile.delete() } catch (_: Throwable) {}
+                    throw IllegalStateException("Write-back hash mismatch (expected $srcSha, got $destSha). Original media verified and restored ($restoredBytes bytes, SHA-256 match).")
+                } else {
+                    metaFile.writeText("URI=$uriString\nSIZE=${recoveryFile.length()}\nSHA256=$bakSha\nTIME=$opId\nSTATUS=RETAINED_FAILED_RESTORE\nRESTORED=$restoredBytes\n")
+                    throw IllegalStateException("CRITICAL: Write-back hash mismatch AND restore could not be verified. Original bytes PRESERVED in recovery file: ${recoveryFile.absolutePath}")
+                }
+            }
+
             success = true
         } finally {
             if (success) {
@@ -683,13 +779,118 @@ class StorageBridge(private val context: Context) {
         val baks = recoveryDir.listFiles { _, name -> name.endsWith(".bak") } ?: return emptyList()
         for (bak in baks) {
             val meta = File(recoveryDir, "${bak.nameWithoutExtension}.meta")
+            var uri = ""
+            var size = bak.length().toString()
+            var sha256 = ""
+            var time = ""
+            var status = "UNKNOWN"
+            if (meta.exists()) {
+                val lines = meta.readLines()
+                for (line in lines) {
+                    val p = line.indexOf('=')
+                    if (p > 0) {
+                        val key = line.substring(0, p).trim()
+                        val value = line.substring(p + 1).trim()
+                        when (key) {
+                            "URI" -> uri = value
+                            "SIZE" -> size = value
+                            "SHA256" -> sha256 = value
+                            "TIME" -> time = value
+                            "STATUS" -> status = value
+                        }
+                    }
+                }
+            }
+            if (sha256.isEmpty()) {
+                try {
+                    sha256 = computeSha256(bak)
+                } catch (_: Throwable) {}
+            }
             reports.add(mapOf(
                 "backupPath" to bak.absolutePath,
-                "size" to bak.length().toString(),
-                "meta" to if (meta.exists()) meta.readText() else ""
+                "backupName" to bak.name,
+                "uri" to uri,
+                "size" to size,
+                "sha256" to sha256,
+                "time" to time,
+                "status" to status
             ))
         }
         return reports
+    }
+
+    fun restorePendingOverwrite(backupPath: String): Map<String, String> {
+        val bak = File(backupPath)
+        if (!bak.exists()) throw IllegalStateException("Backup file does not exist: $backupPath")
+        val meta = File(bak.parentFile, "${bak.nameWithoutExtension}.meta")
+        var uriString = ""
+        var expectedSha = ""
+        if (meta.exists()) {
+            for (line in meta.readLines()) {
+                val p = line.indexOf('=')
+                if (p > 0) {
+                    val key = line.substring(0, p).trim()
+                    val value = line.substring(p + 1).trim()
+                    if (key == "URI") uriString = value
+                    if (key == "SHA256") expectedSha = value
+                }
+            }
+        }
+        if (uriString.isEmpty()) {
+            throw IllegalStateException("No target URI found in metadata for $backupPath")
+        }
+        val uri = Uri.parse(uriString)
+        val bakSha = computeSha256(bak)
+        if (expectedSha.isNotEmpty() && expectedSha != bakSha) {
+            throw IllegalStateException("Backup corruption detected before restore: meta $expectedSha != actual $bakSha")
+        }
+        val stream = try {
+            context.contentResolver.openOutputStream(uri, "rwt")
+        } catch (_: Exception) {
+            context.contentResolver.openOutputStream(uri, "wt")
+        } ?: throw IllegalStateException("Destination URI not writable: $uriString")
+
+        var restoredBytes = 0L
+        stream.use { out ->
+            bak.inputStream().use { input ->
+                val buf = ByteArray(64 * 1024)
+                while (true) {
+                    val n = input.read(buf)
+                    if (n <= 0) break
+                    out.write(buf, 0, n)
+                    restoredBytes += n
+                }
+                out.flush()
+            }
+        }
+
+        val destSha = computeSha256(uri)
+        if (destSha != bakSha) {
+            throw IllegalStateException("Restore SHA-256 mismatch: destination $destSha != backup $bakSha")
+        }
+
+        try { bak.delete() } catch (_: Throwable) {}
+        try { meta.delete() } catch (_: Throwable) {}
+
+        val info = describe(uri)
+        info["path"]?.let { scan(it) }
+
+        return mapOf(
+            "status" to "RESTORED",
+            "uri" to uriString,
+            "path" to (info["path"] ?: ""),
+            "displayName" to (info["displayName"] ?: ""),
+            "sha256" to destSha,
+            "bytes" to restoredBytes.toString()
+        )
+    }
+
+    fun discardPendingOverwrite(backupPath: String): Boolean {
+        val bak = File(backupPath)
+        val meta = File(bak.parentFile, "${bak.nameWithoutExtension}.meta")
+        val bOk = if (bak.exists()) bak.delete() else true
+        val mOk = if (meta.exists()) meta.delete() else true
+        return bOk || mOk
     }
 
     fun deleteDirect(uriString: String): Boolean {
@@ -738,17 +939,18 @@ class StorageBridge(private val context: Context) {
     fun encryptConfig(plainText: String, passphrase: String? = null): String {
         try {
             if (!passphrase.isNullOrEmpty()) {
+                val iterations = DEFAULT_PBKDF2_ITERATIONS
                 val random = SecureRandom()
                 val salt = ByteArray(16).also { random.nextBytes(it) }
                 val iv = ByteArray(12).also { random.nextBytes(it) }
-                val key = derivePassphraseKey(passphrase, salt)
+                val key = derivePassphraseKey(passphrase, salt, iterations)
                 val cipher = Cipher.getInstance("AES/GCM/NoPadding")
                 cipher.init(Cipher.ENCRYPT_MODE, key, GCMParameterSpec(128, iv))
                 val cipherBytes = cipher.doFinal(plainText.toByteArray(Charsets.UTF_8))
                 val saltB64 = Base64.encodeToString(salt, Base64.NO_WRAP)
                 val ivB64 = Base64.encodeToString(iv, Base64.NO_WRAP)
                 val cipherB64 = Base64.encodeToString(cipherBytes, Base64.NO_WRAP)
-                return "SOV2:P:$saltB64:$ivB64:$cipherB64"
+                return "SOV2:P:$iterations:$saltB64:$ivB64:$cipherB64"
             } else {
                 val key = getOrCreateKeystoreKey()
                 val cipher = Cipher.getInstance("AES/GCM/NoPadding")
@@ -777,14 +979,24 @@ class StorageBridge(private val context: Context) {
             val plainBytes = cipher.doFinal(cipherBytes)
             return String(plainBytes, Charsets.UTF_8)
         }
-        if (trimmed.startsWith("SOV2:P:") || trimmed.startsWith("SOV2:")) {
+        if (trimmed.startsWith("SOV2:P:")) {
             val parts = trimmed.split(":")
-            val (saltB64, ivB64, cipherB64) = if (trimmed.startsWith("SOV2:P:")) {
-                if (parts.size < 5) throw IllegalArgumentException("Malformed SOV2:P payload")
-                Triple(parts[2], parts[3], parts[4])
+            val iterations: Int
+            val saltB64: String
+            val ivB64: String
+            val cipherB64: String
+            if (parts.size >= 6) {
+                iterations = parts[2].toIntOrNull() ?: DEFAULT_PBKDF2_ITERATIONS
+                saltB64 = parts[3]
+                ivB64 = parts[4]
+                cipherB64 = parts[5]
+            } else if (parts.size == 5) {
+                iterations = LEGACY_PBKDF2_ITERATIONS
+                saltB64 = parts[2]
+                ivB64 = parts[3]
+                cipherB64 = parts[4]
             } else {
-                if (parts.size < 4) throw IllegalArgumentException("Malformed SOV2 payload")
-                Triple(parts[1], parts[2], parts[3])
+                throw IllegalArgumentException("Malformed SOV2:P payload")
             }
             if (passphrase.isNullOrEmpty()) {
                 throw IllegalArgumentException("Passphrase required to decrypt encrypted backup")
@@ -792,11 +1004,39 @@ class StorageBridge(private val context: Context) {
             val salt = Base64.decode(saltB64, Base64.NO_WRAP)
             val iv = Base64.decode(ivB64, Base64.NO_WRAP)
             val cipherBytes = Base64.decode(cipherB64, Base64.NO_WRAP)
-            val key = derivePassphraseKey(passphrase, salt)
+            val key = derivePassphraseKey(passphrase, salt, iterations)
             val cipher = Cipher.getInstance("AES/GCM/NoPadding")
             cipher.init(Cipher.DECRYPT_MODE, key, GCMParameterSpec(128, iv))
             val plainBytes = cipher.doFinal(cipherBytes)
             return String(plainBytes, Charsets.UTF_8)
+        }
+        if (trimmed.startsWith("SOV2:")) {
+            val parts = trimmed.split(":")
+            if (parts.size < 4) throw IllegalArgumentException("Malformed SOV2 payload")
+            val saltB64 = parts[1]
+            val ivB64 = parts[2]
+            val cipherB64 = parts[3]
+            val salt = Base64.decode(saltB64, Base64.NO_WRAP)
+            val iv = Base64.decode(ivB64, Base64.NO_WRAP)
+            val cipherBytes = Base64.decode(cipherB64, Base64.NO_WRAP)
+            if (!passphrase.isNullOrEmpty()) {
+                try {
+                    val key = derivePassphraseKey(passphrase, salt, LEGACY_PBKDF2_ITERATIONS)
+                    val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+                    cipher.init(Cipher.DECRYPT_MODE, key, GCMParameterSpec(128, iv))
+                    val plainBytes = cipher.doFinal(cipherBytes)
+                    return String(plainBytes, Charsets.UTF_8)
+                } catch (_: Throwable) {}
+            }
+            try {
+                val legacyKey = derivePassphraseKey(LEGACY_PHASE38_SECRET, salt, LEGACY_PBKDF2_ITERATIONS)
+                val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+                cipher.init(Cipher.DECRYPT_MODE, legacyKey, GCMParameterSpec(128, iv))
+                val plainBytes = cipher.doFinal(cipherBytes)
+                return String(plainBytes, Charsets.UTF_8)
+            } catch (e: Throwable) {
+                throw IllegalArgumentException("Decryption failed for legacy Phase 38 SOV2 backup: ${e.message}", e)
+            }
         }
         try {
             val xorBytes = Base64.decode(trimmed, Base64.NO_WRAP)

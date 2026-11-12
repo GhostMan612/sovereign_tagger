@@ -20,17 +20,28 @@ Session-end law: update rows 2–4 every session (+ row 5 when a new gotcha is l
 
 ## Where we are
 
-**Date:** 2026-11-11
-**Phase:** 0–38.1 implementation + PR #1–#22 COMPLETE & MERGED (All 22 project pull requests merged into `main`), full documentation suite (`README.md`, `LICENSE`, `LICENSES.md`, `SECURITY.md`, `CONTRIBUTING.md`), `impellerc` shader (`GLES`/`Vulkan`/`SkSL`), analyzer, test suite (36/36 tests passing), and Android ARM64 APK build gates VERIFIED; zero stubs remaining. F-Droid ready.
-- `flutter analyze --no-pub` -> `No issues found!`.
-- `flutter test` -> `All tests passed!`.
-- `python test/python/test_doctor.py` -> `Ran 2 tests in 0.006s OK`.
-- `impellerc` -> `shaders/backdrop.frag` & `shaders/ghost.frag` compile cleanly across GLES, Vulkan, and SkSL.
-- `flutter build apk --debug --target-platform android-arm64` -> `LiteRT 1.4.0` + `EmbeddingGemmaBridge.kt` + `SentencePieceTokenizer.kt` + `shaders/ghost.frag` compile cleanly.
-- **Hardware Smoke & Runtime Verification: ALL PASS**
-  - **Motorola Moto G 2025 (`ZT4222BMWN`, Android 16 / API 36)**: Verified Impeller rendering backend, native Equalizer/LoudnessEnhancer attachment (`audioSessionId=18945`, 5 bands), live 256-D LiteRT neural self-test, Media3 AudioTrack decode, and ID3 tag handling.
-  - **BLU View 5 / B160V (`7040016025040287`, Android 14 / API 34, ARM64)**: Verified streamed APK installation (`Success`), clean activity boot (`PID 19064`), Impeller OpenGLES engine init, and crash recovery scanner.
-**Branch:** `main` is the single canonical branch. All 22 PR branches merged and pruned (0 open PRs, 0 dead branches).
+**Date:** 2026-11-12
+**Phase:** Phase 38.2: Reliability and Vault Verification Closeout COMPLETE. All 22 PRs merged into `main`, full documentation suite (`README.md`, `LICENSE`, `LICENSES.md`, `SECURITY.md`, `CONTRIBUTING.md`), `impellerc` shaders (`GLES`/`Vulkan`/`SkSL`), analyzer, test suite (expanded to 44 unit tests), and Android ARM64 APK build gates VERIFIED; zero stubs remaining. F-Droid ready.
+
+## What shipped — Phase 38.2: Reliability & Vault Verification Closeout (2026-11-12)
+
+1. **Operator-Visible Crash Recovery Workflow**:
+   - Surfaced an actionable **Crash Recovery Vault** UI card in `SettingsScreen` displaying all uncommitted pre-overwrite backups from `sov_recovery`.
+   - Implemented 1-tap **RESTORE** to MediaStore with byte-for-byte SHA-256 verification readback, alongside **DISCARD** (purge) actions.
+   - Integrated startup scanning in `lib/main.dart` with a top-level amber alert banner in `MainShell` and badge counter on the Settings icon whenever pending backups exist.
+2. **Cryptographic SHA-256 Content Verification**:
+   - Replaced pure byte-count checks in `StorageBridge.overwriteMedia` with streaming SHA-256 digest computation before and after overwrite.
+   - MediaStore destination stream is re-read and hashed directly via `contentResolver.openInputStream(uri)`; overwrite is declared verified only when `destSha == srcSha`.
+   - Restore fallback asserts both byte length and `restoredSha == bakSha` before marking restore verified and purging backup files.
+3. **Legacy Phase 38 SOV2 Migration Compatibility**:
+   - Added seamless decryption support for intermediate Phase 38 `SOV2:<salt>:<iv>:<cipher>` envelopes in `StorageBridge.decryptConfig`.
+   - Automatically falls back to `LEGACY_PHASE38_SECRET` (`"SovereignVault::KernelMasterKey::v2"`) if user passphrase is omitted or fails.
+4. **Stronger Key Stretching & Explicit KDF Envelope**:
+   - Upgraded default PBKDF2 iterations to 250,000 for portable passphrase backups.
+   - Parameterized format as `SOV2:P:<iterations>:<salt>:<iv>:<cipher>` with backward compatibility for legacy 10,000-iteration envelopes (`SOV2:P:<salt>:<iv>:<cipher>`).
+   - Android KeyStore initialization attempts `setIsStrongBoxBacked(true)` with graceful fallback to standard TEE.
+5. **Test Suite Expansion**:
+   - Expanded `test/backup_crypto_test.dart` to cover iteration parameter parsing, Phase 38 legacy fallback envelope delegation, vault reports parsing, restore execution with verification, and discard operations.
 
 ## What shipped — Phase 38.1: Security & Data Integrity Corrections (2026-11-11)
 

@@ -48,6 +48,7 @@ class SovereignState {
   static final ValueNotifier<int> currentTab = ValueNotifier<int>(0);
   static final ValueNotifier<int> cloudViewRequest = ValueNotifier<int>(0);
   static final ValueNotifier<Color> accentColor = ValueNotifier<Color>(const Color(0xFFFF003C));
+  static final ValueNotifier<int> pendingRecoveriesCount = ValueNotifier<int>(0);
 
   static void sendToForge(ForgeRequest request) {
     pendingForge.value = request;
@@ -1242,12 +1243,24 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
                   );
                 },
               ),
-              IconButton(
-                icon: Icon(Icons.settings, color: themeColor),
-                onPressed: () {
-                  Navigator.push(context, MaterialPageRoute(builder: (context) => const SettingsScreen()));
+              ValueListenableBuilder<int>(
+                valueListenable: SovereignState.pendingRecoveriesCount,
+                builder: (context, count, child) {
+                  final btn = IconButton(
+                    icon: Icon(Icons.settings, color: themeColor),
+                    onPressed: () {
+                      Navigator.push(context, MaterialPageRoute(builder: (context) => const SettingsScreen()));
+                    },
+                  );
+                  if (count <= 0) return btn;
+                  return Badge(
+                    label: Text(count.toString(), style: const TextStyle(fontFamily: 'ShareTechMono', fontSize: 10, fontWeight: FontWeight.bold)),
+                    backgroundColor: Colors.amberAccent,
+                    textColor: Colors.black,
+                    child: btn,
+                  );
                 },
-              )
+              ),
             ],
           ),
           body: Stack(
@@ -1270,6 +1283,37 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
               ),
               Column(
                 children: [
+                  ValueListenableBuilder<int>(
+                    valueListenable: SovereignState.pendingRecoveriesCount,
+                    builder: (context, count, _) {
+                      if (count <= 0) return const SizedBox.shrink();
+                      return Material(
+                        color: Colors.amberAccent.withValues(alpha: 0.15),
+                        child: InkWell(
+                          onTap: () => Navigator.push(context, MaterialPageRoute(builder: (context) => const SettingsScreen())),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                            decoration: const BoxDecoration(
+                              border: Border(bottom: BorderSide(color: Colors.amberAccent, width: 1)),
+                            ),
+                            child: Row(
+                              children: [
+                                const Icon(Icons.warning_amber_rounded, color: Colors.amberAccent, size: 16),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: Text(
+                                    "CRASH RECOVERY: $count UNCOMMITTED MEDIA BACKUP(S) IN VAULT. TAP TO RESTORE.",
+                                    style: const TextStyle(fontFamily: 'ShareTechMono', fontSize: 10, fontWeight: FontWeight.bold, color: Colors.amberAccent),
+                                  ),
+                                ),
+                                const Icon(Icons.chevron_right, color: Colors.amberAccent, size: 16),
+                              ],
+                            ),
+                          ),
+                        ),
+                      );
+                    },
+                  ),
                   Expanded(
                     child: AnimatedTabStack(
                       index: SovereignState.currentTab.value,

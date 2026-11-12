@@ -266,10 +266,24 @@ class StorageClient {
   static Future<List<Map<String, String>>> recoverPendingOverwrites() async {
     try {
       final res = await _channel.invokeListMethod<Map>('recoverPendingOverwrites');
-      return (res ?? const []).map((m) => m.cast<String, String>()).toList();
+      return (res ?? const [])
+          .whereType<Map<Object?, Object?>>()
+          .map((m) => m.map((k, v) => MapEntry(k.toString(), v.toString())))
+          .toList();
     } catch (_) {
       return const [];
     }
+  }
+
+  static Future<Map<String, String>> restorePendingOverwrite(String backupPath) async {
+    final Map<Object?, Object?>? res = await _channel.invokeMethod<Map<Object?, Object?>>('restorePendingOverwrite', {'backupPath': backupPath});
+    bumpLibrary();
+    return res?.map((k, v) => MapEntry(k.toString(), v.toString())) ?? const {};
+  }
+
+  static Future<bool> discardPendingOverwrite(String backupPath) async {
+    final ok = await _channel.invokeMethod<bool>('discardPendingOverwrite', {'backupPath': backupPath});
+    return ok ?? false;
   }
 
   static void _sweepStaging(Directory dir) {
