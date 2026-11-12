@@ -541,7 +541,11 @@ class _TabWorkbenchState extends State<TabWorkbench> {
 
   Future<String> _injectToMediaStore(String outPath, String title) async {
     try {
-      final uriString = await _storageChannel.invokeMethod('addToMediaStore', {'filePath': outPath, 'title': title});
+      final res = await _storageChannel.invokeMethod('addToMediaStore', {'filePath': outPath, 'title': title});
+      final uriString = res is Map ? res['uri']?.toString() : res?.toString();
+      if (uriString == null || uriString.trim().isEmpty) {
+        throw StateError("Empty MediaStore URI returned");
+      }
       File(outPath).delete().ignore();
       return "Success. Payload Written To:\n$uriString";
     } catch (_) {
@@ -1417,8 +1421,13 @@ class _TabWorkbenchState extends State<TabWorkbench> {
         commandBuilder: (op, inputPath, outPath, durationMs) async =>
             _buildTransformCommand(op, inputPath, outPath, durationMs),
         getTempDirectory: () async => await _storageChannel.invokeMethod('getTempDirectory'),
-        mediaStoreInjector: (outPath, title) async =>
-            await _storageChannel.invokeMethod('addToMediaStore', {'filePath': outPath, 'title': title}),
+        mediaStoreInjector: (outPath, title) async {
+          final res = await _storageChannel.invokeMethod('addToMediaStore', {'filePath': outPath, 'title': title});
+          if (res is Map) {
+            return res['uri']?.toString();
+          }
+          return res?.toString();
+        },
         durationProbe: (path) => probeDurationMs(path),
         streamProbe: (path) => probeStreams(path),
         targetAudioFormat: _targetFormat,

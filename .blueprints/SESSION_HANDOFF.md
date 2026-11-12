@@ -22,7 +22,34 @@ Session-end law: update rows 2–4 every session (+ row 5 when a new gotcha is l
 ## Where we are
 
 **Date:** 2026-11-12
-**Phase:** Phase 39 Modularization — Stage A & Stage B Fully Hardened & Verified (B.1 Output Contract, B.2 Native MediaStore Commit Safety, B.3 Queue Lifecycle & Active Cancellation, B.4 Monotonic Progress & Test Expansion Landed; `flutter analyze` 0 issues; `flutter test` clean; Python doctor 2/2 passed; 0 open PRs; main clean). Stage C: Component UI Decomposition PREPARED.
+**Phase:** Phase 39 Modularization — Stage A & Stage B Fully Completed & Hardened (B.1–B.7 complete: B.5 Scoped Cancellation, B.6 Verified Import Commit & Native Readback, B.7 Monotonic Progress & Fault-Injection Tests Landed; `flutter analyze` 0 issues; `flutter test` 144/144 passed; Python doctor 2/2 passed; 0 open PRs; main clean). Stage C: Component UI Decomposition READY.
+
+## What shipped — Stage B.5–B.7: Scoped Cancellation, Verified Import Commit & Monotonic Invariants (2026-11-12)
+
+1. **Scoped Cancellation & Async Boundary Checks (B.5)**:
+   - Tagged each Workbench FFmpeg job with a unique scoped descriptor (`workbench_${job.id}`), passing it to `FFmpegExecutor.execute(..., description: jobDesc)`.
+   - In `WorkbenchQueue.cancel()`, invokes `FFmpegExecutor.cancelCurrent(description: _currentJobDescription)`, ensuring cancellation interrupts only the active Workbench task and never disturbs concurrent background sessions (forensics, grabber muxing, or audio audits).
+   - Added `handleCancellationIfRequested` checkpoints across all asynchronous boundaries: loop start, post-`durationProbe`, post-`streamProbe` input check, post-`commandBuilder`, pre- and post-`FFmpegExecutor.execute`, post-`streamProbe` output check, and pre-`mediaStoreInjector`.
+   - Cancellation at any point marks the job `BatchJobStatus.skipped` (with explicit reason `'Batch cancelled by user.'`), purges any staged temporary output immediately, and halts subsequent batch processing without misreporting cancellation as an execution failure.
+
+2. **Verified Import Commit & Destination Readback (B.6)**:
+   - In `WorkbenchQueue.execute()`, strictly validated the destination URI string returned by `mediaStoreInjector`.
+   - If `mediaStoreInjector` returns null, whitespace, or throws, the queue checks if the staged file exists on disk: if present, it preserves the file in cache, records `outputUri = outPath`, and logs `CACHE ONLY ${job.fileName}: $outPath` without deleting the generated audio/video. If missing, it fails fast.
+   - Only when a non-empty, valid content URI is returned is the staged temporary file purged from disk.
+   - In native `StorageBridge.addToMediaStore()`:
+     - Checked that `contentResolver.update(uri, values, null, null)` returns affected rows `> 0`.
+     - Added independent destination readback assertion: opens `contentResolver.openInputStream(uri)`, counts readback bytes, and asserts `readbackBytes == file.length()`.
+     - On short read or update failure, cleans up the MediaStore entry and throws `IOException`, guaranteeing transactional commit.
+
+3. **Monotonic Progress & Expanded Test Suite (B.7)**:
+   - Clamped batch progress calculation with `_maxReportedOverall = max(_maxReportedOverall, calculatedOverall)`, guaranteeing strictly non-decreasing progress even if FFmpeg stats events arrive out-of-order or with erratic timestamps.
+   - Expanded unit test suite in `test/workbench_queue_test.dart` from 34 to **44 tests** (144 total repository tests) with fault-injection coverage:
+     - Scoped cancellation description matching and active cancellation of Workbench sessions.
+     - Early cancellation aborts at duration probe, stream probe, command builder, and output stream probe.
+     - Preserving staged output as `CACHE ONLY` on null or empty MediaStore responses.
+     - Automatic deletion of staged output only upon verified MediaStore commit.
+     - Verification of monotonic progress across simulated out-of-order stats timestamps.
+     - Unrelated active FFmpeg tasks remain unaffected by Workbench cancellation.
 
 ## What shipped — Stage B: Workbench Models & Batch Queue Hardening (2026-11-12)
 

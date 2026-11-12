@@ -16,6 +16,8 @@ class WorkbenchQueue {
   bool _isRunning = false;
   bool _isCancelled = false;
   int _currentIndex = 0;
+  String? _currentJobDescription;
+  double _maxReportedOverall = 0.0;
 
   List<BatchJob> get jobs => List.unmodifiable(_jobs);
   bool get isRunning => _isRunning;
@@ -24,6 +26,8 @@ class WorkbenchQueue {
   int get totalJobs => _jobs.length;
   bool get isEmpty => _jobs.isEmpty;
   bool get isNotEmpty => _jobs.isNotEmpty;
+  String? get currentJobDescription => _currentJobDescription;
+  double get maxReportedOverall => _maxReportedOverall;
 
   void addJob(String inputPath, String operation) {
     if (_isRunning) {
@@ -58,11 +62,16 @@ class WorkbenchQueue {
     _jobs.clear();
     _currentIndex = 0;
     _isCancelled = false;
+    _currentJobDescription = null;
+    _maxReportedOverall = 0.0;
   }
 
   void cancel() {
     _isCancelled = true;
-    FFmpegExecutor.cancelCurrent();
+    final desc = _currentJobDescription;
+    if (desc != null) {
+      FFmpegExecutor.cancelCurrent(description: desc);
+    }
   }
 
   Future<String> execute({
@@ -90,6 +99,7 @@ class WorkbenchQueue {
 
     _isRunning = true;
     _currentIndex = 0;
+    _maxReportedOverall = 0.0;
 
     final lines = <String>[];
     int okCount = 0;
@@ -103,15 +113,28 @@ class WorkbenchQueue {
         _currentIndex = i;
         final job = _jobs[i];
 
-        if (_isCancelled) {
+        bool handleCancellationIfRequested(String? stagedToDelete) {
+          if (!_isCancelled) return false;
           job.status = BatchJobStatus.skipped;
           job.errorMessage = 'Batch cancelled by user.';
           job.completedAt = DateTime.now();
           skipCount++;
           lines.add("SKIP ${job.fileName}: CANCELLED");
+          if (stagedToDelete != null && stagedToDelete.isNotEmpty) {
+            try {
+              final f = File(stagedToDelete);
+              if (f.existsSync()) f.deleteSync();
+            } catch (_) {}
+          }
+          final stepOverall = ((i + 1) / _jobs.length).clamp(0.0, 1.0);
+          if (stepOverall > _maxReportedOverall) {
+            _maxReportedOverall = stepOverall;
+          }
           onJobCompleted?.call(job, i + 1, _jobs.length);
-          continue;
+          return true;
         }
+
+        if (handleCancellationIfRequested(null)) continue;
 
         job.status = BatchJobStatus.running;
         job.progress = 0.0;
@@ -122,15 +145,21 @@ class WorkbenchQueue {
 
         try {
           final dur = await durationProbe(job.inputPath);
+          if (handleCancellationIfRequested(null)) continue;
 
           if (DspOperation.requiresVideoInput(job.operation)) {
             final inStreams = await streamProbe(job.inputPath);
+            if (handleCancellationIfRequested(null)) continue;
             if ((inStreams['video'] ?? 0) == 0) {
               job.status = BatchJobStatus.skipped;
               job.errorMessage = 'Not a video file.';
               job.completedAt = DateTime.now();
               skipCount++;
               lines.add("SKIP ${job.fileName}: NOT A VIDEO FILE");
+              final stepOverall = ((i + 1) / _jobs.length).clamp(0.0, 1.0);
+              if (stepOverall > _maxReportedOverall) {
+                _maxReportedOverall = stepOverall;
+              }
               onJobCompleted?.call(job, i + 1, _jobs.length);
               continue;
             }
@@ -147,37 +176,58 @@ class WorkbenchQueue {
           stagedOutPath = outPath;
 
           final command = await commandBuilder(job.operation, job.inputPath, outPath, dur);
+          if (handleCancellationIfRequested(stagedOutPath)) continue;
+
+          final jobDesc = "workbench_${job.id}";
+          _currentJobDescription = jobDesc;
+          if (handleCancellationIfRequested(stagedOutPath)) continue;
+
           final bool isSuccess;
           final int retCode;
           final String output;
 
-          if (ffmpegRunner != null) {
-            final res = await ffmpegRunner(command, onStatistics: (stats) {
-              if (dur != null && dur > 0) {
-                final prog = (stats.time / dur).clamp(0.0, 1.0);
+          void handleStats(Statistics stats) {
+            if (dur != null && dur > 0) {
+              final prog = (stats.time / dur).clamp(0.0, 1.0);
+              if (prog > job.progress) {
                 job.progress = prog;
-                final overallProg = ((i + prog) / _jobs.length).clamp(0.0, 1.0);
-                onJobProgress?.call(job, prog, overallProg);
               }
-            });
+              final calculated = ((i + job.progress) / _jobs.length).clamp(0.0, 1.0);
+              if (calculated > _maxReportedOverall) {
+                _maxReportedOverall = calculated;
+              }
+              onJobProgress?.call(job, job.progress, _maxReportedOverall);
+            }
+          }
+
+          if (ffmpegRunner != null) {
+            final res = await ffmpegRunner(
+              command,
+              onStatistics: handleStats,
+            );
             isSuccess = res.isSuccess;
             retCode = res.returnCode;
             output = res.output;
           } else {
-            final session = await FFmpegExecutor.execute(command, onStatistics: (stats) {
-              if (dur != null && dur > 0) {
-                final prog = (stats.time / dur).clamp(0.0, 1.0);
-                job.progress = prog;
-                final overallProg = ((i + prog) / _jobs.length).clamp(0.0, 1.0);
-                onJobProgress?.call(job, prog, overallProg);
-              }
-            });
+            final session = await FFmpegExecutor.execute(
+              command,
+              durationMs: dur,
+              onStatistics: handleStats,
+              description: jobDesc,
+            );
             isSuccess = ReturnCode.isSuccess(session.getReturnCode());
             retCode = session.getReturnCode();
             output = session.getOutput() ?? "";
           }
 
+          _currentJobDescription = null;
+          if (handleCancellationIfRequested(stagedOutPath)) continue;
+
           if (!isSuccess) {
+            if (_isCancelled) {
+              handleCancellationIfRequested(stagedOutPath);
+              continue;
+            }
             final fault = _detectFilterFault(output);
             final err = fault != null
                 ? "FILTER '$fault' UNAVAILABLE IN THIS BUILD"
@@ -187,12 +237,21 @@ class WorkbenchQueue {
             job.completedAt = DateTime.now();
             failCount++;
             lines.add("FAIL ${job.fileName}: $err");
-            try { File(outPath).deleteSync(); } catch (_) {}
+            try {
+              final f = File(outPath);
+              if (f.existsSync()) f.deleteSync();
+            } catch (_) {}
+            final stepOverall = ((i + 1) / _jobs.length).clamp(0.0, 1.0);
+            if (stepOverall > _maxReportedOverall) {
+              _maxReportedOverall = stepOverall;
+            }
             onJobCompleted?.call(job, i + 1, _jobs.length);
             continue;
           }
 
           final outStreams = await streamProbe(outPath);
+          if (handleCancellationIfRequested(stagedOutPath)) continue;
+
           if (DspOperation.producesVideoOutput(job.operation)) {
             if ((outStreams['video'] ?? 0) == 0) {
               job.status = BatchJobStatus.failed;
@@ -200,7 +259,14 @@ class WorkbenchQueue {
               job.completedAt = DateTime.now();
               failCount++;
               lines.add("FAIL ${job.fileName}: NO VIDEO STREAM IN OUTPUT");
-              try { File(outPath).deleteSync(); } catch (_) {}
+              try {
+                final f = File(outPath);
+                if (f.existsSync()) f.deleteSync();
+              } catch (_) {}
+              final stepOverall = ((i + 1) / _jobs.length).clamp(0.0, 1.0);
+              if (stepOverall > _maxReportedOverall) {
+                _maxReportedOverall = stepOverall;
+              }
               onJobCompleted?.call(job, i + 1, _jobs.length);
               continue;
             }
@@ -211,7 +277,14 @@ class WorkbenchQueue {
               job.completedAt = DateTime.now();
               failCount++;
               lines.add("FAIL ${job.fileName}: NO AUDIO STREAM IN OUTPUT");
-              try { File(outPath).deleteSync(); } catch (_) {}
+              try {
+                final f = File(outPath);
+                if (f.existsSync()) f.deleteSync();
+              } catch (_) {}
+              final stepOverall = ((i + 1) / _jobs.length).clamp(0.0, 1.0);
+              if (stepOverall > _maxReportedOverall) {
+                _maxReportedOverall = stepOverall;
+              }
               onJobCompleted?.call(job, i + 1, _jobs.length);
               continue;
             }
@@ -222,40 +295,92 @@ class WorkbenchQueue {
               : (job.operation == "Extract Audio (Video to M4A)" ? "_m4a" : "_mod");
           final title = "${job.baseName}$titleSuffix";
 
+          if (handleCancellationIfRequested(stagedOutPath)) continue;
+
           try {
             final uriString = await mediaStoreInjector(outPath, title);
-            job.status = BatchJobStatus.completed;
-            job.progress = 1.0;
-            job.outputUri = uriString;
-            job.completedAt = DateTime.now();
-            okCount++;
-            lines.add("OK ${job.fileName} -> ${uriString ?? outPath}");
-            try { File(outPath).deleteSync(); } catch (_) {}
+            final trimmed = uriString?.trim();
+            if (trimmed != null && trimmed.isNotEmpty) {
+              job.status = BatchJobStatus.completed;
+              job.progress = 1.0;
+              job.outputUri = trimmed;
+              job.completedAt = DateTime.now();
+              okCount++;
+              lines.add("OK ${job.fileName} -> $trimmed");
+              try {
+                final f = File(outPath);
+                if (f.existsSync()) f.deleteSync();
+              } catch (_) {}
+            } else {
+              if (File(outPath).existsSync()) {
+                job.status = BatchJobStatus.completed;
+                job.progress = 1.0;
+                job.outputUri = outPath;
+                job.completedAt = DateTime.now();
+                okCount++;
+                lines.add("CACHE ONLY ${job.fileName}: $outPath");
+              } else {
+                job.status = BatchJobStatus.failed;
+                job.errorMessage = 'Output missing from cache after empty MediaStore response';
+                job.completedAt = DateTime.now();
+                failCount++;
+                lines.add("FAIL ${job.fileName}: OUTPUT MISSING");
+              }
+            }
           } catch (injectErr) {
-            job.status = BatchJobStatus.completed;
-            job.progress = 1.0;
-            job.outputUri = outPath;
-            job.completedAt = DateTime.now();
-            okCount++;
-            lines.add("CACHE ONLY ${job.fileName}: $outPath");
+            if (File(outPath).existsSync()) {
+              job.status = BatchJobStatus.completed;
+              job.progress = 1.0;
+              job.outputUri = outPath;
+              job.completedAt = DateTime.now();
+              okCount++;
+              lines.add("CACHE ONLY ${job.fileName}: $outPath");
+            } else {
+              job.status = BatchJobStatus.failed;
+              job.errorMessage = injectErr.toString();
+              job.completedAt = DateTime.now();
+              failCount++;
+              lines.add("FAIL ${job.fileName}: $injectErr");
+            }
           }
 
+          final stepOverall = ((i + 1) / _jobs.length).clamp(0.0, 1.0);
+          if (stepOverall > _maxReportedOverall) {
+            _maxReportedOverall = stepOverall;
+          }
           onJobCompleted?.call(job, i + 1, _jobs.length);
         } on StateError catch (se) {
-          job.status = BatchJobStatus.skipped;
-          job.errorMessage = se.message;
-          job.completedAt = DateTime.now();
-          skipCount++;
-          lines.add("SKIP ${job.fileName}: ${se.message}");
-          onJobCompleted?.call(job, i + 1, _jobs.length);
+          if (_isCancelled) {
+            handleCancellationIfRequested(stagedOutPath);
+          } else {
+            job.status = BatchJobStatus.skipped;
+            job.errorMessage = se.message;
+            job.completedAt = DateTime.now();
+            skipCount++;
+            lines.add("SKIP ${job.fileName}: ${se.message}");
+            final stepOverall = ((i + 1) / _jobs.length).clamp(0.0, 1.0);
+            if (stepOverall > _maxReportedOverall) {
+              _maxReportedOverall = stepOverall;
+            }
+            onJobCompleted?.call(job, i + 1, _jobs.length);
+          }
         } catch (e) {
-          job.status = BatchJobStatus.failed;
-          job.errorMessage = e.toString();
-          job.completedAt = DateTime.now();
-          failCount++;
-          lines.add("FAIL ${job.fileName}: $e");
-          onJobCompleted?.call(job, i + 1, _jobs.length);
+          if (_isCancelled) {
+            handleCancellationIfRequested(stagedOutPath);
+          } else {
+            job.status = BatchJobStatus.failed;
+            job.errorMessage = e.toString();
+            job.completedAt = DateTime.now();
+            failCount++;
+            lines.add("FAIL ${job.fileName}: $e");
+            final stepOverall = ((i + 1) / _jobs.length).clamp(0.0, 1.0);
+            if (stepOverall > _maxReportedOverall) {
+              _maxReportedOverall = stepOverall;
+            }
+            onJobCompleted?.call(job, i + 1, _jobs.length);
+          }
         } finally {
+          _currentJobDescription = null;
           if (stagedOutPath != null &&
               job.outputUri != stagedOutPath &&
               File(stagedOutPath).existsSync()) {
@@ -266,6 +391,7 @@ class WorkbenchQueue {
     } finally {
       _isRunning = false;
       _isCancelled = false;
+      _currentJobDescription = null;
     }
 
     return "Batch Done: $okCount/${_jobs.length} OK"

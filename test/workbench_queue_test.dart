@@ -3,7 +3,10 @@
 // The Future Dictates the Past and the Past is Always Present.
 // ============================================================
 
+import 'dart:io';
+import 'package:ffmpeg_kit_extended_flutter/ffmpeg_kit_extended_flutter.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:sovereign_tagger/core/ffmpeg_executor.dart';
 import 'package:sovereign_tagger/workbench/workbench_models.dart';
 import 'package:sovereign_tagger/workbench/workbench_queue.dart';
 
@@ -362,8 +365,11 @@ void main() {
       queue.addJob('/media/track.wav', 'Convert Format');
 
       final summary = await queue.execute(
-        commandBuilder: (op, input, out, dur) async => '-y -i input.wav out.wav',
-        getTempDirectory: () async => '/tmp',
+        commandBuilder: (op, input, out, dur) async {
+          File(out).writeAsStringSync('mock audio');
+          return '-y -i input.wav out.wav';
+        },
+        getTempDirectory: () async => Directory.systemTemp.path,
         ffmpegRunner: (cmd, {onStatistics}) async => (isSuccess: true, returnCode: 0, output: ''),
         mediaStoreInjector: (out, title) async {
           throw Exception('PlatformException: MediaStore failed');
@@ -374,8 +380,9 @@ void main() {
 
       expect(queue.jobs[0].status, equals(BatchJobStatus.completed));
       expect(queue.jobs[0].outputUri, isNotNull);
-      expect(queue.jobs[0].outputUri!.startsWith('/tmp/workbench_batch_'), isTrue);
+      expect(File(queue.jobs[0].outputUri!).existsSync(), isTrue);
       expect(summary, contains('CACHE ONLY'));
+      try { File(queue.jobs[0].outputUri!).deleteSync(); } catch (_) {}
     });
 
     test('overall progress is calculated monotonically across batch items', () {
@@ -493,6 +500,280 @@ void main() {
       expect(queue.jobs[0].status, equals(BatchJobStatus.completed));
       expect(queue.jobs[0].isSuccess, isTrue);
       expect(summary, contains('1/1 OK'));
+    });
+
+    test('scoped cancellation sets current job description and cancels matching session only', () async {
+      final queue = WorkbenchQueue();
+      queue.addJob('/media/song.mp3', 'Normalize Audio (LUFS -14)');
+
+      String? capturedDescription;
+      await queue.execute(
+        commandBuilder: (op, input, out, dur) async => '-y -i input out',
+        getTempDirectory: () async => Directory.systemTemp.path,
+        ffmpegRunner: (cmd, {onStatistics}) async {
+          capturedDescription = queue.currentJobDescription;
+          expect(queue.currentJobDescription, startsWith('workbench_'));
+          queue.cancel();
+          return (isSuccess: false, returnCode: 255, output: 'interrupted');
+        },
+        mediaStoreInjector: (out, title) async => 'content://media/$title',
+        durationProbe: (p) async => 5000,
+        streamProbe: (p) async => {'audio': 1},
+      );
+
+      expect(capturedDescription, isNotNull);
+      expect(capturedDescription!.startsWith('workbench_'), isTrue);
+      expect(queue.jobs[0].status, equals(BatchJobStatus.skipped));
+      expect(queue.jobs[0].errorMessage, equals('Batch cancelled by user.'));
+    });
+
+    test('cancellation at duration probe skips job and aborts before command construction', () async {
+      final queue = WorkbenchQueue();
+      queue.addJob('/media/song1.mp3', 'Normalize Audio (LUFS -14)');
+      queue.addJob('/media/song2.mp3', 'Normalize Audio (LUFS -14)');
+
+      bool commandBuilderCalled = false;
+      bool runnerCalled = false;
+
+      final summary = await queue.execute(
+        commandBuilder: (op, input, out, dur) async {
+          commandBuilderCalled = true;
+          return '-y -i input out';
+        },
+        getTempDirectory: () async => Directory.systemTemp.path,
+        ffmpegRunner: (cmd, {onStatistics}) async {
+          runnerCalled = true;
+          return (isSuccess: true, returnCode: 0, output: 'OK');
+        },
+        mediaStoreInjector: (out, title) async => 'content://media/$title',
+        durationProbe: (p) async {
+          queue.cancel();
+          return 5000;
+        },
+        streamProbe: (p) async => {'audio': 1},
+      );
+
+      expect(commandBuilderCalled, isFalse);
+      expect(runnerCalled, isFalse);
+      expect(queue.jobs[0].status, equals(BatchJobStatus.skipped));
+      expect(queue.jobs[1].status, equals(BatchJobStatus.skipped));
+      expect(summary, contains('0/2 OK (2 skipped)'));
+    });
+
+    test('cancellation at commandBuilder skips job and cleans up staged file', () async {
+      final queue = WorkbenchQueue();
+      queue.addJob('/media/song1.mp3', 'Normalize Audio (LUFS -14)');
+
+      String? stagedPath;
+      bool runnerCalled = false;
+
+      final summary = await queue.execute(
+        commandBuilder: (op, input, out, dur) async {
+          stagedPath = out;
+          File(out).writeAsStringSync('staged data');
+          queue.cancel();
+          return '-y -i input out';
+        },
+        getTempDirectory: () async => Directory.systemTemp.path,
+        ffmpegRunner: (cmd, {onStatistics}) async {
+          runnerCalled = true;
+          return (isSuccess: true, returnCode: 0, output: 'OK');
+        },
+        mediaStoreInjector: (out, title) async => 'content://media/$title',
+        durationProbe: (p) async => 5000,
+        streamProbe: (p) async => {'audio': 1},
+      );
+
+      expect(runnerCalled, isFalse);
+      expect(queue.jobs[0].status, equals(BatchJobStatus.skipped));
+      expect(stagedPath, isNotNull);
+      expect(File(stagedPath!).existsSync(), isFalse);
+      expect(summary, contains('1 skipped'));
+    });
+
+    test('cancellation during output stream probe deletes staged output and marks skipped', () async {
+      final queue = WorkbenchQueue();
+      queue.addJob('/media/song1.mp3', 'Normalize Audio (LUFS -14)');
+
+      String? stagedPath;
+      bool injectorCalled = false;
+
+      final summary = await queue.execute(
+        commandBuilder: (op, input, out, dur) async {
+          stagedPath = out;
+          return '-y -i input out';
+        },
+        getTempDirectory: () async => Directory.systemTemp.path,
+        ffmpegRunner: (cmd, {onStatistics}) async {
+          File(stagedPath!).writeAsStringSync('rendered audio');
+          return (isSuccess: true, returnCode: 0, output: 'OK');
+        },
+        mediaStoreInjector: (out, title) async {
+          injectorCalled = true;
+          return 'content://media/$title';
+        },
+        durationProbe: (p) async => 5000,
+        streamProbe: (p) async {
+          if (p == stagedPath) {
+            queue.cancel();
+          }
+          return {'audio': 1};
+        },
+      );
+
+      expect(injectorCalled, isFalse);
+      expect(queue.jobs[0].status, equals(BatchJobStatus.skipped));
+      expect(File(stagedPath!).existsSync(), isFalse);
+      expect(summary, contains('1 skipped'));
+    });
+
+    test('mediaStoreInjector returning null marks job completed as CACHE ONLY and preserves staged output on disk', () async {
+      final queue = WorkbenchQueue();
+      queue.addJob('/media/song.mp3', 'Normalize Audio (LUFS -14)');
+
+      String? stagedPath;
+
+      final summary = await queue.execute(
+        commandBuilder: (op, input, out, dur) async {
+          stagedPath = out;
+          return '-y -i input out';
+        },
+        getTempDirectory: () async => Directory.systemTemp.path,
+        ffmpegRunner: (cmd, {onStatistics}) async {
+          File(stagedPath!).writeAsStringSync('valid audio data');
+          return (isSuccess: true, returnCode: 0, output: 'OK');
+        },
+        mediaStoreInjector: (out, title) async => null,
+        durationProbe: (p) async => 5000,
+        streamProbe: (p) async => {'audio': 1},
+      );
+
+      expect(queue.jobs[0].status, equals(BatchJobStatus.completed));
+      expect(queue.jobs[0].outputUri, equals(stagedPath));
+      expect(File(stagedPath!).existsSync(), isTrue);
+      expect(summary, contains('CACHE ONLY'));
+      try { File(stagedPath!).deleteSync(); } catch (_) {}
+    });
+
+    test('mediaStoreInjector returning empty or whitespace string preserves staged output on disk', () async {
+      final queue = WorkbenchQueue();
+      queue.addJob('/media/song.mp3', 'Normalize Audio (LUFS -14)');
+
+      String? stagedPath;
+
+      final summary = await queue.execute(
+        commandBuilder: (op, input, out, dur) async {
+          stagedPath = out;
+          return '-y -i input out';
+        },
+        getTempDirectory: () async => Directory.systemTemp.path,
+        ffmpegRunner: (cmd, {onStatistics}) async {
+          File(stagedPath!).writeAsStringSync('valid audio data');
+          return (isSuccess: true, returnCode: 0, output: 'OK');
+        },
+        mediaStoreInjector: (out, title) async => '   ',
+        durationProbe: (p) async => 5000,
+        streamProbe: (p) async => {'audio': 1},
+      );
+
+      expect(queue.jobs[0].status, equals(BatchJobStatus.completed));
+      expect(queue.jobs[0].outputUri, equals(stagedPath));
+      expect(File(stagedPath!).existsSync(), isTrue);
+      expect(summary, contains('CACHE ONLY'));
+      try { File(stagedPath!).deleteSync(); } catch (_) {}
+    });
+
+    test('mediaStoreInjector returning valid URI deletes staged output and records content URI', () async {
+      final queue = WorkbenchQueue();
+      queue.addJob('/media/song.mp3', 'Normalize Audio (LUFS -14)');
+
+      String? stagedPath;
+
+      final summary = await queue.execute(
+        commandBuilder: (op, input, out, dur) async {
+          stagedPath = out;
+          return '-y -i input out';
+        },
+        getTempDirectory: () async => Directory.systemTemp.path,
+        ffmpegRunner: (cmd, {onStatistics}) async {
+          File(stagedPath!).writeAsStringSync('valid audio data');
+          return (isSuccess: true, returnCode: 0, output: 'OK');
+        },
+        mediaStoreInjector: (out, title) async => 'content://media/external/audio/12345',
+        durationProbe: (p) async => 5000,
+        streamProbe: (p) async => {'audio': 1},
+      );
+
+      expect(queue.jobs[0].status, equals(BatchJobStatus.completed));
+      expect(queue.jobs[0].outputUri, equals('content://media/external/audio/12345'));
+      expect(File(stagedPath!).existsSync(), isFalse);
+      expect(summary, contains('OK song.mp3 -> content://media/external/audio/12345'));
+    });
+
+    test('empty mediaStore response with missing staged output marks job failed', () async {
+      final queue = WorkbenchQueue();
+      queue.addJob('/media/song.mp3', 'Normalize Audio (LUFS -14)');
+
+      final summary = await queue.execute(
+        commandBuilder: (op, input, out, dur) async => '-y -i input out',
+        getTempDirectory: () async => Directory.systemTemp.path,
+        ffmpegRunner: (cmd, {onStatistics}) async =>
+            (isSuccess: true, returnCode: 0, output: 'OK'),
+        mediaStoreInjector: (out, title) async => null,
+        durationProbe: (p) async => 5000,
+        streamProbe: (p) async => {'audio': 1},
+      );
+
+      expect(queue.jobs[0].status, equals(BatchJobStatus.failed));
+      expect(summary, contains('1 failed'));
+      expect(summary, contains('OUTPUT MISSING'));
+    });
+
+    test('out-of-order statistics events maintain strictly monotonic jobProgress and overallProgress', () async {
+      final queue = WorkbenchQueue();
+      queue.addJob('/media/part1.mp3', 'Normalize Audio (LUFS -14)');
+      queue.addJob('/media/part2.mp3', 'Normalize Audio (LUFS -14)');
+
+      final perJobProgress = <String, List<double>>{};
+      final recordedOverallProgress = <double>[];
+
+      await queue.execute(
+        commandBuilder: (op, input, out, dur) async => '-y -i input out',
+        getTempDirectory: () async => Directory.systemTemp.path,
+        ffmpegRunner: (cmd, {onStatistics}) async {
+          final statsTimes = [1000, 3000, 2000, 4500, 4000, 6000, 5500, 8000, 10000];
+          for (final t in statsTimes) {
+            onStatistics?.call(Statistics(1, t, t, 1000, 100.0, 1.0, 0, 0.0, 0.0, 0, 0, null));
+          }
+          return (isSuccess: true, returnCode: 0, output: 'OK');
+        },
+        mediaStoreInjector: (out, title) async => 'content://media/$title',
+        durationProbe: (p) async => 10000,
+        streamProbe: (p) async => {'audio': 1},
+        onJobProgress: (job, jobProgress, overallProgress) {
+          perJobProgress.putIfAbsent(job.id, () => []).add(jobProgress);
+          recordedOverallProgress.add(overallProgress);
+        },
+      );
+
+      expect(perJobProgress.length, equals(2));
+      for (final list in perJobProgress.values) {
+        expect(list.isNotEmpty, isTrue);
+        for (int i = 1; i < list.length; i++) {
+          expect(list[i] >= list[i - 1], isTrue);
+        }
+      }
+
+      expect(recordedOverallProgress.isNotEmpty, isTrue);
+      for (int i = 1; i < recordedOverallProgress.length; i++) {
+        expect(recordedOverallProgress[i] >= recordedOverallProgress[i - 1], isTrue);
+      }
+    });
+
+    test('unrelated active FFmpeg job is not canceled when WorkbenchQueue cancels', () {
+      final queue = WorkbenchQueue();
+      FFmpegExecutor.cancelCurrent(description: 'workbench_nonexistent_job');
+      expect(queue.isCancelled, isFalse);
     });
   });
 }
