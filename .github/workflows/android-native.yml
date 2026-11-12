@@ -51,6 +51,20 @@ jobs:
         run: flutter pub get
       - name: Compile Kotlin, C++, Chaquopy and Flutter into debug APK
         run: flutter build apk --debug --no-pub --target-platform ${{ matrix.target }}
+      - name: Verify unsigned release fails closed
+        shell: bash
+        run: |
+          set -euo pipefail
+          if (cd android && ./gradlew :app:assembleRelease --no-daemon > /tmp/release-guard.log 2>&1); then
+            echo "ERROR: release build passed without configured signing identity"
+            exit 1
+          fi
+          if ! grep -Fq 'Release signing is not configured.' /tmp/release-guard.log; then
+            echo "ERROR: release build failed for another reason, not signing enforcement"
+            tail -100 /tmp/release-guard.log
+            exit 1
+          fi
+          echo "Confirmed: release fails explicitly without signing credentials"
       - name: Inspect packaged ABI and native libraries
         shell: bash
         run: |
