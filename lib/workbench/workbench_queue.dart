@@ -346,8 +346,8 @@ class WorkbenchQueue {
             final trimmed = uriString?.trim() ?? '';
             final parsed = Uri.tryParse(trimmed);
             if (parsed != null &&
-                (parsed.scheme == 'content' || parsed.scheme == 'file') &&
-                parsed.hasAuthority) {
+                ((parsed.scheme == 'content' && parsed.hasAuthority) ||
+                    (parsed.scheme == 'file' && parsed.path.isNotEmpty))) {
               job.status = BatchJobStatus.completed;
               job.progress = 1.0;
               job.outputUri = trimmed;
