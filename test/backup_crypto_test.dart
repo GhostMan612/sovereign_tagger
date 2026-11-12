@@ -178,6 +178,29 @@ void main() {
       expect(reports[0]['status'], 'RETAINED_FAILED_RESTORE');
     });
 
+    test('recoverPendingOverwrites does not turn a platform error into an empty vault', () async {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, (call) async {
+        if (call.method == 'recoverPendingOverwrites') {
+          throw PlatformException(code: 'STORAGE_ERROR', message: 'MediaStore unavailable');
+        }
+        return null;
+      });
+      await expectLater(
+        StorageClient.recoverPendingOverwrites(),
+        throwsA(isA<PlatformException>()),
+      );
+    });
+
+    test('recoverPendingOverwrites rejects a null scan response', () async {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, (call) async => null);
+      await expectLater(
+        StorageClient.recoverPendingOverwrites(),
+        throwsA(isA<StateError>()),
+      );
+    });
+
     test('restorePendingOverwrite invokes native channel and returns verification outcome', () async {
       String? targetPath;
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger.setMockMethodCallHandler(

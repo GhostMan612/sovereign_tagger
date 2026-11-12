@@ -264,15 +264,14 @@ class StorageClient {
   }
 
   static Future<List<Map<String, String>>> recoverPendingOverwrites() async {
-    try {
-      final res = await _channel.invokeListMethod<Map>('recoverPendingOverwrites');
-      return (res ?? const [])
-          .whereType<Map<Object?, Object?>>()
-          .map((m) => m.map((k, v) => MapEntry(k.toString(), v.toString())))
-          .toList();
-    } catch (_) {
-      return const [];
+    final res = await _channel.invokeListMethod<Map>('recoverPendingOverwrites');
+    if (res == null) {
+      throw StateError('Recovery vault scan returned no result');
     }
+    return res
+        .whereType<Map<Object?, Object?>>()
+        .map((m) => m.map((k, v) => MapEntry(k.toString(), v.toString())))
+        .toList();
   }
 
   static Future<Map<String, String>> restorePendingOverwrite(String backupPath) async {
