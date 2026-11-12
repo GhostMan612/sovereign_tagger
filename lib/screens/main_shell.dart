@@ -1252,9 +1252,9 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
                       Navigator.push(context, MaterialPageRoute(builder: (context) => const SettingsScreen()));
                     },
                   );
-                  if (count <= 0) return btn;
+                  if (count == 0) return btn;
                   return Badge(
-                    label: Text(count.toString(), style: const TextStyle(fontFamily: 'ShareTechMono', fontSize: 10, fontWeight: FontWeight.bold)),
+                    label: Text(count < 0 ? '!' : count.toString(), style: const TextStyle(fontFamily: 'ShareTechMono', fontSize: 10, fontWeight: FontWeight.bold)),
                     backgroundColor: Colors.amberAccent,
                     textColor: Colors.black,
                     child: btn,
@@ -1286,7 +1286,7 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
                   ValueListenableBuilder<int>(
                     valueListenable: SovereignState.pendingRecoveriesCount,
                     builder: (context, count, _) {
-                      if (count <= 0) return const SizedBox.shrink();
+                      if (count == 0) return const SizedBox.shrink();
                       return Material(
                         color: Colors.amberAccent.withValues(alpha: 0.15),
                         child: InkWell(
@@ -1302,7 +1302,9 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
                                 const SizedBox(width: 8),
                                 Expanded(
                                   child: Text(
-                                    "CRASH RECOVERY: $count UNCOMMITTED MEDIA BACKUP(S) IN VAULT. TAP TO RESTORE.",
+                                    count < 0
+                                        ? 'RECOVERY VAULT SCAN FAILED — STATUS UNKNOWN. TAP SETTINGS TO RETRY.'
+                                        : 'CRASH RECOVERY: $count UNCOMMITTED MEDIA BACKUP(S) IN VAULT. TAP TO RESTORE.',
                                     style: const TextStyle(fontFamily: 'ShareTechMono', fontSize: 10, fontWeight: FontWeight.bold, color: Colors.amberAccent),
                                   ),
                                 ),
