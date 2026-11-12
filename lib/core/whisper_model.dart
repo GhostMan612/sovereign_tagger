@@ -13,6 +13,7 @@ class WhisperModel {
   static const String fileName = 'ggml-base.en.bin';
   static const String downloadUrl = 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin';
   static const int expectedBytes = 147964211;
+  static const int minBytes = expectedBytes;
   static const String expectedSha256 = 'a03779c86df3323075f5e796cb2ce5029f00ec8869eee3fdfb897afe36c6d002';
 
   static bool _prepareCanceled = false;
