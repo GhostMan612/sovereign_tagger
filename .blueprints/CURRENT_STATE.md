@@ -1,5 +1,5 @@
 # CURRENT_STATE.md — Sovereign Tagger v2 (post-Phase 38.3)
-> Snapshot as of 2026-11-12 — Phases 0–38.3 + PR #1–#23 COMPLETE (`flutter analyze --no-pub` -> `No issues found!`; `flutter test` -> 49/49 passed; Python doctor tests -> 2/2 passed; Moto G 2025 `ZT4222BMWN` + BLU View 5 `7040016025040287` hardware verification ALL PASS).
+> Snapshot as of 2026-11-12 — Phases 0–38.2 on main (`57d368a`); Phase 38.3 in isolated review branch `hardening/phase-38.3-defensive` (Draft PR #23 conditionally approved; `flutter analyze --no-pub` -> `No issues found!`; `flutter test` -> 49/49 passed; Python doctor tests -> 2/2 passed; Moto G 2025 `ZT4222BMWN` + BLU View 5 `7040016025040287` hardware verification ALL PASS).
 >
 > **Phase 38.3 deltas (Defensive Hardening & PR #23 Review Revisions):**
 > - **Live Destination Hash Verification**: In `recoverPendingOverwrites()`, requires live destination stream SHA-256 computation matching `srcSha` (`currentDestSha == srcSha`) before marking a backup as `COMMITTED_PRE_CLEANUP`. Otherwise assigns `DESTINATION_HASH_UNVERIFIED` and preserves full `RESTORE` and `DISCARD` UI actions.
@@ -9,7 +9,7 @@
 > - **Path Traversal Confinement**: Added `validateRecoveryFile(backupPath: String)` in `StorageBridge.kt` enforcing canonical directory containment within `context.filesDir/sov_recovery`, rejecting path traversal with `SecurityException`, and validating filename prefixes (`sov_rec_*.bak`).
 > - **Bounded PBKDF2 Iterations**: Enforced native boundary `1,000 <= iterations <= 2,000,000` in `decryptConfig`, throwing `IllegalArgumentException` on out-of-bounds or malformed rounds.
 > - **Expanded Test Suite (49 Tests)**: Added test cases in `test/backup_crypto_test.dart` for `DESTINATION_HASH_UNVERIFIED` handling, discard failure reporting, and self-test cleanup assertions.
-> - **Boot Self-Test & Hardware Verification**: Wired `runNativeSecuritySelfTest()` into `SplashScreen._bootSequence()`; verified all 9 assertions pass live on physical BLU View 5 (`7040016025040287` Android 14) in logcat.
+> - **On-Demand Diagnostic Self-Test & Hardware Verification**: Converted native security self-test to an on-demand diagnostic action in `SettingsScreen` (Crash Recovery Vault > `RUN SECURITY & INTEGRITY SELF-TEST`), removing it from boot sequence to eliminate startup delay; verified all 9 assertions pass live on physical BLU View 5 (`7040016025040287` Android 14) in logcat.
 > - **Security Documentation Synchronized**: Updated `SECURITY.md` Section 3 with AES-256-GCM authenticated storage, KDF bounding, StrongBox/TEE Keystore mode, the migration role and plaintext caveat of `LEGACY_PHASE38_SECRET`, and the `sov_recovery` safety model.
 >
 > **Phase 38.2 deltas (Reliability & Vault Verification Closeout):**

@@ -75,6 +75,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
   List<Map<String, String>> _pendingRecoveries = [];
   bool _isLoadingRecoveries = false;
   String _recoveryStatus = "";
+  bool _isSelfTesting = false;
+  String _selfTestReport = "";
 
   @override
   void initState() {
@@ -804,6 +806,37 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
   }
 
+  Future<void> _runSecuritySelfTest() async {
+    TapFeedback.machineTap();
+    setState(() {
+      _isSelfTesting = true;
+      _selfTestReport = "EXECUTING NATIVE SECURITY & INTEGRITY SELF-TEST...";
+    });
+    try {
+      final res = await StorageClient.runNativeSecuritySelfTest();
+      if (!mounted) return;
+      final allPassed = res['all_passed'] == true;
+      final summary = [
+        "ENVELOPE FORMAT: ${res['format_correct'] == true ? 'PASS' : 'FAIL'}",
+        "PASSPHRASE ROUNDTRIP: ${res['roundtrip_passphrase'] == true ? 'PASS' : 'FAIL'}",
+        "TAMPER RESISTANCE: ${res['tamper_resistance'] == true ? 'PASS' : 'FAIL'}",
+        "MIN ITERATIONS (1k): ${res['min_iterations_enforced'] == true ? 'PASS' : 'FAIL'}",
+        "MAX ITERATIONS (2M): ${res['max_iterations_enforced'] == true ? 'PASS' : 'FAIL'}",
+        "LEGACY PH38 FALLBACK: ${res['legacy_phase38_fallback'] == true ? 'PASS' : 'FAIL'}",
+        "PATH CONFINEMENT: ${res['path_traversal_confinement'] == true ? 'PASS' : 'FAIL'}",
+        "DISCARD CLEANUP: ${res['discard_cleanup_success'] == true ? 'PASS' : 'FAIL'}",
+        "DISCARD ATOMICITY: ${res['discard_atomic_success'] == true ? 'PASS' : 'FAIL'}",
+        "OVERALL RESULT: ${allPassed ? 'ALL ASSERTIONS PASSED ✓' : 'SELF-TEST FAILED ✗'}",
+      ].join('\n');
+      setState(() => _selfTestReport = summary);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _selfTestReport = "ERR: SELF-TEST FAULT: $e");
+    } finally {
+      if (mounted) setState(() => _isSelfTesting = false);
+    }
+  }
+
   Widget _buildCrashRecoveryVault(Color themeColor) {
     return Container(
       decoration: BoxDecoration(
@@ -952,6 +985,39 @@ class _SettingsScreenState extends State<SettingsScreen> {
           if (_recoveryStatus.isNotEmpty) ...[
             const SizedBox(height: 8),
             Text("> $_recoveryStatus", textAlign: TextAlign.center, style: const TextStyle(fontFamily: 'VT323', fontSize: 14, color: Colors.amberAccent)),
+          ],
+          const SizedBox(height: 12),
+          OutlinedButton.icon(
+            onPressed: _isSelfTesting ? null : _runSecuritySelfTest,
+            icon: _isSelfTesting
+                ? SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2, color: themeColor))
+                : Icon(Icons.security, size: 16, color: themeColor),
+            label: Text(
+              _isSelfTesting ? 'RUNNING SECURITY AUDIT...' : 'RUN SECURITY & INTEGRITY SELF-TEST',
+              style: TextStyle(fontFamily: 'ShareTechMono', fontSize: 11, color: themeColor),
+            ),
+            style: OutlinedButton.styleFrom(
+              side: BorderSide(color: themeColor.withValues(alpha: 0.6)),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            ),
+          ),
+          if (_selfTestReport.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: Colors.white.withValues(alpha: 0.04),
+                border: Border.all(color: _selfTestReport.contains('ALL ASSERTIONS PASSED') ? Colors.greenAccent : Colors.redAccent),
+              ),
+              child: Text(
+                _selfTestReport,
+                style: TextStyle(
+                  fontFamily: 'ShareTechMono',
+                  fontSize: 10,
+                  color: _selfTestReport.contains('ALL ASSERTIONS PASSED') ? Colors.greenAccent : Colors.redAccent,
+                ),
+              ),
+            ),
           ],
         ],
       ),
