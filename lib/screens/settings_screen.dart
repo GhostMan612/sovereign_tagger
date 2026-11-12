@@ -209,18 +209,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
       setState(() => _pcloudStatus = 'PASTE THE ACCESS TOKEN FIRST.');
       return;
     }
-    PCloudAuthResult? auth;
     if (pasted.startsWith('sovereigntagger://')) {
       setState(() => _pcloudStatus = 'PASTED LOGIN LINKS CANNOT BYPASS OAUTH STATE. USE CONNECT OR PASTE THE TOKEN ONLY.');
       return;
-    } else {
-      final isEu = _pcloudAuthHost == CloudSettings.authorizeHostEu;
-      auth = PCloudAuthResult(token: pasted, apiHost: isEu ? CloudRegion.eu.host : CloudRegion.us.host, locationId: isEu ? 2 : 1);
     }
-    if (auth == null) {
-      setState(() => _pcloudStatus = 'THAT LINK WAS NOT READABLE — TRY AGAIN.');
-      return;
-    }
+    final isEu = _pcloudAuthHost == CloudSettings.authorizeHostEu;
+    final auth = PCloudAuthResult(
+      token: pasted,
+      apiHost: isEu ? CloudRegion.eu.host : CloudRegion.us.host,
+      locationId: isEu ? 2 : 1,
+    );
     _pcloudTokenCtrl.clear();
     await CloudSettings.setToken(token: auth.token, apiHost: auth.apiHost, locationId: auth.locationId);
     final ok = await PCloudProvider.instance.testConnection();
