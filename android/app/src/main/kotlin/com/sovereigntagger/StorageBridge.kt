@@ -140,6 +140,10 @@ class StorageBridge(private val context: Context) {
 
     fun addToMediaStore(filePath: String, title: String): Map<String, String> {
         val file = File(filePath)
+        if (!file.isFile || file.length() <= 0L) {
+            throw java.io.IOException("ERR: Source media is missing or empty; import refused.")
+        }
+        val sourceSha256 = computeSha256(file)
         val extension = file.extension.lowercase(Locale.getDefault())
         val isVideo = extension == "mp4" || extension == "mkv" || extension == "webm"
 
@@ -162,13 +166,24 @@ class StorageBridge(private val context: Context) {
                 target = File(dir, "${file.nameWithoutExtension} ($n).${file.extension}")
                 n++
             }
-            file.copyTo(target)
-            if (target.length() != file.length()) {
-                target.delete()
-                throw java.io.IOException("ERR: MediaStore copy truncated. Expected ${file.length()} bytes, found ${target.length()} bytes.")
+            try {
+                file.copyTo(target)
+                val verifiedSha256 = computeSha256(target)
+                if (target.length() != file.length() || verifiedSha256 != sourceSha256) {
+                    throw java.io.IOException("ERR: Legacy media copy content SHA-256 mismatch.")
+                }
+                scan(target.absolutePath)
+                return mapOf(
+                    "uri" to Uri.fromFile(target).toString(),
+                    "path" to target.absolutePath,
+                    "displayName" to target.name,
+                    "bytes" to file.length().toString(),
+                    "sha256" to sourceSha256
+                )
+            } catch (e: Exception) {
+                try { target.delete() } catch (cleanup: Exception) { e.addSuppressed(cleanup) }
+                throw e
             }
-            scan(target.absolutePath)
-            return mapOf("uri" to Uri.fromFile(target).toString(), "path" to target.absolutePath, "displayName" to target.name)
         }
 
         val collectionUri = if (isVideo) MediaStore.Video.Media.EXTERNAL_CONTENT_URI else MediaStore.Audio.Media.EXTERNAL_CONTENT_URI
@@ -185,32 +200,45 @@ class StorageBridge(private val context: Context) {
             if (bytesCopied != file.length()) {
                 throw java.io.IOException("ERR: MediaStore import truncated. Expected ${file.length()} bytes, wrote $bytesCopied bytes.")
             }
-            values.clear()
-            values.put(MediaStore.MediaColumns.IS_PENDING, 0)
-            val rowsUpdated = context.contentResolver.update(uri, values, null, null)
-            if (rowsUpdated <= 0) {
-                throw java.io.IOException("ERR: MediaStore update IS_PENDING=0 failed for $uri (rows affected: $rowsUpdated)")
-            }
             val readbackStream = context.contentResolver.openInputStream(uri)
-                ?: throw java.io.IOException("ERR: MediaStore readback openInputStream failed for $uri")
+                ?: throw java.io.IOException("ERR: MediaStore pending readback failed for $uri")
+            val readbackDigest = MessageDigest.getInstance("SHA-256")
             var readbackBytes = 0L
             readbackStream.use { stream ->
                 val buf = ByteArray(64 * 1024)
                 while (true) {
                     val n = stream.read(buf)
                     if (n <= 0) break
+                    readbackDigest.update(buf, 0, n)
                     readbackBytes += n
                 }
             }
-            if (readbackBytes != file.length()) {
-                throw java.io.IOException("ERR: MediaStore readback size mismatch. Expected ${file.length()} bytes, read $readbackBytes bytes.")
+            val destSha256 = readbackDigest.digest().joinToString("") { "%02x".format(it) }
+            if (readbackBytes != file.length() || destSha256 != sourceSha256) {
+                throw java.io.IOException("ERR: MediaStore pending content SHA-256 mismatch; publish aborted.")
+            }
+            values.clear()
+            values.put(MediaStore.MediaColumns.IS_PENDING, 0)
+            val rowsUpdated = context.contentResolver.update(uri, values, null, null)
+            if (rowsUpdated <= 0) {
+                throw java.io.IOException("ERR: MediaStore publish IS_PENDING=0 failed (rows=$rowsUpdated)")
             }
         } catch (e: Exception) {
-            context.contentResolver.delete(uri, null, null)
+            try {
+                context.contentResolver.delete(uri, null, null)
+            } catch (cleanup: Exception) {
+                e.addSuppressed(cleanup)
+            }
             throw e
         }
-        val info = describe(uri)
-        return mapOf("uri" to uri.toString(), "path" to (info["path"] ?: ""), "displayName" to (info["displayName"] ?: file.name))
+        val info = try { describe(uri) } catch (_: Exception) { emptyMap() }
+        return mapOf(
+            "uri" to uri.toString(),
+            "path" to (info["path"] ?: ""),
+            "displayName" to (info["displayName"] ?: file.name),
+            "bytes" to file.length().toString(),
+            "sha256" to sourceSha256
+        )
     }
 
     fun queryAudio(): List<Map<String, Any?>> {
