@@ -291,7 +291,12 @@ class _CloudFolderViewState extends State<CloudFolderView> {
         isCancelled: () => _cancelDownload,
       );
       if (!mounted) return;
-      _snack('FOLDER DONE — ${summary.succeeded} SAVED, ${summary.failed} FAILED${summary.cancelled ? ', CANCELLED' : ''}.');
+      final status = summary.truncated
+          ? 'FOLDER PARTIAL — ${summary.truncationReason} ${summary.succeeded} SAVED, ${summary.failed} FAILED.'
+          : summary.cancelled
+              ? 'FOLDER CANCELLED — ${summary.succeeded} SAVED, ${summary.failed} FAILED.'
+              : 'FOLDER DONE — ${summary.succeeded} SAVED, ${summary.failed} FAILED.';
+      _snack(status);
     } on PCloudException catch (e) {
       if (!mounted) return;
       _snack(e.message);
