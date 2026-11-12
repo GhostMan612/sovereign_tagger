@@ -7,6 +7,7 @@ import 'dart:io';
 import 'package:ffmpeg_kit_extended_flutter/ffmpeg_kit_extended_flutter.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sovereign_tagger/core/ffmpeg_executor.dart';
+import 'package:sovereign_tagger/workbench/pending_import_store.dart';
 import 'package:sovereign_tagger/workbench/workbench_models.dart';
 import 'package:sovereign_tagger/workbench/workbench_queue.dart';
 
@@ -384,6 +385,87 @@ void main() {
       expect(queue.jobs[0].outputUri, isNotNull);
       expect(File(queue.jobs[0].outputUri!).existsSync(), isTrue);
       expect(summary, contains('PENDING IMPORT'));
+      await recoveryRoot.delete(recursive: true);
+    });
+
+    test('cancelled batch retains durable pending imports for recovery', () async {
+      final queue = WorkbenchQueue();
+      final recoveryRoot =
+          await Directory.systemTemp.createTemp('workbench_pending_cancel_');
+      queue.addJob('/media/track.wav', 'Convert Format');
+      queue.addJob('/media/song.flac', 'Normalize Audio (LUFS -14)');
+      var renders = 0;
+
+      final summary = await queue.execute(
+        commandBuilder: (op, input, out, dur) async {
+          File(out).writeAsStringSync('mock audio');
+          return '-y -i input out';
+        },
+        getTempDirectory: () async => Directory.systemTemp.path,
+        getRecoveryDirectory: () async => recoveryRoot.path,
+        ffmpegRunner: (cmd, {onStatistics}) async {
+          renders++;
+          // Disposal path: cancel the owned batch while the second render runs.
+          if (renders == 2) queue.cancel();
+          return (isSuccess: true, returnCode: 0, output: '');
+        },
+        mediaStoreInjector: (out, title) async {
+          throw Exception('PlatformException: MediaStore failed');
+        },
+        durationProbe: (p) async => 1000,
+        streamProbe: (p) async => {'audio': 1},
+      );
+
+      // The failed import from the first job stays recoverable after cancel.
+      expect(queue.jobs[0].status, equals(BatchJobStatus.pendingImport));
+      expect(queue.jobs[0].outputUri, isNotNull);
+      expect(File(queue.jobs[0].outputUri!).existsSync(), isTrue);
+      // The second job is skipped, never published to the library.
+      expect(queue.jobs[1].status, equals(BatchJobStatus.skipped));
+      expect(summary, contains('1 pending library import'));
+      expect(summary, contains('1 skipped'));
+
+      final pending =
+          await PendingImportStore(Directory(recoveryRoot.path)).list();
+      expect(pending, hasLength(1));
+      expect(pending.single.available, isTrue);
+      expect(pending.single.title, contains('track'));
+      await recoveryRoot.delete(recursive: true);
+    });
+
+    test('cancel during a failed import still preserves the rendered media', () async {
+      final queue = WorkbenchQueue();
+      final recoveryRoot =
+          await Directory.systemTemp.createTemp('workbench_pending_cancel_import_');
+      queue.addJob('/media/track.wav', 'Convert Format');
+
+      final summary = await queue.execute(
+        commandBuilder: (op, input, out, dur) async {
+          File(out).writeAsStringSync('mock audio');
+          return '-y -i input out';
+        },
+        getTempDirectory: () async => Directory.systemTemp.path,
+        getRecoveryDirectory: () async => recoveryRoot.path,
+        ffmpegRunner: (cmd, {onStatistics}) async =>
+            (isSuccess: true, returnCode: 0, output: ''),
+        mediaStoreInjector: (out, title) async {
+          queue.cancel();
+          throw Exception('PlatformException: MediaStore failed');
+        },
+        durationProbe: (p) async => 1000,
+        streamProbe: (p) async => {'audio': 1},
+      );
+
+      expect(queue.jobs[0].status, equals(BatchJobStatus.pendingImport));
+      expect(queue.jobs[0].outputUri, isNotNull);
+      expect(File(queue.jobs[0].outputUri!).existsSync(), isTrue);
+      expect(summary, contains('1 pending library import'));
+      expect(summary, isNot(contains('skipped')));
+
+      final pending =
+          await PendingImportStore(Directory(recoveryRoot.path)).list();
+      expect(pending, hasLength(1));
+      expect(pending.single.available, isTrue);
       await recoveryRoot.delete(recursive: true);
     });
 
