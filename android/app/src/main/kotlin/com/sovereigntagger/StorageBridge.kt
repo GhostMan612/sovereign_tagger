@@ -590,8 +590,9 @@ class StorageBridge(private val context: Context) {
 
         val recoveryDir = File(context.filesDir, "sov_recovery").apply { mkdirs() }
         val opId = System.currentTimeMillis()
-        val recoveryFile = File(recoveryDir, "sov_rec_${opId}.bak")
-        val metaFile = File(recoveryDir, "sov_rec_${opId}.meta")
+        val transactionId = "${opId}_${UUID.randomUUID().toString().replace("-", "")}"
+        val recoveryFile = File(recoveryDir, "sov_rec_${transactionId}.bak")
+        val metaFile = File(recoveryDir, "sov_rec_${transactionId}.meta")
 
         val srcSha = computeSha256(src)
         val bakSha: String
