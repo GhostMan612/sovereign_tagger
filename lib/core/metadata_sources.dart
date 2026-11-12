@@ -12,6 +12,7 @@ import 'dart_spider.dart';
 import 'ffmpeg_executor.dart';
 import 'media_probe.dart';
 import 'storage_client.dart';
+import 'secret_store.dart';
 
 class MetaCandidate {
   final String source;
@@ -123,7 +124,7 @@ class MetadataSources {
 
   static Future<SpiderResult> search({required String artist, required String title, String album = '', int durationMs = 0}) async {
     final prefs = await SharedPreferences.getInstance();
-    final geniusKey = prefs.getString('genius_key') ?? '';
+    final geniusKey = await SecretStore.read(prefs, 'genius_key');
     final Map<String, dynamic> data;
     if (prefs.getBool('dart_spider') ?? false) {
       data = await DartSpider.scrapeMetadata(artist: artist, title: title, album: album, durationMs: durationMs, geniusToken: geniusKey);
@@ -182,14 +183,16 @@ class MetadataSources {
 
   static Future<bool> acrConfigured() async {
     final prefs = await SharedPreferences.getInstance();
-    return (prefs.getString('acr_host') ?? '').isNotEmpty && (prefs.getString('acr_key') ?? '').isNotEmpty && (prefs.getString('acr_secret') ?? '').isNotEmpty;
+    return (prefs.getString('acr_host') ?? '').isNotEmpty &&
+        (await SecretStore.read(prefs, 'acr_key')).isNotEmpty &&
+        (await SecretStore.read(prefs, 'acr_secret')).isNotEmpty;
   }
 
   static Future<MetaCandidate?> acrIdentify(String path) async {
     final prefs = await SharedPreferences.getInstance();
     final host = prefs.getString('acr_host') ?? '';
-    final key = prefs.getString('acr_key') ?? '';
-    final secret = prefs.getString('acr_secret') ?? '';
+    final key = await SecretStore.read(prefs, 'acr_key');
+    final secret = await SecretStore.read(prefs, 'acr_secret');
     if (host.isEmpty || key.isEmpty || secret.isEmpty) throw MetadataException('ACRCloud keys missing in Settings.');
 
     await _acr.invokeMethod('initialize', {'host': host, 'accessKey': key, 'accessSecret': secret});
