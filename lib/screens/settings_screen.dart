@@ -409,18 +409,55 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   Future<void> _updateYtDlp() async {
     TapFeedback.machineTap();
-    if (!mounted) return;
-    setState(() => _updateStatus =
-        'IN-APP UPDATES ARE DISABLED FOR SAFETY. '
-        'INSTALL A VERIFIED SIGNED APK TO UPDATE YT-DLP.');
+    setState(() {
+      _isUpdating = true;
+      _updateStatus = "Initiating transactional yt-dlp update...";
+    });
+    try {
+      final result = await const MethodChannel('com.sovereign.tagger/ytdlp').invokeMethod('updateCore');
+      if (!mounted) return;
+      final data = jsonDecode(result.toString());
+      if (data['status'] == 'success') {
+        setState(() => _updateStatus = data['message'].toString());
+      } else {
+        setState(() => _updateStatus = "ERR: Update Failed: ${data['message'].toString()}");
+      }
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _updateStatus = "ERR: Update Fault: $e");
+    } finally {
+      if (mounted) setState(() => _isUpdating = false);
+    }
   }
 
   Future<void> _updateFullStack() async {
     TapFeedback.machineTap();
-    if (!mounted) return;
-    setState(() => _fullStackStatus =
-        'PYTHON PACKAGE REPLACEMENT IS DISABLED. '
-        'USE A VERIFIED SIGNED APK WITH PINNED DEPENDENCIES.');
+    setState(() {
+      _isUpdating = true;
+      _fullStackStatus = "Full Stack Refresh: yt-dlp + mutagen/lyricsgenius...";
+    });
+    try {
+      final result = await const MethodChannel('com.sovereign.tagger/ytdlp').invokeMethod('updateFullStack');
+      if (!mounted) return;
+      final data = jsonDecode(result.toString());
+      if (!mounted) return;
+      if (data['status'] == 'success') {
+        setState(() => _fullStackStatus = data['message'].toString());
+      } else if (data['status'] == 'partial') {
+        final stack = data['python_stack'];
+        final detail = (stack is Map && stack['message'] != null)
+            ? stack['message'].toString()
+            : 'helper packages failed';
+        setState(() => _fullStackStatus = 'PARTIAL: yt-dlp updated; $detail');
+      } else {
+        setState(() => _fullStackStatus = "ERR: Full Stack Failed: ${data['message']}");
+      }
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _fullStackStatus = "ERR: Full Stack Fault: $e");
+    } finally {
+      if (mounted) setState(() => _isUpdating = false);
+    }
   }
 
   Future<void> _probeFfmpegKernel() async {
@@ -1912,14 +1949,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 
                 const Text("> CORE ENGINE MAINTENANCE", style: TextStyle(fontFamily: 'ShareTechMono', fontSize: 16, fontWeight: FontWeight.bold, color: Colors.orangeAccent)),
                 const SizedBox(height: 8),
-                const Text("YT-DLP UPDATES ARE BUNDLED IN VERIFIED APK BUILDS. UNSAFE IN-APP REPLACEMENT HAS BEEN DISABLED.", style: TextStyle(fontFamily: 'ShareTechMono', color: Colors.white54, fontSize: 11)),
+                const Text("YT-DLP IS REPLACED TRANSACTIONALLY: THE NEW PACKAGE IS STAGED, STRUCTURALLY VERIFIED AND BYTE-COMPILED, THEN SWAPPED IN WITH A ROLLBACK BACKUP. IF ANYTHING FAILS, THE LIVE PACKAGE IS RESTORED.", style: TextStyle(fontFamily: 'ShareTechMono', color: Colors.white54, fontSize: 11)),
                 const SizedBox(height: 16),
                 OutlinedButton.icon(
                   onPressed: _isUpdating ? null : _updateYtDlp,
                   icon: _isUpdating 
                       ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.orangeAccent))
                       : const Icon(Icons.security_update_warning, color: Colors.orangeAccent),
-                  label: Text(_isUpdating ? "UPDATING CORE ENGINE..." : "IN-APP YT-DLP UPDATE DISABLED", style: const TextStyle(fontFamily: 'ShareTechMono', color: Colors.orangeAccent, fontWeight: FontWeight.bold)),
+                  label: Text(_isUpdating ? "UPDATING CORE ENGINE..." : "CHECK FOR YT-DLP UPDATE", style: const TextStyle(fontFamily: 'ShareTechMono', color: Colors.orangeAccent, fontWeight: FontWeight.bold)),
                   style: OutlinedButton.styleFrom(side: const BorderSide(color: Colors.orangeAccent), backgroundColor: Colors.black, padding: const EdgeInsets.symmetric(vertical: 16)),
                 ),
                 const SizedBox(height: 12),
@@ -1928,7 +1965,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   icon: _isUpdating
                       ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.amberAccent))
                       : const Icon(Icons.layers, color: Colors.amberAccent),
-                  label: const Text("FULL STACK UPDATE DISABLED", style: TextStyle(fontFamily: 'ShareTechMono', color: Colors.amberAccent, fontWeight: FontWeight.bold, fontSize: 12)),
+                  label: const Text("FULL STACK REFRESH (YT-DLP + DEPS)", style: TextStyle(fontFamily: 'ShareTechMono', color: Colors.amberAccent, fontWeight: FontWeight.bold, fontSize: 12)),
                   style: OutlinedButton.styleFrom(side: const BorderSide(color: Colors.amberAccent), backgroundColor: Colors.black, padding: const EdgeInsets.symmetric(vertical: 16)),
                 ),
                 const SizedBox(height: 8),
