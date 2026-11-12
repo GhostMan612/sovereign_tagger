@@ -3,6 +3,8 @@
 // The Future Dictates the Past and the Past is Always Present.
 // ============================================================
 
+import 'dsp_builders.dart';
+
 const List<String> supportedVideoContainers = ['mp4', 'mkv', 'webm'];
 
 const List<String> supportedVideoOps = [
@@ -100,12 +102,19 @@ String buildClipVideoArgs({
   required String startHms,
   required String endHms,
 }) {
+  validateMediaPath(inputPath, name: 'video input path');
+  validateMediaPath(outPath, name: 'video output path');
+  validateTimeHms(startHms, name: 'start time');
+  validateTimeHms(endHms, name: 'end time');
   Duration parseHms(String s) {
     final p = s.split(':').map((e) => int.parse(e)).toList();
     return Duration(hours: p[0], minutes: p[1], seconds: p[2]);
   }
   final start = parseHms(startHms);
   final end = parseHms(endHms);
+  if (end <= start) {
+    throw StateError("ERR: END Must Exceed START.");
+  }
   if (start > Duration.zero) {
     String two(int n) => n.toString().padLeft(2, '0');
     final diff = end - start;
@@ -131,18 +140,18 @@ String buildVideoCommand({
   String targetVideoFormat = "mp4",
   String? secondFilePath,
 }) {
+  validateMediaPath(inputPath, name: 'video input path');
+  validateMediaPath(outPath, name: 'video output path');
   final parts = inputPath.split('.');
   final srcExt = parts.length > 1 ? parts.last.toLowerCase() : "";
   final container = supportedVideoContainers.contains(srcExt) ? srcExt : "mp4";
   final vcodecs = buildVideoCodecArgs(container);
   switch (op) {
     case "Video Trim (Re-Encode)": {
-      final timeFmt = RegExp(r'^\d{1,2}:\d{2}:\d{2}$');
+      validateTimeHms(startHms, name: 'start time');
+      validateTimeHms(endHms, name: 'end time');
       final startText = startHms.trim();
       final endText = endHms.trim();
-      if (!timeFmt.hasMatch(startText) || !timeFmt.hasMatch(endText)) {
-        throw StateError("ERR: Clip Bounds Must Be HH:MM:SS.");
-      }
       Duration parseHms(String s) {
         final p = s.split(':').map((e) => int.parse(e)).toList();
         return Duration(hours: p[0], minutes: p[1], seconds: p[2]);
@@ -183,6 +192,7 @@ String buildVideoCommand({
       if (secondFilePath == null || secondFilePath.isEmpty) {
         throw StateError("ERR: MOUNT SECOND MEDIA FIRST (AUDIO TRACK).");
       }
+      validateMediaPath(secondFilePath, name: 'secondary audio path');
       final acodec = buildVideoAudioCodecArgs(container);
       return '-y -i "$inputPath" -i "$secondFilePath" -map 0:v:0 -map 1:a:0 -c:v copy $acodec -shortest "$outPath"';
     }

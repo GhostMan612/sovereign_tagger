@@ -26,6 +26,8 @@ import '../core/whisper_model.dart';
 import '../core/ghost_commands.dart';
 import '../workbench/dsp_builders.dart';
 import '../workbench/video_dsp_builders.dart';
+import '../workbench/workbench_models.dart';
+import '../workbench/workbench_queue.dart';
 
 class TabWorkbench extends StatefulWidget {
   const TabWorkbench({super.key});
@@ -77,7 +79,7 @@ class _TabWorkbenchState extends State<TabWorkbench> {
   double _duckReleaseMs = 500.0;
   double _chorusDepthMs = 2.0;
   double _compandGainDb = 0.0;
-  final List<_MixTrack> _mixTracks = [];
+  final List<MixTrack> _mixTracks = [];
   int? _waveSelInMs;
   int? _waveSelOutMs;
   double _limitLevel = 0.9;
@@ -149,95 +151,13 @@ class _TabWorkbenchState extends State<TabWorkbench> {
 
   Map<String, String>? _parseLoudnormMeasurements(String output) => parseLoudnormMeasurements(output);
 
-  final List<String> _operations = [
-    "Extract Audio (Video to MP3)",
-    "Lossless Audio Extract (-c:a copy)",
-    "Split Chapters Losslessly (-c copy)",
-    "Fake-Lossless & DR Audit",
-    "Clip Media (The Scalpel)",
-    "Convert Format",
-    "Normalize Audio (LUFS -14)",
-    "Granular Audio DSP (Speed/Reverb)",
-    "Apply Fades",
-    "Fold To Mono",
-    "Trim Silence",
-    "Trim To Silence (Precise)",
-    "AI Denoise (afftdn)",
-    "Parametric EQ",
-    "Compress Dynamics",
-    "15-Band Equalizer (AutoEq)",
-    "Scan ReplayGain (EBU R128)",
-    "Scan Volume (volumedetect)",
-    "Scan Silence (silencedetect)",
-    "Split On Silence (silencedetect)",
-    "Transcribe (Whisper AI)",
-    "Insert Silence",
-    "Delete Region",
-    "Mix With File",
-    "Crossfade Join",
-    "Gapless Join (concat)",
-    "Sidechain Duck (sidechaincompress)",
-    "Click/Pop Repair (adeclick)",
-    "De-Esser",
-    "Limiter",
-    "Multiband Compress (mcompand)",
-    "Chorus (spatial)",
-    "Compand (dynamic shaping)",
-    "Firequalizer Curve EQ",
-    "DC/Rumble Fix (highpass)",
-    "Tone Generator (Test Signals)",
-    "Spectrogram Snapshot",
-    "Video Trim (Re-Encode)",
-    "Video Rotate / Flip",
-    "Video Scale / Resize",
-    "Video Crop (Center)",
-    "Mute Video (Drop Audio)",
-    "Extract Audio (Video to M4A)",
-    "Video Convert (Container)",
-    "Mux Video + Audio"
-  ];
+  final List<String> _operations = DspOperation.allOperations;
+  final List<String> _formats = DspOperation.audioFormats;
+  static const List<String> _chainableOps = DspOperation.chainableOperations;
+  static const List<String> _videoFormats = DspOperation.videoFormats;
 
-  final List<String> _formats = ["mp3", "wav", "flac", "ogg", "m4a"];
-
-  static const List<String> _chainableOps = [
-    "Normalize Audio (LUFS -14)",
-    "Granular Audio DSP (Speed/Reverb)",
-    "Apply Fades",
-    "Fold To Mono",
-    "Trim Silence",
-    "Trim To Silence (Precise)",
-    "AI Denoise (afftdn)",
-    "Parametric EQ",
-    "Compress Dynamics",
-    "15-Band Equalizer (AutoEq)",
-    "Insert Silence",
-    "Delete Region",
-    "Click/Pop Repair (adeclick)",
-    "De-Esser",
-    "Limiter",
-    "Multiband Compress (mcompand)",
-    "Chorus (spatial)",
-    "Compand (dynamic shaping)",
-    "Firequalizer Curve EQ",
-    "DC/Rumble Fix (highpass)",
-  ];
-
-  bool _isBatchable(String op) => _chainableOps.contains(op) || op == "Convert Format" || op == "Extract Audio (Video to MP3)" || (_videoOps.contains(op) && op != "Mux Video + Audio");
-
-  static const List<String> _videoOps = [
-    "Video Trim (Re-Encode)",
-    "Video Rotate / Flip",
-    "Video Scale / Resize",
-    "Video Crop (Center)",
-    "Mute Video (Drop Audio)",
-    "Extract Audio (Video to M4A)",
-    "Video Convert (Container)",
-    "Mux Video + Audio",
-  ];
-
-  static const List<String> _videoFormats = ["mp4", "mkv", "webm"];
-
-  bool _isVideoOp(String op) => _videoOps.contains(op);
+  bool _isBatchable(String op) => DspOperation.isBatchable(op);
+  bool _isVideoOp(String op) => DspOperation.isVideoOp(op);
 
   Future<void> _scanLufs() async {
     if (_selectedFilePath.isEmpty || _isProcessing) return;
@@ -529,13 +449,11 @@ class _TabWorkbenchState extends State<TabWorkbench> {
         filters.addAll(buildFadeFilter(fadeInSec: _fadeInSec, fadeOutSec: _fadeOutSec, totalDurationSec: durationMs / 1000.0));
         break;
       case "Fold To Mono":
-        filters.add("pan=mono|c0=0.5*c0+0.5*c1");
+        filters.add(buildMonoFoldFilter());
         break;
-      case "Insert Silence": {
-        final ms = (_silenceSec * 1000).round();
-        filters.add(_silenceAtStart ? "adelay=$ms:all=1" : "apad=pad_dur=${_silenceSec.toStringAsFixed(2)}");
+      case "Insert Silence":
+        filters.add(buildInsertSilenceFilter(silenceSec: _silenceSec, atStart: _silenceAtStart));
         break;
-      }
       case "Delete Region": {
         final sMs = _waveSelInMs ?? _parseHmsSafe(_startCtrl.text).inMilliseconds;
         final eMs = _waveSelOutMs ?? _parseHmsSafe(_endCtrl.text).inMilliseconds;
@@ -543,31 +461,31 @@ class _TabWorkbenchState extends State<TabWorkbench> {
         break;
       }
       case "Click/Pop Repair (adeclick)":
-        filters.add("adeclick");
+        filters.add(buildDeclickFilter());
         break;
       case "De-Esser":
-        filters.add("deesser=i=${_deessIntensity.toStringAsFixed(2)}:m=0.5:f=0.5");
+        filters.add(buildDeEsserFilter(intensity: _deessIntensity));
         break;
       case "Limiter":
-        filters.add("alimiter=limit=${_limitLevel.toStringAsFixed(2)}:attack=5:release=50");
+        filters.add(buildLimiterFilter(limit: _limitLevel));
         break;
       case "Multiband Compress (mcompand)":
-        filters.add("mcompand");
+        filters.add(buildMcompandFilter());
         break;
       case "DC/Rumble Fix (highpass)":
-        filters.add("highpass=f=10");
+        filters.add(buildHighpassFilter());
         break;
       case "Trim Silence":
-        filters.add("silenceremove=start_periods=1:start_duration=0.3:start_threshold=-45dB:stop_periods=-1:stop_duration=0.8:stop_threshold=-45dB");
+        filters.add(buildTrimSilenceFilter(precise: false));
         break;
       case "Trim To Silence (Precise)":
-        filters.add("silenceremove=start_periods=1:start_threshold=-50dB:start_silence=0.05:stop_periods=-1:stop_threshold=-50dB:stop_silence=0.05");
+        filters.add(buildTrimSilenceFilter(precise: true));
         break;
       case "Chorus (spatial)":
-        filters.add("chorus=0.7:0.9:55:0.4:0.25:${_chorusDepthMs.toStringAsFixed(1)}");
+        filters.add(buildChorusFilter(depthMs: _chorusDepthMs));
         break;
       case "Compand (dynamic shaping)":
-        filters.add("compand=attacks=0.05:decays=0.3:points=-80/-80|-60/-50|-30/-25|-10/-8|0/0:gain=${_compandGainDb.toStringAsFixed(1)}");
+        filters.add(buildCompandFilter(gainDb: _compandGainDb));
         break;
       case "Firequalizer Curve EQ":
         filters.add(buildFirequalizerCurve(bass: _eqBass, lowMid: _eqLowMid, mid: _eqMid, highMid: _eqHighMid, treble: _eqTreble));
@@ -576,13 +494,13 @@ class _TabWorkbenchState extends State<TabWorkbench> {
         filters.addAll(buildGranularSpeedFilter(speed: _audioSpeed, pitchMode: _pitchMode, isReversed: _isReversed, reverbIntensity: _reverbIntensity));
         break;
       case "AI Denoise (afftdn)":
-        filters.add("afftdn=nf=-25");
+        filters.add(buildDenoiseFilter());
         break;
       case "Parametric EQ":
         filters.addAll(buildEqFilter(bass: _eqBass, lowMid: _eqLowMid, mid: _eqMid, highMid: _eqHighMid, treble: _eqTreble));
         break;
       case "Compress Dynamics":
-        filters.add("acompressor=threshold=0.1:ratio=${_compRatio.toStringAsFixed(1)}:attack=50:release=500");
+        filters.add(buildCompressorFilter(ratio: _compRatio));
         break;
       case "15-Band Equalizer (AutoEq)":
         filters.addAll(build15BandEqFilter(_eq15Bands));
@@ -655,7 +573,7 @@ class _TabWorkbenchState extends State<TabWorkbench> {
       if (file != null && file.path != null) {
         final dur = await probeDurationMs(file.path!);
         if (!mounted) return;
-        setState(() => _mixTracks.add(_MixTrack(path: file.path!, durationMs: dur)));
+        setState(() => _mixTracks.add(MixTrack(path: file.path!, durationMs: dur)));
       }
     } on PlatformException catch (e) {
       if (!mounted) return;
@@ -663,13 +581,13 @@ class _TabWorkbenchState extends State<TabWorkbench> {
     } catch (_) {}
   }
 
-  int _mixTotalDurationMs(List<_MixTrack> tracks) {
+  int _mixTotalDurationMs(List<MixTrack> tracks) {
     int total = _wbDurationMs ?? 0;
     for (final t in tracks) { total += t.durationMs ?? 0; }
     return total;
   }
 
-  String? _mixGuardWarning(List<_MixTrack> tracks) {
+  String? _mixGuardWarning(List<MixTrack> tracks) {
     final count = 1 + tracks.length;
     final totalMs = _mixTotalDurationMs(tracks);
     if (count > 7) return "MIX CAP IS 7 TRACKS. Remove tracks before executing.";
@@ -1187,9 +1105,9 @@ class _TabWorkbenchState extends State<TabWorkbench> {
       } else if (_selectedOperation == "Spectrogram Snapshot") {
         command = buildSpectrogramArgs(inputPath: _selectedFilePath, outPath: outPath);
       } else if (_selectedOperation == "Mix With File") {
-        final extra = List<_MixTrack>.from(_mixTracks);
+        final extra = List<MixTrack>.from(_mixTracks);
         if (extra.isEmpty && _secondFilePath.isNotEmpty) {
-          extra.add(_MixTrack(path: _secondFilePath, durationMs: await probeDurationMs(_secondFilePath)));
+          extra.add(MixTrack(path: _secondFilePath, durationMs: await probeDurationMs(_secondFilePath)));
         }
         if (extra.isEmpty) {
           setState(() { _isProcessing = false; _statusMessage = "ERR: ADD AT LEAST ONE MIX TRACK FIRST."; });
@@ -1440,16 +1358,12 @@ class _TabWorkbenchState extends State<TabWorkbench> {
     }
   }
 
-  String _outputExtFor(String inputPath, String op) {
-    if (op == "Convert Format") return _targetFormat;
-    if (op == "Extract Audio (Video to MP3)") return "mp3";
-    if (op == "Extract Audio (Video to M4A)") return "m4a";
-    if (op == "Video Convert (Container)") return _targetVideoFormat;
-    final parts = inputPath.split('.');
-    final srcExt = parts.length > 1 ? parts.last.toLowerCase() : "";
-    if (_isVideoOp(op)) return ['mp4', 'mkv', 'webm'].contains(srcExt) ? srcExt : "mp4";
-    return _preservedContainers.contains(srcExt) ? srcExt : "flac";
-  }
+  String _outputExtFor(String inputPath, String op) => DspOperation.outputExtension(
+    inputPath,
+    op,
+    targetAudioFormat: _targetFormat,
+    targetVideoFormat: _targetVideoFormat,
+  );
 
   String _buildTransformCommand(String op, String inputPath, String outPath, int? durationMs) {
     if (_isVideoOp(op)) return _buildVideoCommand(op, inputPath, outPath, durationMs);
@@ -1492,67 +1406,52 @@ class _TabWorkbenchState extends State<TabWorkbench> {
       return;
     }
     setState(() { _isProcessing = true; _opProgress = 0.0; _batchReport = "Batch Running: $_selectedOperation over ${_batchFiles.length} file(s)..."; });
-    final lines = <String>[];
-    int ok = 0;
+
+    final queue = WorkbenchQueue();
+    queue.addJobs(_batchFiles, _selectedOperation);
+
     try {
-      final tempDir = await _storageChannel.invokeMethod('getTempDirectory');
-      for (int i = 0; i < _batchFiles.length; i++) {
-        final path = _batchFiles[i];
-        if (!mounted) return;
-        setState(() { _opProgress = i / _batchFiles.length; _statusMessage = "Batch ${i + 1}/${_batchFiles.length}: ${path.split('/').last}"; });
-        try {
-          final dur = await probeDurationMs(path);
-          if (_isVideoOp(_selectedOperation)) {
-            final inStreams = await probeStreams(path);
-            if ((inStreams['video'] ?? 0) == 0) {
-              lines.add("SKIP ${path.split('/').last}: NOT A VIDEO FILE");
-              continue;
-            }
-          }
-          final ext = _outputExtFor(path, _selectedOperation);
-          final outPath = "$tempDir/workbench_batch_${DateTime.now().millisecondsSinceEpoch}_$i.$ext";
-          final command = _buildTransformCommand(_selectedOperation, path, outPath, dur);
-          final session = await FFmpegExecutor.execute(command);
-          if (!ReturnCode.isSuccess(session.getReturnCode())) {
-            final output = session.getOutput() ?? "";
-            final fault = _filterFaultHint(output);
-            lines.add("FAIL ${path.split('/').last}: ${fault != null ? "FILTER '$fault' UNAVAILABLE IN THIS BUILD" : "rc=${session.getReturnCode()}"}");
-            continue;
-          }
-          if (_isVideoOp(_selectedOperation)) {
-            final outStreams = await probeStreams(outPath);
-            if ((outStreams['video'] ?? 0) == 0) {
-              lines.add("FAIL ${path.split('/').last}: NO VIDEO STREAM IN OUTPUT");
-              continue;
-            }
-          }
-          try {
-            final uriString = await _storageChannel.invokeMethod('addToMediaStore', {'filePath': outPath, 'title': "${_baseNameOf(path)}${_isVideoOp(_selectedOperation) ? _videoOpSuffix(_selectedOperation) : '_mod'}"});
-            lines.add("OK ${path.split('/').last} -> $uriString");
-            File(outPath).delete().ignore();
-            ok++;
-          } catch (_) {
-            lines.add("CACHE ONLY ${path.split('/').last}: $outPath");
-            ok++;
-          }
-        } on StateError catch (e) {
-          lines.add("SKIP ${path.split('/').last}: ${e.message}");
-        } catch (e) {
-          lines.add("FAIL ${path.split('/').last}: $e");
-        }
-      }
+      final summary = await queue.execute(
+        commandBuilder: (op, inputPath, outPath, durationMs) async =>
+            _buildTransformCommand(op, inputPath, outPath, durationMs),
+        getTempDirectory: () async => await _storageChannel.invokeMethod('getTempDirectory'),
+        mediaStoreInjector: (outPath, title) async =>
+            await _storageChannel.invokeMethod('addToMediaStore', {'filePath': outPath, 'title': title}),
+        durationProbe: (path) => probeDurationMs(path),
+        streamProbe: (path) => probeStreams(path),
+        onJobStarted: (job, idx, total) {
+          if (!mounted) return;
+          setState(() {
+            _opProgress = (idx - 1) / total;
+            _statusMessage = "Batch $idx/$total: ${job.fileName}";
+          });
+        },
+        onJobProgress: (job, prog) {
+          if (!mounted) return;
+          setState(() => _opProgress = prog);
+        },
+        onJobCompleted: (job, idx, total) {
+          if (!mounted) return;
+          setState(() => _opProgress = idx / total);
+        },
+      );
+
+      if (!mounted) return;
+      TapFeedback.machineConfirm();
+      setState(() {
+        _isProcessing = false;
+        _opProgress = 1.0;
+        _batchReport = summary;
+        final okCount = queue.jobs.where((j) => j.isSuccess).length;
+        _statusMessage = "Batch Complete: $okCount/${_batchFiles.length} OK. See BATCH QUEUE report.";
+      });
     } catch (e) {
       if (!mounted) return;
-      setState(() { _isProcessing = false; _statusMessage = "ERR: Batch Fault: $e"; });
-      return;
+      setState(() {
+        _isProcessing = false;
+        _statusMessage = "ERR: Batch Fault: $e";
+      });
     }
-    if (!mounted) return;
-    setState(() {
-      _isProcessing = false;
-      _opProgress = 1.0;
-      _batchReport = "Batch Done: $ok/${_batchFiles.length} OK.\n${lines.join('\n')}";
-      _statusMessage = "Batch Complete: $ok/${_batchFiles.length} OK. See BATCH QUEUE report.";
-    });
   }
 
   void _showWorkbenchManual() {
@@ -3385,12 +3284,4 @@ class _PcmWavePainter extends CustomPainter {
 
   @override
   bool shouldRepaint(_PcmWavePainter oldDelegate) => true;
-}
-
-class _MixTrack {
-  final String path;
-  final int? durationMs;
-  double gain = 1.0;
-  double pan = 0.0;
-  _MixTrack({required this.path, this.durationMs});
 }

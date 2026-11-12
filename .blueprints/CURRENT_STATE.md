@@ -1,10 +1,17 @@
 # CURRENT_STATE.md — Sovereign Tagger v2 (post-Phase 39)
-> Snapshot as of 2026-11-12 — Phases 0–39 COMPLETE & MERGED on main (PRs #1–#38 ALL MERGED; Stage A Workbench Modularization COMPLETE; `flutter analyze --no-pub` -> `No issues found!`; `flutter test` -> 81/81 passed; Python doctor tests -> 2/2 passed; Moto G 2025 `ZT4222BMWN` + BLU View 5 `7040016025040287` hardware verification ALL PASS).
+> Snapshot as of 2026-11-12 — Phases 0–39 COMPLETE & MERGED on main (PRs #1–#38 ALL MERGED; Stage A Workbench Modularization COMPLETE with 100% pure DSP builder extraction; Stage B Workbench Models & Batch Queue Decoupling COMPLETE; Moto G 2025 `ZT4222BMWN` + BLU View 5 `7040016025040287` hardware verification ALL PASS).
 >
-> **Stage A Workbench Modularization deltas (Pure DSP Builders & Tests):**
-> - **Pure Audio DSP Command Builders (`lib/workbench/dsp_builders.dart`)**: Extracted all pure audio filter string generators, argument builders, codec configurations, sample rate SOXR resamplers, Loudnorm 1-pass/2-pass arguments & JSON measurement parsers, silence detection & segment split algorithms, sidechain ducking, multitrack mixing, crossfade join, gapless join, and tone generation args from `lib/tabs/tab_workbench.dart`.
+> **Stage B Workbench Modularization deltas (Data Structures & Batch Queue Decoupling):**
+> - **Decoupled Data Structures (`lib/workbench/workbench_models.dart`)**: Extracted `MixTrack` with path and parameter validation, `DspOperation` with centralized operation registries (45 ops, 20 chainable, 8 video, 3 forensic, 20 preserve) and lossless output extension resolver, `BatchJob` and `BatchJobStatus`, `MasteringTarget` presets, and `AudioInspectResult`.
+> - **Serialized Batch Execution Queue (`lib/workbench/workbench_queue.dart`)**: Decoupled batch queue execution from UI into `WorkbenchQueue`, managing cancellation, stream probe verification, per-job error containment, temporary file cleanup, and progress reporting.
+> - **Automated Unit Test Suite (`test/workbench_queue_test.dart`)**: Added tests validating data models, operation classifications, batch lifecycle, cancellation, and video stream skipping.
+> - **TabWorkbench Refactored**: Replaced inline batch loop and private `_MixTrack` class in `lib/tabs/tab_workbench.dart` with `WorkbenchQueue` and `workbench_models.dart`.
+>
+> **Stage A Workbench Modularization deltas (Pure DSP Builders, Validation & Test Fixtures):**
+> - **100% Pure Audio DSP Command Builders (`lib/workbench/dsp_builders.dart`)**: Extracted all pure audio filter string generators, argument builders, codec configurations, sample rate SOXR resamplers, Loudnorm 1-pass/2-pass arguments & JSON measurement parsers, silence detection & segment split algorithms, sidechain ducking, multitrack mixing, crossfade join, gapless join, tone generation, compand, compressor, denoise, limiter, chorus, de-esser, silence insert/trim, and mono fold args from `lib/tabs/tab_workbench.dart`.
+> - **Centralized Validation & Stream Parsers**: Added centralized `validateMediaPath`, `validateTimeHms`, and strict parameter range checks; hardened sequential silence and loudnorm parsers.
 > - **Pure Video DSP Command Builders (`lib/workbench/video_dsp_builders.dart`)**: Extracted pure video filter builders (Rotate/Flip transpose chains, Scale 1080p/720p/480p, Crop 16:9/4:3/1:1/9:16, Mute, Extract M4A, Container Convert, Mux) and stream-copy fast clip args.
-> - **Automated DSP Unit Test Suite (`test/workbench_dsp_test.dart`)**: Added 24 unit test cases validating all extracted audio and video builders, boundary conditions, error handling, and parameter parsing, expanding the test suite from 57 to 81 passing unit tests.
+> - **Automated DSP Unit Test Suite (`test/workbench_dsp_test.dart`)**: Added synthetic RIFF/WAVE PCM16 header generator and realistic `volumedetect` and `ebur128` probe fixtures, expanding test suite from 57 to 99 passing unit tests.
 > - **TabWorkbench Refactored**: Wired `lib/tabs/tab_workbench.dart` to consume the extracted builders, eliminating redundant code while preserving all state, UI, and functionality.
 >
 > **Phase 39 deltas (Security, Cloud Cache, Crash Hardening & Audit Specifications):**
@@ -113,10 +120,12 @@ Sovereign Tagger — autonomous Android media pipeline: yt-dlp (chaquopy Python 
 
 ## Architecture map (verified)
 
-### Dart layer (`lib/`, 53 files)
+### Dart layer (`lib/`, 55 files)
 
 - **workbench/dsp_builders.dart**: Pure audio DSP command & filter argument generators (Loudnorm, Equalizers, Resamplers, Fades, Silence/Volume probes, Sidechain ducking, Multi-track mix, Tone generators).
 - **workbench/video_dsp_builders.dart**: Pure video DSP command builders (Rotate/Flip transpose chains, Scaler, Crop, Mute, Extract M4A, Container converter, Video+Audio muxer).
+- **workbench/workbench_models.dart**: Data structures & enums (`MixTrack`, `DspOperation`, `BatchJob`, `BatchJobStatus`, `MasteringTarget`, `AudioInspectResult`).
+- **workbench/workbench_queue.dart**: Serialized batch queue execution runner, pause/cancel state machine, and progress notifications.
 
 - **main.dart**: loads `accent_color` -> `SplashScreen` (`FFmpegKitExtended.initialize` + XOR `0x53` auto-import + `MatrixRain` overlay `lib/widgets/machine_rain.dart`) -> `MainShell`.
 - **screens/main_shell.dart**: `SovereignState` bus; `AudioService` owns `just_audio` `player` (created with `handleInterruptions: false` for explicit audio_session handling), `playlist`/`currentIndex`/`videoController`/`repeatMode`/`isShuffle`/`sleepTimerMinutes`/`speedFactor` + `SovereignAudioHandler` (`lib/core/audio_handler.dart`).

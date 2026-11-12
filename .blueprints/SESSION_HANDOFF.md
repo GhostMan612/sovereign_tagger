@@ -22,18 +22,41 @@ Session-end law: update rows 2–4 every session (+ row 5 when a new gotcha is l
 ## Where we are
 
 **Date:** 2026-11-12
-**Phase:** Phase 39 Modularization — Stage A: Workbench DSP Decomposition COMPLETE (`lib/workbench/dsp_builders.dart` & `lib/workbench/video_dsp_builders.dart` extracted, tested in `test/workbench_dsp_test.dart`, consumed in `lib/tabs/tab_workbench.dart`; `flutter analyze` 0 issues; `flutter test` 81/81 passed; Python doctor tests 2/2 passed; 0 open PRs; main clean).
+**Phase:** Phase 39 Modularization — Stage A (100% Pure DSP Extraction & Hardening) & Stage B (Workbench Models & Batch Queue Decoupling) COMPLETE (`lib/workbench/dsp_builders.dart`, `video_dsp_builders.dart`, `workbench_models.dart`, `workbench_queue.dart` extracted, tested across `test/workbench_dsp_test.dart` and `test/workbench_queue_test.dart`, consumed in `lib/tabs/tab_workbench.dart`; 0 open PRs; main clean). Stage C: Component UI Decomposition PREPARED.
 
-## What shipped — Stage A: Workbench Pure DSP Modularization (2026-11-12)
+## What shipped — Stage B: Workbench Models & Batch Queue Decoupling (2026-11-12)
 
-1. **Pure Audio DSP Command Builders (`lib/workbench/dsp_builders.dart`)**:
-   - Extracted all pure audio filter string generators, argument builders, codec configurations, sample rate SOXR resamplers, Loudnorm 1-pass/2-pass arguments & JSON measurement parsers, silence detection & segment split algorithms, sidechain ducking, multitrack mixing, crossfade join, gapless join, and tone generation args from `lib/tabs/tab_workbench.dart`.
-2. **Pure Video DSP Command Builders (`lib/workbench/video_dsp_builders.dart`)**:
-   - Extracted pure video filter builders (Rotate/Flip transpose chains, Scale 1080p/720p/480p, Crop 16:9/4:3/1:1/9:16, Mute, Extract M4A, Container Convert, Mux) and stream-copy fast clip args.
-3. **Automated DSP Unit Test Suite (`test/workbench_dsp_test.dart`)**:
-   - Added 24 unit test cases validating all extracted audio and video builders, boundary conditions, error handling, and parameter parsing, expanding the test suite from 57 to 81 passing unit tests.
+1. **Decoupled Data Structures & Enums (`lib/workbench/workbench_models.dart`)**:
+   - Extracted `MixTrack` with path validation, gain, and pan bounds checking and `copyWith`.
+   - Extracted `DspOperation` with centralized operation registries (45 total, 20 chainable, 8 video, 3 forensic, 20 preserve), categorization predicates (`isBatchable`, `isVideoOp`, `isForensicOp`, `isPreserveOp`), and lossless-preserving output extension resolver.
+   - Extracted `BatchJob` and `BatchJobStatus` enum (`pending`, `running`, `completed`, `failed`, `skipped`) with filename extraction, status summaries, and execution tracking.
+   - Extracted `MasteringTarget` with preconfigured presets for streaming (-14 LUFS), broadcast (-23 LUFS), podcast (-16 LUFS), and dynamic compression.
+   - Extracted `AudioInspectResult` holding structured volume, silence, ReplayGain, and LUFS scan metrics.
+2. **Serialized Batch Execution Queue (`lib/workbench/workbench_queue.dart`)**:
+   - Decoupled batch queue execution from UI into `WorkbenchQueue`.
+   - Implemented pause/cancel state machine (`cancel()`), stream probe validation, per-job error containment (single file failure does not abort remaining queue items), temporary file cleanup, and progress notifications.
+3. **Automated Unit Test Suite (`test/workbench_queue_test.dart`)**:
+   - Added unit test suite validating `MixTrack`, `DspOperation`, `BatchJob`, `MasteringTarget`, and `WorkbenchQueue` lifecycle, cancellation, video stream skipping, and empty queue behavior.
 4. **TabWorkbench Refactored**:
-   - Wired `lib/tabs/tab_workbench.dart` to consume the extracted builders, eliminating redundant code while preserving all state, UI, and functionality.
+   - Replaced all inline batch loops and data models in `lib/tabs/tab_workbench.dart` with `WorkbenchQueue` and `workbench_models.dart`, removing obsolete `_MixTrack` class and duplicated operation lists.
+
+## What shipped — Stage A: Workbench Pure DSP Modularization & Hardening (2026-11-12)
+
+1. **100% Pure Audio DSP Command Builders (`lib/workbench/dsp_builders.dart`)**:
+   - Extracted 100% of pure audio filter generators from `lib/tabs/tab_workbench.dart` into `lib/workbench/dsp_builders.dart`, adding 12 new pure builder functions: `buildMonoFoldFilter`, `buildInsertSilenceFilter`, `buildDeclickFilter`, `buildDeEsserFilter`, `buildLimiterFilter`, `buildMcompandFilter`, `buildHighpassFilter`, `buildTrimSilenceFilter`, `buildChorusFilter`, `buildCompandFilter`, `buildDenoiseFilter`, and `buildCompressorFilter`.
+2. **Centralized Media Path & Time Parameter Validation**:
+   - Added `validateMediaPath` enforcing non-empty and rejecting control characters (`\u0000`, `\n`, `\r`).
+   - Added `validateTimeHms` enforcing strict `HH:MM:SS` format.
+   - Enforced strict numerical bounds across limiters, compressors, de-essers, gains, pans, and filter parameters.
+3. **Hardened Sequential Stream & Metric Parsers**:
+   - Replaced naive index-based silence parsing with sequential state-machine parsing handling unclosed `silence_start` at EOF (`end: null`), consecutive starts, and boundary edge cases.
+   - Hardened `parseLoudnormMeasurements` against missing `input_i` and malformed JSON payloads.
+4. **Automated DSP Unit Test Suite (`test/workbench_dsp_test.dart`)**:
+   - Added synthetic 44-byte RIFF/WAVE header + PCM16 sample generator (`createSyntheticWavBytes`) and verified format compatibility.
+   - Added realistic integration probe fixtures for `volumedetect` (mean/max volume, headroom, sample count) and `ebur128` (Integrated LUFS, True Peak, ReplayGain delta).
+   - Added comprehensive parameter validation and unclosed silence boundary test suites, expanding the test suite from 81 to 99 passing unit tests.
+5. **TabWorkbench Refactored**:
+   - Replaced all 13 inline filter cases in `_filtersForOperation` with the new builder functions; 100% of audio and video DSP operations in `tab_workbench.dart` now route through pure, standalone builders. Pruned 5 redundant private helper methods.
 
 ## What shipped — Phase 39 Audit Code-Fix Integrations (2026-11-12)
 

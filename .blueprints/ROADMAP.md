@@ -359,8 +359,9 @@
 - [x] **39.7 Dead Code Pruning & Documentation Alignment (PR #26, #28, #37)** — Pruned unreferenced Sentinel naming wrappers and refreshed architectural documentation.
 - [x] **39.8 Architecture Decomposition Blueprint Authored** — Authored `.blueprints/ARCHITECTURE_DECOMPOSITION.md` defining 3-stage modularization plans for the 6 oversized modules (~611 KB).
 - [x] **39.9 Remote Audit Register & Work Orders Landed (PR #31, #33, #34, #35, #36, #38)** — Committed canonical audit register (`docs/remote-audit-2026-11-12.md`) and five dedicated work-order specifications into `docs/audit-workorders/`.
-- [x] **39.10 Stage A: Workbench Pure DSP Extraction** — Extracted pure audio filter builders to `lib/workbench/dsp_builders.dart` and pure video builders to `lib/workbench/video_dsp_builders.dart`; added 24 unit tests in `test/workbench_dsp_test.dart` (test suite expanded to 81 tests); refactored `lib/tabs/tab_workbench.dart`.
-- Gate: `flutter analyze --no-pub` -> `No issues found!`; `flutter test` -> `All 81 tests passed!`; Python doctor tests -> `2/2 passed`.
+- [x] **39.10 Stage A: Workbench Pure DSP Extraction & Hardening** — Extracted 100% of pure audio filter builders to `lib/workbench/dsp_builders.dart` and pure video builders to `lib/workbench/video_dsp_builders.dart`; added centralized argument validation, hardened sequential stream parsers, synthetic RIFF/WAVE PCM16 fixtures, and realistic volume/loudness probe tests in `test/workbench_dsp_test.dart` (test suite expanded to 99 tests); refactored `lib/tabs/tab_workbench.dart`.
+- [x] **39.11 Stage B: Workbench Models & Batch Queue Decoupling** — Extracted data structures and enums (`MixTrack`, `DspOperation`, `BatchJob`, `BatchJobStatus`, `MasteringTarget`, `AudioInspectResult`) into `lib/workbench/workbench_models.dart`; created serialized batch execution runner with pause/cancellation and error resilience in `lib/workbench/workbench_queue.dart`; added comprehensive unit test suite in `test/workbench_queue_test.dart`; wired `lib/tabs/tab_workbench.dart` to consume the decoupled models and queue.
+- Gate: `flutter analyze --no-pub` -> `No issues found!`; `flutter test` -> all tests passed; Python doctor tests -> `2/2 passed`.
 
 ## Phase S0–S4 — SOVEREIGN SDK EDITION [-] PARKED 2026-10-01 — spec only, do not start
 

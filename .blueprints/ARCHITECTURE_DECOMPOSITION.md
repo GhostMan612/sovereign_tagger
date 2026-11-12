@@ -55,10 +55,10 @@ During the Phase 38–39 architectural audit, six modules were identified as dis
 
 - **Target Directory:** `lib/workbench/`
 - **Component Breakdown:**
-  1. `lib/workbench/dsp_builders.dart` `[COMPLETED - Stage A]`: Pure FFmpeg audio filter generators (Loudnorm, Equalizer, Resampler, Pitch/Tempo, Reverb, Compressor, Limiter, Fades, Mono-fold). Tested in `test/workbench_dsp_test.dart`.
-  2. `lib/workbench/video_dsp_builders.dart` `[COMPLETED - Stage A]`: Pure FFmpeg video filter generators (Crop, Scale, Rotate, Mute, Mux, Trim). Tested in `test/workbench_dsp_test.dart`.
-  3. `lib/workbench/workbench_models.dart`: Data structures (`DspOperation`, `BatchJob`, `MasteringTarget`, `AudioInspectResult`).
-  4. `lib/workbench/workbench_queue.dart`: Serialized batch execution runner, pause/cancel state machine, and progress notifications.
+  1. `lib/workbench/dsp_builders.dart` `[COMPLETED - Stage A Finalized]`: 100% of pure FFmpeg audio filter generators (Loudnorm, Equalizers, Resampler, Pitch/Tempo, Reverb, Compressor, Limiter, Fades, Mono-fold, Declick, De-esser, Mcompand, Highpass, Trim Silence, Chorus, Compand, Denoise, Tones, Multi-track Mix, Joins, Probes). Fully centralized parameter & path validation; hardened sequential silence and loudness parsers. Tested in `test/workbench_dsp_test.dart`.
+  2. `lib/workbench/video_dsp_builders.dart` `[COMPLETED - Stage A Finalized]`: 100% of pure FFmpeg video filter generators (Crop, Scale, Rotate, Mute, Mux, Trim, Codecs, Fast Clip). Validated paths and timecodes. Tested in `test/workbench_dsp_test.dart`.
+  3. `lib/workbench/workbench_models.dart` `[COMPLETED - Stage B Finalized]`: Decoupled data structures (`MixTrack`, `DspOperation`, `BatchJob`, `BatchJobStatus`, `MasteringTarget`, `AudioInspectResult`). Centralized operation categorizations (audio, video, chainable, batchable, forensic), parameter validation, and container-preserving output extension resolver.
+  4. `lib/workbench/workbench_queue.dart` `[COMPLETED - Stage B Finalized]`: Serialized batch execution runner, pause/cancel state machine, progress reporting, stream validation, and per-job failure resilience. Tested in `test/workbench_queue_test.dart`.
   5. `lib/workbench/components/waveform_editor.dart`: Waveform rendering, region drag handles, and selection calculations.
   6. `lib/tabs/tab_workbench.dart` (~35 KB): Clean Flutter UI coordinator consuming the queue and models.
 
