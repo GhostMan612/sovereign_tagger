@@ -21,7 +21,7 @@ Session-end law: update rows 2–4 every session (+ row 5 when a new gotcha is l
 ## Where we are
 
 **Date:** 2026-11-12
-**Phase:** Phase 38.3: Defensive Hardening & Native Test Verification COMPLETE & MERGED (PR #23 merged into `main` at `5ac8ef0`; dead feature branch pruned). Live destination hash verification before COMMITTED_PRE_CLEANUP, discard failure status validation, idempotent orphan meta sweep, collision-safe unique self-test files with guaranteed cleanup, test suite expanded to 49 unit tests, and native security self-test gated as an on-demand diagnostic action in Settings > Crash Recovery Vault. Canonical `main` at `5ac8ef0`.
+**Phase:** Phase 38.3: Defensive Hardening & Native Test Verification OFFICIALLY CLOSED & FROZEN at baseline `ba708fe` (PR #23 merged into `main` at `5ac8ef0`; doc checkpoint `ba708fe`; zero open PRs; CI passed across runs #43155973232 and #43156247313). Live destination hash verification before COMMITTED_PRE_CLEANUP, discard failure status validation, idempotent orphan meta sweep, collision-safe unique self-test files with guaranteed cleanup, test suite expanded to 49 unit tests, and native security self-test gated as an on-demand diagnostic action in Settings > Crash Recovery Vault. Canonical `main` frozen at `ba708fe`.
 
 ## What shipped — Phase 38.3 PR #23 Review Hardening & Revisions (2026-11-12)
 

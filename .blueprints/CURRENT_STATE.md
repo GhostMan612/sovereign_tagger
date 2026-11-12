@@ -1,5 +1,5 @@
 # CURRENT_STATE.md — Sovereign Tagger v2 (post-Phase 38.3)
-> Snapshot as of 2026-11-12 — Phases 0–38.3 + PR #1–#23 COMPLETE & MERGED on main (`5ac8ef0`; `flutter analyze --no-pub` -> `No issues found!`; `flutter test` -> 49/49 passed; Python doctor tests -> 2/2 passed; Moto G 2025 `ZT4222BMWN` + BLU View 5 `7040016025040287` hardware verification ALL PASS).
+> Snapshot as of 2026-11-12 — Phases 0–38.3 + PR #1–#23 COMPLETE & MERGED on main (frozen baseline `ba708fe`; `flutter analyze --no-pub` -> `No issues found!`; `flutter test` -> 49/49 passed; Python doctor tests -> 2/2 passed; Moto G 2025 `ZT4222BMWN` + BLU View 5 `7040016025040287` hardware verification ALL PASS; CI runs #43155973232 and #43156247313 green).
 >
 > **Phase 38.3 deltas (Defensive Hardening & PR #23 Review Revisions):**
 > - **Live Destination Hash Verification**: In `recoverPendingOverwrites()`, requires live destination stream SHA-256 computation matching `srcSha` (`currentDestSha == srcSha`) before marking a backup as `COMMITTED_PRE_CLEANUP`. Otherwise assigns `DESTINATION_HASH_UNVERIFIED` and preserves full `RESTORE` and `DISCARD` UI actions.

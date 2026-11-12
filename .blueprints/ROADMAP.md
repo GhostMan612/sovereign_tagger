@@ -340,7 +340,7 @@
 - [x] **38.2.5 Test Suite Expansion & End-of-Plan Verification** — Added comprehensive tests in `test/backup_crypto_test.dart` for iteration parsing, legacy Phase 38 envelope fallback delegation, vault reports parsing, restore execution with SHA-256 verification, and discard operations.
 - Gate: `flutter analyze --no-pub` -> `No issues found!`; `flutter test` -> `All 44 tests passed!`; Python doctor tests -> `2/2 passed`.
 
-## Phase 38.3 — Defensive Hardening & Native Test Verification [x] (PR #23 merged into main at 5ac8ef0)
+## Phase 38.3 — Defensive Hardening & Native Test Verification [x] (PR #23 merged at 5ac8ef0; baseline frozen at ba708fe)
 - [x] **38.3.1 Path Traversal Confinement** — Added `validateRecoveryFile(backupPath: String): File` in `StorageBridge.kt` enforcing canonical directory containment within `context.filesDir/sov_recovery`, rejecting path traversal with `SecurityException`, and validating filename prefixes (`sov_rec_*.bak`).
 - [x] **38.3.2 Strict Discard Atomicity & Idempotent Sweeping** — Required both backup binary and metadata file deletion (`bOk && mOk`) in `discardPendingOverwrite` to prevent partial deletion false-positives; logged partial failures and marked orphaned `.meta` files; automated orphaned `.meta` sweeping in `recoverPendingOverwrites()`.
 - [x] **38.3.3 Live Destination Hash Verification & Discard Status Surfacing** — In `recoverPendingOverwrites()`, requires fresh live stream hash readback matching `srcSha` (`currentDestSha == srcSha`) before assigning `COMMITTED_PRE_CLEANUP`. Otherwise classifies as `DESTINATION_HASH_UNVERIFIED` and preserves `RESTORE` and `DISCARD` controls. In `SettingsScreen`, verifies discard boolean and displays explicit error on incomplete discard.
