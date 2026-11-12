@@ -4,11 +4,13 @@
 // ============================================================
 
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'cloud_source.dart';
+import 'secret_store.dart';
 
 enum CloudScope { appFolder, wholeDrive }
 
@@ -38,6 +40,7 @@ class CloudSettings {
 
   static String _clientId = '';
   static String _token = '';
+  static bool _vaultUnavailable = false;
   static String _apiHost = '';
   static int _locationId = 0;
   static String _authorizeHost = authorizeHostUs;
@@ -64,26 +67,66 @@ class CloudSettings {
   static bool get dataWarned => _dataWarned;
 
   static bool get hasToken => _token.isNotEmpty;
+  static bool get vaultUnavailable => _vaultUnavailable;
 
   static Uri get authorizeUri => Uri.https(_authorizeHost, '/oauth2/authorize');
 
   static Future<void> load(SharedPreferences prefs) async {
     _prefs = prefs;
     _clientId = prefs.getString(_clientIdKey) ?? '';
-    _token = prefs.getString(_tokenKey) ?? '';
+    _token = '';
+    _vaultUnavailable = false;
     final storedHost = prefs.getString(_hostKey) ?? '';
+    final storedLocation = prefs.getInt(_locationKey) ?? 0;
+    _locationId = 0;
+    _apiHost = '';
+    final hasLegacyToken = (prefs.getString(_tokenKey) ?? '').isNotEmpty;
+    final validLegacyRegion = storedHost ==
+        (storedLocation == 1 ? CloudRegion.us.host : storedLocation == 2 ? CloudRegion.eu.host : '');
     try {
-      _apiHost = storedHost.isEmpty ? '' : CloudRegion.fromHost(storedHost).host;
-      if (_apiHost.isEmpty) _token = '';
+      if (hasLegacyToken && !validLegacyRegion) {
+        await prefs.remove(_tokenKey);
+      }
+      final encryptedRecord = hasLegacyToken && !validLegacyRegion
+          ? ''
+          : await SecretStore.read(prefs, _tokenKey);
+      if (encryptedRecord.startsWith('SOVC1:')) {
+        final data = jsonDecode(encryptedRecord.substring(6)) as Map<String, dynamic>;
+        final host = CloudRegion.fromHost(data['host']?.toString() ?? '').host;
+        final loc = (data['location'] as num?)?.toInt() ?? 0;
+        if (host != (loc == 1 ? CloudRegion.us.host : loc == 2 ? CloudRegion.eu.host : '')) {
+          throw const FormatException('Stored pCloud host/region mismatch');
+        }
+        _token = data['token']?.toString() ?? '';
+        _apiHost = host;
+        _locationId = loc;
+        if (_token.isNotEmpty) {
+          if (storedHost != host) await prefs.setString(_hostKey, host);
+          if (storedLocation != loc) await prefs.setInt(_locationKey, loc);
+        }
+      } else if (encryptedRecord.isNotEmpty) {
+        final host = CloudRegion.fromHost(storedHost).host;
+        if (host != (storedLocation == 1 ? CloudRegion.us.host : storedLocation == 2 ? CloudRegion.eu.host : '')) {
+          throw const FormatException('Legacy pCloud region mismatch');
+        }
+        _token = encryptedRecord;
+        _apiHost = host;
+        _locationId = storedLocation;
+        await SecretStore.write(prefs, _tokenKey, _credentialEnvelope(encryptedRecord, host, storedLocation));
+      }
+    } on FormatException {
+      _token = '';
+      _apiHost = '';
+      _locationId = 0;
     } on ArgumentError {
-      _apiHost = '';
-      _token = '';
-    }
-    _locationId = prefs.getInt(_locationKey) ?? 0;
-    if (_apiHost.isNotEmpty &&
-        _apiHost != (_locationId == 1 ? CloudRegion.us.host : _locationId == 2 ? CloudRegion.eu.host : '')) {
       _token = '';
       _apiHost = '';
+      _locationId = 0;
+    } on Exception {
+      _vaultUnavailable = true;
+      _token = '';
+      _apiHost = '';
+      _locationId = 0;
     }
     _authorizeHost = prefs.getString(_authHostKey) ?? authorizeHostUs;
     _rootPath = prefs.getString(_rootPathKey) ?? '/';
@@ -115,18 +158,28 @@ class CloudSettings {
     await prefs.setString(_clientIdKey, _clientId);
   }
 
+  static String _credentialEnvelope(String token, String host, int locationId) {
+    return 'SOVC1:${jsonEncode(<String, Object>{
+      'token': token,
+      'host': host,
+      'location': locationId,
+    })}';
+  }
+
   static Future<void> setToken({required String token, required String apiHost, required int locationId}) async {
     final approvedHost = CloudRegion.fromHost(apiHost).host;
     if (approvedHost != (locationId == 1 ? CloudRegion.us.host : locationId == 2 ? CloudRegion.eu.host : '')) {
       throw ArgumentError.value(locationId, 'locationId', 'pCloud API host and location ID must agree.');
     }
+    if (token.isEmpty) throw ArgumentError.value(token, 'token', 'Access token is required');
+    final prefs = await _ensurePrefs();
+    await SecretStore.write(prefs, _tokenKey, _credentialEnvelope(token, approvedHost, locationId));
+    await prefs.setString(_hostKey, approvedHost);
+    await prefs.setInt(_locationKey, locationId);
+    _vaultUnavailable = false;
     _token = token;
     _apiHost = approvedHost;
     _locationId = locationId;
-    final prefs = await _ensurePrefs();
-    await prefs.setString(_tokenKey, token);
-    await prefs.setString(_hostKey, approvedHost);
-    await prefs.setInt(_locationKey, locationId);
     _refreshNotifiers();
   }
 
@@ -173,7 +226,7 @@ class CloudSettings {
     _apiHost = '';
     _locationId = 0;
     final prefs = await _ensurePrefs();
-    await prefs.remove(_tokenKey);
+    await SecretStore.delete(prefs, _tokenKey);
     await prefs.remove(_hostKey);
     await prefs.remove(_locationKey);
     _refreshNotifiers();
