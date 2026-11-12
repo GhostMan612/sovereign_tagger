@@ -21,14 +21,34 @@ Session-end law: update rows 2–4 every session (+ row 5 when a new gotcha is l
 ## Where we are
 
 **Date:** 2026-11-11
-**Phase:** 0–38 implementation + PR #1–#22 COMPLETE & MERGED (All 22 project pull requests merged into `main`), full documentation suite (`README.md`, `LICENSE`, `LICENSES.md`, `SECURITY.md`, `CONTRIBUTING.md`), `impellerc` shader (`GLES`/`Vulkan`/`SkSL`), analyzer, test suite (33/33 tests passing), and Android ARM64 APK build gates VERIFIED; zero stubs remaining. F-Droid ready.
+**Phase:** 0–38.1 implementation + PR #1–#22 COMPLETE & MERGED (All 22 project pull requests merged into `main`), full documentation suite (`README.md`, `LICENSE`, `LICENSES.md`, `SECURITY.md`, `CONTRIBUTING.md`), `impellerc` shader (`GLES`/`Vulkan`/`SkSL`), analyzer, test suite (36/36 tests passing), and Android ARM64 APK build gates VERIFIED; zero stubs remaining. F-Droid ready.
 - `flutter analyze --no-pub` -> `No issues found!`.
-- `flutter test` -> `All 33 tests passed!`.
+- `flutter test` -> `All tests passed!`.
 - `python test/python/test_doctor.py` -> `Ran 2 tests in 0.006s OK`.
 - `impellerc` -> `shaders/backdrop.frag` & `shaders/ghost.frag` compile cleanly across GLES, Vulkan, and SkSL.
 - `flutter build apk --debug --target-platform android-arm64` -> `LiteRT 1.4.0` + `EmbeddingGemmaBridge.kt` + `SentencePieceTokenizer.kt` + `shaders/ghost.frag` compile cleanly.
-- **Motorola Moto G (2025) Hardware Smoke Test (Android 16 / API 36, Device ID `ZT4222BMWN`): ALL PASS** — `FlutterTextureView` (`RenderMode.texture`) eliminated BLASTBufferQueue frame saturation; native hardware Equalizer/LoudnessEnhancer attached cleanly without NPE (`audioSessionId=18945`, 5 bands); live 256-D neural self-test verified via LiteRT; GhostBot decoupled `ValueNotifier` chat history verified without red `ErrorWidget` boxes; Sentinel Slice 1 live run verified with Media3 / AudioTrack 48kHz stereo decode (`c2.android.mp3.decoder`), ID3 tag handling (`00 - Metallica · Until It Sleeps.mp3`), and multi-track playback queue restored cleanly (`ProcessingState.ready`).
+- **Hardware Smoke & Runtime Verification: ALL PASS**
+  - **Motorola Moto G 2025 (`ZT4222BMWN`, Android 16 / API 36)**: Verified Impeller rendering backend, native Equalizer/LoudnessEnhancer attachment (`audioSessionId=18945`, 5 bands), live 256-D LiteRT neural self-test, Media3 AudioTrack decode, and ID3 tag handling.
+  - **BLU View 5 / B160V (`7040016025040287`, Android 14 / API 34, ARM64)**: Verified streamed APK installation (`Success`), clean activity boot (`PID 19064`), Impeller OpenGLES engine init, and crash recovery scanner.
 **Branch:** `main` is the single canonical branch. All 22 PR branches merged and pruned (0 open PRs, 0 dead branches).
+
+## What shipped — Phase 38.1: Security & Data Integrity Corrections (2026-11-11)
+
+1. **Elimination of Static Master Secret & Operator Passphrase / Keystore Cryptography (P0 Fixed)**:
+   - Completely eradicated static key string `SovereignVault::KernelMasterKey::v2` from `StorageBridge.kt`.
+   - Portable backup exports derive AES-256 keys via PBKDF2WithHmacSHA256 (10,000 iterations, 16-byte random salt, 12-byte IV, 128-bit authentication tag) yielding `SOV2:P:` envelopes with an operator-prompted passphrase.
+   - Device-local exports lock to Android hardware via `AndroidKeyStore` (`SovereignLocalVaultKey`) yielding `SOV2:K:` envelopes.
+2. **Rejection of Silent Fallback & Strict Tag Enforcement (P0 Fixed)**:
+   - Eliminated silent XOR fallback on catch blocks in `StorageBridge.kt` and `StorageClient.dart`. Failed encryption throws `StateError` immediately.
+   - Decryption of `SOV2:` envelopes bubbles `AEADBadTagException` / authentication errors and never falls back to XOR. Legacy XOR `0x53` is strictly isolated to backwards-compatible migration of legacy payloads that do not start with `SOV2:`.
+3. **Fail-Safe Media Overwrite, Verified Byte Restoration & Crash Recovery Vault (P0 Fixed)**:
+   - Enforced fail-fast pre-overwrite backup in `StorageBridge.overwriteMedia`: if staging to `.sov_recovery/sov_rec_*.bak` fails or returns 0 bytes, write-back aborts immediately before destination streams open.
+   - Destination streams open with `"rwt"` (with `"wt"` fallback).
+   - On write failure or short write, restoration is attempted and strictly verified by byte length. If restoration cannot be verified, backup files are retained permanently in the recovery vault and never deleted in `finally`.
+   - Added `StorageBridge.recoverPendingOverwrites()` called during `_bootSequence` in `main.dart` to discover and report any previous crash remnants.
+4. **Photo Orientation Geometry & Cryptographic Tests**:
+   - Added explicit regression test suites in `test/photo_geometry_test.dart` for Orientations 5 (`transpose=0`) and 7 (`transpose=3`).
+   - Expanded `test/backup_crypto_test.dart` with passphrase forwarding, `SOV2` envelope enforcement, error bubbling, and authentication tag rejection.
 
 ## What shipped — Phase 38: Integration Hardening & Runtime Verification (2026-11-11)
 

@@ -52,6 +52,28 @@ void main() {
       expect(g.residualFlipV, isTrue);
       expect(g.exifCorrectionFilters, ['vflip']);
     });
+
+    test('Orientation 5 transposes and flips vertically', () {
+      final g = PhotoEditGeometry.fromPhoto(width: 1920, height: 1080, orientation: 5, previewWidth: 0, previewHeight: 0);
+      expect(g.swapsDimensions, isTrue);
+      expect(g.correctedWidth, 1080);
+      expect(g.correctedHeight, 1920);
+      expect(g.residualQuarterTurns, 3);
+      expect(g.residualFlipH, isFalse);
+      expect(g.residualFlipV, isTrue);
+      expect(g.exifCorrectionFilters, ['transpose=0']);
+    });
+
+    test('Orientation 7 transposes 90 deg CW and flips vertically', () {
+      final g = PhotoEditGeometry.fromPhoto(width: 1920, height: 1080, orientation: 7, previewWidth: 0, previewHeight: 0);
+      expect(g.swapsDimensions, isTrue);
+      expect(g.correctedWidth, 1080);
+      expect(g.correctedHeight, 1920);
+      expect(g.residualQuarterTurns, 1);
+      expect(g.residualFlipH, isFalse);
+      expect(g.residualFlipV, isTrue);
+      expect(g.exifCorrectionFilters, ['transpose=3']);
+    });
   });
 
   group('Photo Crop Calculations', () {

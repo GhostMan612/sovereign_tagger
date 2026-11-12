@@ -221,12 +221,80 @@ class _SettingsScreenState extends State<SettingsScreen> {
     });
   }
 
-  Future<String> _encrypt(String data) => StorageClient.encryptConfig(data);
+  Future<String?> _promptPassphrase({
+    required String title,
+    required String description,
+    required String confirmText,
+    bool allowEmpty = true,
+  }) async {
+    final ctrl = TextEditingController();
+    var obscure = true;
+    return showDialog<String>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDlgState) => AlertDialog(
+          backgroundColor: Colors.black,
+          shape: RoundedRectangleBorder(
+            side: BorderSide(color: SovereignState.accentColor.value),
+            borderRadius: BorderRadius.zero,
+          ),
+          title: Text(title, style: TextStyle(fontFamily: 'ShareTechMono', fontSize: 13, color: SovereignState.accentColor.value)),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(description, style: const TextStyle(fontFamily: 'ShareTechMono', fontSize: 11, color: Colors.white70)),
+              const SizedBox(height: 12),
+              TextField(
+                controller: ctrl,
+                obscureText: obscure,
+                style: const TextStyle(fontFamily: 'ShareTechMono', fontSize: 13, color: Colors.white),
+                decoration: InputDecoration(
+                  hintText: allowEmpty ? 'OPTIONAL PASSPHRASE' : 'PASSPHRASE REQUIRED',
+                  hintStyle: const TextStyle(fontFamily: 'ShareTechMono', fontSize: 11, color: Colors.white24),
+                  suffixIcon: IconButton(
+                    icon: Icon(obscure ? Icons.visibility : Icons.visibility_off, color: Colors.white54, size: 18),
+                    onPressed: () => setDlgState(() => obscure = !obscure),
+                  ),
+                  enabledBorder: const UnderlineInputBorder(borderSide: BorderSide(color: Colors.white24)),
+                  focusedBorder: UnderlineInputBorder(borderSide: BorderSide(color: SovereignState.accentColor.value)),
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(null),
+              child: const Text('CANCEL', style: TextStyle(fontFamily: 'ShareTechMono', color: Colors.white38)),
+            ),
+            TextButton(
+              onPressed: () {
+                final txt = ctrl.text.trim();
+                if (!allowEmpty && txt.isEmpty) return;
+                Navigator.of(ctx).pop(txt);
+              },
+              child: Text(confirmText, style: TextStyle(fontFamily: 'ShareTechMono', color: SovereignState.accentColor.value)),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 
-  Future<String> _decrypt(String data) => StorageClient.decryptConfig(data);
+  Future<String> _encrypt(String data, {String? passphrase}) => StorageClient.encryptConfig(data, passphrase: passphrase);
+
+  Future<String> _decrypt(String data, {String? passphrase}) => StorageClient.decryptConfig(data, passphrase: passphrase);
 
   Future<void> _exportConfig() async {
     TapFeedback.machineTap();
+    final passphrase = await _promptPassphrase(
+      title: 'EXPORT CONFIG ENCRYPTION',
+      description: 'ENTER A PASSPHRASE FOR PORTABLE AES-256-GCM ENCRYPTION, OR LEAVE EMPTY TO LOCK TO THIS DEVICE VIA ANDROID KEYSTORE.',
+      confirmText: 'EXPORT',
+      allowEmpty: true,
+    );
+    if (passphrase == null) return;
     final config = {
       "genius_key": _geniusKeyCtrl.text.trim(),
       "acr_host": _acrHostCtrl.text.trim(),
@@ -234,13 +302,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
       "acr_secret": _acrSecretCtrl.text.trim(),
       "hf_token": _hfTokenCtrl.text.trim(),
     };
-    final encryptedData = await _encrypt(jsonEncode(config));
-    
     try {
+      final encryptedData = await _encrypt(jsonEncode(config), passphrase: passphrase);
       final success = await const MethodChannel('com.sovereign.tagger/storage').invokeMethod('exportConfig', {'data': encryptedData});
       if (!mounted) return;
       if (success == true) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('> CONFIG EXPORTED (AES-256-GCM ENCRYPTED).', style: TextStyle(fontFamily: 'ShareTechMono')), backgroundColor: Colors.black, shape: RoundedRectangleBorder(side: BorderSide(color: Colors.cyanAccent))));
+        final mode = passphrase.isNotEmpty ? 'PORTABLE PASSPHRASE' : 'ANDROID KEYSTORE';
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('> CONFIG EXPORTED (AES-256-GCM: $mode).', style: const TextStyle(fontFamily: 'ShareTechMono')), backgroundColor: Colors.black, shape: const RoundedRectangleBorder(side: BorderSide(color: Colors.cyanAccent))));
       } else {
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('> ERR: FAILED TO EXPORT CONFIG.', style: TextStyle(fontFamily: 'ShareTechMono')), backgroundColor: Colors.black, shape: RoundedRectangleBorder(side: BorderSide(color: Colors.redAccent))));
       }
@@ -256,13 +324,22 @@ class _SettingsScreenState extends State<SettingsScreen> {
     if (picked != null && picked.path != null) {
       try {
         final file = File(picked.path!);
-        final encryptedData = await file.readAsString();
-        final decrypted = await _decrypt(encryptedData);
+        final encryptedData = (await file.readAsString()).trim();
+        String? passphrase;
+        if (encryptedData.startsWith('SOV2:P:') || (encryptedData.startsWith('SOV2:') && !encryptedData.startsWith('SOV2:K:'))) {
+          if (!mounted) return;
+          passphrase = await _promptPassphrase(
+            title: 'AUTHENTICATION REQUIRED',
+            description: 'ENTER THE PASSPHRASE USED TO ENCRYPT THIS CONFIGURATION BINARY.',
+            confirmText: 'DECRYPT',
+            allowEmpty: false,
+          );
+          if (passphrase == null) return;
+        }
+        final decrypted = await _decrypt(encryptedData, passphrase: passphrase);
         final config = jsonDecode(decrypted);
-        
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: const Text('> CONFIG IMPORTED. INITIATE SAVE PROTOCOL.', style: TextStyle(fontFamily: 'ShareTechMono')), backgroundColor: Colors.black, shape: RoundedRectangleBorder(side: BorderSide(color: SovereignState.accentColor.value))));
-        
         setState(() {
           _geniusKeyCtrl.text = config["genius_key"] ?? "";
           _acrHostCtrl.text = config["acr_host"] ?? "";
@@ -272,7 +349,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         });
       } catch (e) {
         if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('> ERR: INVALID OR CORRUPTED CONFIG BINARY.', style: TextStyle(fontFamily: 'ShareTechMono')), backgroundColor: Colors.black, shape: RoundedRectangleBorder(side: BorderSide(color: Colors.redAccent))));
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('> ERR: IMPORT FAILED: $e', style: const TextStyle(fontFamily: 'ShareTechMono')), backgroundColor: Colors.black, shape: const RoundedRectangleBorder(side: BorderSide(color: Colors.redAccent))));
       }
     }
   }
@@ -476,14 +553,24 @@ class _SettingsScreenState extends State<SettingsScreen> {
         backup['playlists']['persist_queue'] = queue;
       }
       
-      final encryptedData = await _encrypt(jsonEncode(backup));
-      
-
+      final passphrase = await _promptPassphrase(
+        title: 'FULL VAULT BACKUP',
+        description: 'ENTER A PASSPHRASE FOR PORTABLE AES-256-GCM ENCRYPTION, OR LEAVE EMPTY TO LOCK TO THIS DEVICE VIA ANDROID KEYSTORE.',
+        confirmText: 'BACKUP',
+        allowEmpty: true,
+      );
+      if (passphrase == null) {
+        if (!mounted) return;
+        setState(() => _backupStatus = "Backup canceled.");
+        return;
+      }
+      final encryptedData = await _encrypt(jsonEncode(backup), passphrase: passphrase);
       final success = await const MethodChannel('com.sovereign.tagger/storage').invokeMethod('exportConfig', {'data': encryptedData});
       
       if (!mounted) return;
       if (success == true) {
-        setState(() => _backupStatus = "BACKUP COMPLETE ✓\nAES-256-GCM authenticated binary written to Downloads.");
+        final mode = passphrase.isNotEmpty ? 'PORTABLE PASSPHRASE' : 'ANDROID KEYSTORE';
+        setState(() => _backupStatus = "BACKUP COMPLETE ✓\nAES-256-GCM ($mode) written to Downloads.");
       } else {
         setState(() => _backupStatus = "ERR: Backup write failed.");
       }
@@ -507,8 +594,23 @@ class _SettingsScreenState extends State<SettingsScreen> {
       }
       
       final file = File(picked.path!);
-      final encryptedData = await file.readAsString();
-      final decrypted = await _decrypt(encryptedData);
+      final encryptedData = (await file.readAsString()).trim();
+      String? passphrase;
+      if (encryptedData.startsWith('SOV2:P:') || (encryptedData.startsWith('SOV2:') && !encryptedData.startsWith('SOV2:K:'))) {
+        if (!mounted) return;
+        passphrase = await _promptPassphrase(
+          title: 'AUTHENTICATION REQUIRED',
+          description: 'ENTER THE PASSPHRASE USED TO ENCRYPT THIS FULL BACKUP BINARY.',
+          confirmText: 'RESTORE',
+          allowEmpty: false,
+        );
+        if (passphrase == null) {
+          if (!mounted) return;
+          setState(() => _backupStatus = "Restore canceled.");
+          return;
+        }
+      }
+      final decrypted = await _decrypt(encryptedData, passphrase: passphrase);
       final backup = jsonDecode(decrypted) as Map<String, dynamic>;
       
       if (backup['version'] != 1) {

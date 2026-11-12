@@ -12,6 +12,7 @@ import 'screens/main_shell.dart';
 import 'core/cloud_settings.dart';
 import 'core/feedback_settings.dart';
 import 'core/sfx.dart';
+import 'core/storage_client.dart';
 import 'widgets/cyber_backdrop.dart';
 import 'widgets/cyber_ink.dart';
 import 'widgets/cyber_page_transitions.dart';
@@ -99,6 +100,13 @@ class _SplashScreenState extends State<SplashScreen> {
     }
 
     await Future.delayed(const Duration(milliseconds: 500));
+
+    try {
+      final pending = await StorageClient.recoverPendingOverwrites();
+      if (pending.isNotEmpty) {
+        debugPrint("BOOT: Recovered ${pending.length} pending overwrite backups from crash vault");
+      }
+    } catch (_) {}
 
     if (mounted) {
       setState(() {

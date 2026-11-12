@@ -401,11 +401,16 @@ class MainActivity: AudioServiceActivity() {
                 "sdkInt" -> result.success(Build.VERSION.SDK_INT)
                 "encryptConfig" -> {
                     val data = call.argument<String>("data") ?: ""
-                    runAsync(result, "STORAGE_ERROR") { storageBridge.encryptConfig(data) }
+                    val passphrase = call.argument<String>("passphrase")
+                    runAsync(result, "STORAGE_ERROR") { storageBridge.encryptConfig(data, passphrase) }
                 }
                 "decryptConfig" -> {
                     val data = call.argument<String>("data") ?: ""
-                    runAsync(result, "STORAGE_ERROR") { storageBridge.decryptConfig(data) }
+                    val passphrase = call.argument<String>("passphrase")
+                    runAsync(result, "STORAGE_ERROR") { storageBridge.decryptConfig(data, passphrase) }
+                }
+                "recoverPendingOverwrites" -> {
+                    runAsync(result, "STORAGE_ERROR") { storageBridge.recoverPendingOverwrites() }
                 }
                 "exportConfig" -> {
                     val data = call.argument<String>("data") ?: ""

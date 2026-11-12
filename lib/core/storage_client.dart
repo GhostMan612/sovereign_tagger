@@ -231,27 +231,44 @@ class StorageClient {
     return target;
   }
 
-  static Future<String> encryptConfig(String plainText) async {
-    try {
-      final res = await _channel.invokeMethod<String>('encryptConfig', {'data': plainText});
-      if (res != null && res.isNotEmpty) return res;
-    } catch (_) {}
-    final bytes = utf8.encode(plainText);
-    final xorBytes = bytes.map((b) => b ^ 0x53).toList();
-    return base64Encode(xorBytes);
+  static Future<String> encryptConfig(String plainText, {String? passphrase}) async {
+    final res = await _channel.invokeMethod<String>('encryptConfig', {
+      'data': plainText,
+      if (passphrase != null && passphrase.isNotEmpty) 'passphrase': passphrase,
+    });
+    if (res == null || res.isEmpty) {
+      throw StateError('Encryption returned empty payload');
+    }
+    return res;
   }
 
-  static Future<String> decryptConfig(String cipherText) async {
+  static Future<String> decryptConfig(String cipherText, {String? passphrase}) async {
+    final trimmed = cipherText.trim();
+    if (trimmed.startsWith('SOV2:')) {
+      final res = await _channel.invokeMethod<String>('decryptConfig', {
+        'data': cipherText,
+        if (passphrase != null && passphrase.isNotEmpty) 'passphrase': passphrase,
+      });
+      if (res == null || res.isEmpty) {
+        throw StateError('Decryption failed or returned empty payload');
+      }
+      return res;
+    }
     try {
-      final res = await _channel.invokeMethod<String>('decryptConfig', {'data': cipherText});
-      if (res != null && res.isNotEmpty) return res;
-    } catch (_) {}
-    try {
-      final xorBytes = base64Decode(cipherText.trim());
+      final xorBytes = base64Decode(trimmed);
       final bytes = xorBytes.map((b) => b ^ 0x53).toList();
-      return utf8.decode(bytes);
+      final decoded = utf8.decode(bytes);
+      if (decoded.startsWith('{')) return decoded;
+    } catch (_) {}
+    throw ArgumentError('Unrecognized backup format or corrupted payload');
+  }
+
+  static Future<List<Map<String, String>>> recoverPendingOverwrites() async {
+    try {
+      final res = await _channel.invokeListMethod<Map>('recoverPendingOverwrites');
+      return (res ?? const []).map((m) => m.cast<String, String>()).toList();
     } catch (_) {
-      return '';
+      return const [];
     }
   }
 

@@ -1,5 +1,12 @@
-# CURRENT_STATE.md — Sovereign Tagger v2 (post-Phase 38)
-> Snapshot as of 2026-11-11 — Phases 0–38 + PR #1–#22 COMPLETE (`flutter analyze --no-pub` -> `No issues found!`; `flutter test` -> 33/33 passed; Python doctor tests -> 2/2 passed; Moto G 2025 hardware smoke test ALL PASS).
+# CURRENT_STATE.md — Sovereign Tagger v2 (post-Phase 38.1)
+> Snapshot as of 2026-11-11 — Phases 0–38.1 + PR #1–#22 COMPLETE (`flutter analyze --no-pub` -> `No issues found!`; `flutter test` -> 39/39 passed; Python doctor tests -> 2/2 passed; Moto G 2025 `ZT4222BMWN` + BLU View 5 `7040016025040287` hardware verification ALL PASS).
+>
+> **Phase 38.1 deltas (Security & Data Integrity Hardening Corrections):**
+> - **Operator Passphrase & Android Keystore Cryptography (P0 Fixed)**: Eliminated hardcoded master key in `StorageBridge.kt`. Passphrase-based exports derive AES-256 keys via PBKDF2WithHmacSHA256 (10,000 iterations, 16-byte random salt, 12-byte IV, 128-bit GCM tag) yielding portable `SOV2:P:` envelopes. Device-local exports lock to the device via hardware-backed `AndroidKeyStore` (`SovereignLocalVaultKey`) yielding `SOV2:K:` envelopes.
+> - **Elimination of Silent XOR Fallback (P0 Fixed)**: Encryption errors throw explicitly and never fall back to XOR. Decryption of `SOV2:` envelopes strictly rejects invalid tags / wrong passphrases (`AEADBadTagException`) without fallback to XOR. Legacy XOR `0x53` is only parsed for migration when the input does not start with `SOV2:`.
+> - **Failure-Safe Media Overwrite & Recovery Vault (P0 Fixed)**: Enforced fail-fast pre-overwrite backup in `StorageBridge.overwriteMedia`: if staging to `.sov_recovery/sov_rec_*.bak` fails, the operation immediately aborts without touching original media. MediaStore output streams open with `"rwt"` (with `"wt"` fallback). On write failure or short write, restoration is attempted and verified by byte length; if restoration cannot be verified, backup files are permanently preserved in the recovery vault and never deleted in `finally`. Added `recoverPendingOverwrites()` startup recovery scan.
+> - **Photo Geometry Regression Coverage**: Added explicit test suites in `photo_geometry_test.dart` for Orientations 5 (`transpose=0`) and 7 (`transpose=3`).
+> - **Hardware & Documentation Precision**: Documented tested devices accurately: Moto G 2025 (`ZT4222BMWN`, Android 16 / API 36) and BLU View 5 (`7040016025040287` / B160V, Android 14 / API 34). Corrected `"rwt"` / `"wt"` descriptor documentation.
 >
 > **Phase 38 deltas (Integration Hardening & Runtime Verification):**
 > - **Authenticated Backup Encryption (SOV2)**: Replaced insecure obfuscated XOR `0x53` backups with authenticated AES-256-GCM encryption in `StorageBridge.kt` and `StorageClient.dart` (PBKDF2-HMAC-SHA256 10k iterations, 16-byte random salt, 12-byte random IV, 128-bit auth tag) while providing transparent backward-compatible fallback for legacy XOR backups.

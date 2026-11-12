@@ -324,6 +324,14 @@
 - [x] **38.4 Real-Device Hardware Verification** — Installed and validated on Motorola Moto G 2025 (`ZT4222BMWN` on Android 16 / API 36).
 - Gate: `flutter analyze --no-pub` -> `No issues found!`; `flutter test` -> `All 33 tests passed!`; Python doctor tests -> `2/2 passed`.
 
+## Phase 38.1 — Security and Data Integrity Corrections [x]
+- [x] **38.1.1 Elimination of Hardcoded Secret & Dual-Mode AES-256-GCM** — Completely removed static key material in `StorageBridge.kt`. Portable exports derive AES-256 keys from an operator-supplied passphrase via PBKDF2-HMAC-SHA256 (10,000 iterations, 16-byte random salt, 12-byte IV, 128-bit tag) producing `SOV2:P:` envelopes. Device-local exports lock to the device hardware via `AndroidKeyStore` (`SovereignLocalVaultKey`) producing `SOV2:K:` envelopes.
+- [x] **38.1.2 Rejection of Silent Fallback & Strict Tag Enforcement** — Replaced silent XOR catch blocks with strict exception bubbling. Decryption of `SOV2:` payloads rejects invalid authentication tags (`AEADBadTagException`) and incorrect passphrases without XOR fallback. Legacy XOR `0x53` is strictly isolated to backwards-compatible migration of non-SOV2 payloads.
+- [x] **38.1.3 Fail-Safe Media Overwrite, Verified Byte Restoration & Crash Recovery** — Enforced mandatory pre-overwrite staging in `StorageBridge.overwriteMedia`: if staging to `.sov_recovery/sov_rec_*.bak` fails, replacement aborts immediately before destination streams open. MediaStore destination streams open with `"rwt"` (with `"wt"` fallback). On write failure or short write, restoration is attempted and verified by byte count; if unverified, backup files are retained permanently in the recovery vault and never deleted. Added `recoverPendingOverwrites()` startup recovery scan.
+- [x] **38.1.4 Photo Orientation Geometry Coverage & Cryptographic Tests** — Added comprehensive tests in `test/photo_geometry_test.dart` for Orientations 5 (`transpose=0`) and 7 (`transpose=3`). Expanded `test/backup_crypto_test.dart` with passphrase forwarding, `SOV2` envelope enforcement, error bubbling, and tag rejection.
+- [x] **38.1.5 Device Identity & Blueprint Accuracy** — Disclosed both verified hardware devices in records: Motorola Moto G 2025 (`ZT4222BMWN`, Android 16 / API 36) and BLU View 5 (`7040016025040287` / B160V, Android 14 / API 34). Corrected `"rwt"` documentation.
+- Gate: `flutter analyze --no-pub` -> `No issues found!`; `flutter test` -> all tests passed; Python doctor tests -> `2/2 passed`.
+
 ## Phase S0–S4 — SOVEREIGN SDK EDITION [-] PARKED 2026-10-01 — spec only, do not start
 
 > **OPERATOR DECISION 2026-10-01: PARKED.** The operator needs to research the
