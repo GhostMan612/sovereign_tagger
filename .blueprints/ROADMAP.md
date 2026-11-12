@@ -342,12 +342,12 @@
 
 ## Phase 38.3 — Defensive Hardening & Native Test Verification [x]
 - [x] **38.3.1 Path Traversal Confinement** — Added `validateRecoveryFile(backupPath: String): File` in `StorageBridge.kt` enforcing canonical directory containment within `context.filesDir/sov_recovery`, rejecting path traversal with `SecurityException`, and validating filename prefixes (`sov_rec_*.bak`).
-- [x] **38.3.2 Strict Discard Atomicity** — Required both backup binary and metadata file deletion (`bOk && mOk`) in `discardPendingOverwrite` to prevent partial deletion false-positives.
-- [x] **38.3.3 Interrupted Write Disambiguation** — In `overwriteMedia`, commits `STATUS=COMMITTED\nSRC_SHA=$srcSha\nDEST_SHA=$destSha\n` upon hash validation prior to cleanup. In `recoverPendingOverwrites()`, resolves status to `COMMITTED_PRE_CLEANUP` when destination matches `srcSha` or status is `COMMITTED`, surfacing `[PURGE (LANDED)]` in `SettingsScreen`.
+- [x] **38.3.2 Strict Discard Atomicity & Idempotent Sweeping** — Required both backup binary and metadata file deletion (`bOk && mOk`) in `discardPendingOverwrite` to prevent partial deletion false-positives; logged partial failures and marked orphaned `.meta` files; automated orphaned `.meta` sweeping in `recoverPendingOverwrites()`.
+- [x] **38.3.3 Live Destination Hash Verification & Discard Status Surfacing** — In `recoverPendingOverwrites()`, requires fresh live stream hash readback matching `srcSha` (`currentDestSha == srcSha`) before assigning `COMMITTED_PRE_CLEANUP`. Otherwise classifies as `DESTINATION_HASH_UNVERIFIED` and preserves `RESTORE` and `DISCARD` controls. In `SettingsScreen`, verifies discard boolean and displays explicit error on incomplete discard.
 - [x] **38.3.4 Bounded PBKDF2 Iterations** — Enforced native boundary `1,000 <= iterations <= 2,000,000` in `decryptConfig`, throwing `IllegalArgumentException` on out-of-bounds or malformed rounds.
-- [x] **38.3.5 Native Security Self-Test & Expanded Test Coverage** — Implemented `StorageBridge.runNativeSecuritySelfTest()` verifying envelope format, roundtrip decryption, tamper rejection, iteration bounds, legacy Phase 38 fallback, traversal rejection, and atomic discard. Expanded `test/backup_crypto_test.dart` to 47 unit tests.
+- [x] **38.3.5 Collision-Safe Native Self-Test & Expanded Test Coverage** — Replaced fixed test files with unique timestamped/randomized filenames in `StorageBridge.runNativeSecuritySelfTest()` wrapped in guaranteed `try-finally` cleanup; verified `discard_cleanup_success` and `discard_atomic_success`. Expanded `test/backup_crypto_test.dart` to 49 unit tests.
 - [x] **38.3.6 Security Documentation Synchronized** — Updated `SECURITY.md` Section 3 with AES-256-GCM authenticated storage, KDF bounding, StrongBox/TEE Keystore mode, the migration role and plaintext caveat of `LEGACY_PHASE38_SECRET`, and the `sov_recovery` safety model.
-- Gate: `flutter analyze --no-pub` -> `No issues found!`; `flutter test` -> `All 47 tests passed!`; Python doctor tests -> `2/2 passed`.
+- Gate: `flutter analyze --no-pub` -> `No issues found!`; `flutter test` -> `All 49 tests passed!`; Python doctor tests -> `2/2 passed`.
 
 ## Phase S0–S4 — SOVEREIGN SDK EDITION [-] PARKED 2026-10-01 — spec only, do not start
 

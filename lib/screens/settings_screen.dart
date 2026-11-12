@@ -772,16 +772,26 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
     if (confirm != true) return;
     try {
-      await StorageClient.discardPendingOverwrite(backupPath);
+      final ok = await StorageClient.discardPendingOverwrite(backupPath);
       await _loadPendingRecoveries();
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('> RECOVERY BACKUP PURGED.', style: TextStyle(fontFamily: 'ShareTechMono')),
-          backgroundColor: Colors.black,
-          shape: RoundedRectangleBorder(side: BorderSide(color: Colors.redAccent)),
-        ),
-      );
+      if (ok) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('> RECOVERY BACKUP PURGED.', style: TextStyle(fontFamily: 'ShareTechMono')),
+            backgroundColor: Colors.black,
+            shape: RoundedRectangleBorder(side: BorderSide(color: Colors.redAccent)),
+          ),
+        );
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('> ERR: DISCARD INCOMPLETE — UNABLE TO PURGE ALL VAULT FILES.', style: TextStyle(fontFamily: 'ShareTechMono')),
+            backgroundColor: Colors.black,
+            shape: RoundedRectangleBorder(side: BorderSide(color: Colors.redAccent)),
+          ),
+        );
+      }
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -896,11 +906,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
                               fontFamily: 'ShareTechMono',
                               fontSize: 10,
                               fontWeight: FontWeight.bold,
-                              color: status.contains('COMMITTED') ? Colors.greenAccent : Colors.amberAccent,
+                              color: status == 'COMMITTED_PRE_CLEANUP'
+                                  ? Colors.greenAccent
+                                  : (status == 'DESTINATION_HASH_UNVERIFIED'
+                                      ? Colors.redAccent
+                                      : Colors.amberAccent),
                             ),
                           ),
                         ),
-                        if (status.contains('COMMITTED'))
+                        if (status == 'COMMITTED_PRE_CLEANUP')
                           OutlinedButton(
                             onPressed: () => _discardPendingMedia(path),
                             style: OutlinedButton.styleFrom(

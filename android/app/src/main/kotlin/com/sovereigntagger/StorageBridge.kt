@@ -33,6 +33,7 @@ import java.security.KeyStore
 import java.security.MessageDigest
 import java.security.SecureRandom
 import java.util.Locale
+import java.util.UUID
 import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
@@ -828,15 +829,21 @@ class StorageBridge(private val context: Context) {
                 } catch (_: Throwable) {}
             }
             var resolvedStatus = status
-            if (status == "COMMITTED") {
-                resolvedStatus = "COMMITTED_PRE_CLEANUP"
-            } else if (uri.isNotEmpty() && srcSha.isNotEmpty()) {
+            var liveVerified = false
+            if (uri.isNotEmpty() && srcSha.isNotEmpty()) {
                 try {
                     val currentDestSha = computeSha256(Uri.parse(uri))
                     if (currentDestSha == srcSha) {
-                        resolvedStatus = "COMMITTED_PRE_CLEANUP"
+                        liveVerified = true
                     }
                 } catch (_: Throwable) {}
+            }
+            if (status == "COMMITTED") {
+                if (liveVerified) {
+                    resolvedStatus = "COMMITTED_PRE_CLEANUP"
+                } else {
+                    resolvedStatus = "DESTINATION_HASH_UNVERIFIED"
+                }
             }
             reports.add(mapOf(
                 "backupPath" to bak.canonicalPath,
@@ -849,6 +856,13 @@ class StorageBridge(private val context: Context) {
                 "srcSha" to srcSha,
                 "destSha" to destSha
             ))
+        }
+        val metas = recoveryDir.listFiles { _, name -> name.startsWith("sov_rec_") && name.endsWith(".meta") } ?: emptyArray()
+        for (meta in metas) {
+            val companionBak = File(recoveryDir, "${meta.nameWithoutExtension}.bak")
+            if (!companionBak.exists()) {
+                try { meta.delete() } catch (_: Throwable) {}
+            }
         }
         return reports
     }
@@ -924,6 +938,14 @@ class StorageBridge(private val context: Context) {
         val meta = File(bak.parentFile, "${bak.nameWithoutExtension}.meta")
         val bOk = if (bak.exists()) bak.delete() else true
         val mOk = if (meta.exists()) meta.delete() else true
+        if (!bOk || !mOk) {
+            Log.w(TAG, "discardPendingOverwrite: incomplete discard (bakDeleted=$bOk, metaDeleted=$mOk)")
+            if (meta.exists() && !bak.exists()) {
+                try {
+                    meta.writeText("STATUS=ORPHANED_META\nERROR=BACKUP_DELETED_META_RETAINED\n")
+                } catch (_: Throwable) {}
+            }
+        }
         return bOk && mOk
     }
 
@@ -1142,12 +1164,21 @@ class StorageBridge(private val context: Context) {
         results["path_traversal_confinement"] = pathTraversalCaught
 
         val recoveryDir = File(context.filesDir, "sov_recovery").apply { mkdirs() }
-        val testBak = File(recoveryDir, "sov_rec_999999.bak")
-        val testMeta = File(recoveryDir, "sov_rec_999999.meta")
-        testBak.writeText("TEST_BACKUP")
-        testMeta.writeText("URI=content://media/test\nSTATUS=PENDING\n")
-        val discardSuccess = discardPendingOverwrite(testBak.absolutePath)
-        results["discard_atomic_success"] = discardSuccess && !testBak.exists() && !testMeta.exists()
+        val randomSuffix = UUID.randomUUID().toString().replace("-", "").take(8)
+        val uniqueName = "sov_rec_selftest_${System.currentTimeMillis()}_$randomSuffix"
+        val testBak = File(recoveryDir, "$uniqueName.bak")
+        val testMeta = File(recoveryDir, "$uniqueName.meta")
+        try {
+            testBak.writeText("TEST_BACKUP")
+            testMeta.writeText("URI=content://media/test\nSTATUS=PENDING\n")
+            val discardSuccess = discardPendingOverwrite(testBak.absolutePath)
+            val cleaned = discardSuccess && !testBak.exists() && !testMeta.exists()
+            results["discard_cleanup_success"] = cleaned
+            results["discard_atomic_success"] = cleaned
+        } finally {
+            try { testBak.delete() } catch (_: Throwable) {}
+            try { testMeta.delete() } catch (_: Throwable) {}
+        }
 
         results["all_passed"] = results.values.all { it == true }
         return results

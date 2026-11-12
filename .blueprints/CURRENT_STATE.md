@@ -1,12 +1,14 @@
 # CURRENT_STATE.md — Sovereign Tagger v2 (post-Phase 38.3)
-> Snapshot as of 2026-11-12 — Phases 0–38.3 + PR #1–#22 COMPLETE (`flutter analyze --no-pub` -> `No issues found!`; `flutter test` -> 47/47 passed; Python doctor tests -> 2/2 passed; Moto G 2025 `ZT4222BMWN` + BLU View 5 `7040016025040287` hardware verification ALL PASS).
+> Snapshot as of 2026-11-12 — Phases 0–38.3 + PR #1–#23 COMPLETE (`flutter analyze --no-pub` -> `No issues found!`; `flutter test` -> 49/49 passed; Python doctor tests -> 2/2 passed; Moto G 2025 `ZT4222BMWN` + BLU View 5 `7040016025040287` hardware verification ALL PASS).
 >
-> **Phase 38.3 deltas (Defensive Hardening & Native Test Verification):**
+> **Phase 38.3 deltas (Defensive Hardening & PR #23 Review Revisions):**
+> - **Live Destination Hash Verification**: In `recoverPendingOverwrites()`, requires live destination stream SHA-256 computation matching `srcSha` (`currentDestSha == srcSha`) before marking a backup as `COMMITTED_PRE_CLEANUP`. Otherwise assigns `DESTINATION_HASH_UNVERIFIED` and preserves full `RESTORE` and `DISCARD` UI actions.
+> - **Discard Success Validation**: In `SettingsScreen._discardPendingMedia()`, explicitly inspects boolean return of `StorageClient.discardPendingOverwrite()` and surfaces `> ERR: DISCARD INCOMPLETE — UNABLE TO PURGE ALL VAULT FILES.` if partial deletion occurs.
+> - **Idempotent Discard Cleanup & Orphan Sweeping**: `discardPendingOverwrite()` logs partial deletion failures and flags orphaned `.meta` files; `recoverPendingOverwrites()` sweeps orphaned `.meta` files without a companion `.bak`.
+> - **Collision-Safe Unique Self-Test Files**: In `runNativeSecuritySelfTest()`, generated randomized unique filenames (`sov_rec_selftest_${System.currentTimeMillis()}_$randomSuffix.bak`) with guaranteed `try-finally` cleanup; tests `discard_cleanup_success` and `discard_atomic_success`.
 > - **Path Traversal Confinement**: Added `validateRecoveryFile(backupPath: String)` in `StorageBridge.kt` enforcing canonical directory containment within `context.filesDir/sov_recovery`, rejecting path traversal with `SecurityException`, and validating filename prefixes (`sov_rec_*.bak`).
-> - **Strict Discard Atomicity**: Required both backup binary and metadata file deletion (`bOk && mOk`) in `discardPendingOverwrite` to prevent partial deletion false-positives.
-> - **Interrupted Write Disambiguation**: In `overwriteMedia`, commits `STATUS=COMMITTED\nSRC_SHA=$srcSha\nDEST_SHA=$destSha\n` upon hash validation prior to cleanup. In `recoverPendingOverwrites()`, resolves status to `COMMITTED_PRE_CLEANUP` when destination matches `srcSha` or status is `COMMITTED`, surfacing `[PURGE (LANDED)]` in `SettingsScreen`.
 > - **Bounded PBKDF2 Iterations**: Enforced native boundary `1,000 <= iterations <= 2,000,000` in `decryptConfig`, throwing `IllegalArgumentException` on out-of-bounds or malformed rounds.
-> - **Native Security Self-Test & Expanded Test Coverage**: Implemented `StorageBridge.runNativeSecuritySelfTest()` verifying envelope format, roundtrip decryption, tamper rejection, iteration bounds, legacy Phase 38 fallback, traversal rejection, and atomic discard. Expanded `test/backup_crypto_test.dart` to 47 unit tests.
+> - **Expanded Test Suite (49 Tests)**: Added test cases in `test/backup_crypto_test.dart` for `DESTINATION_HASH_UNVERIFIED` handling, discard failure reporting, and self-test cleanup assertions.
 > - **Security Documentation Synchronized**: Updated `SECURITY.md` Section 3 with AES-256-GCM authenticated storage, KDF bounding, StrongBox/TEE Keystore mode, the migration role and plaintext caveat of `LEGACY_PHASE38_SECRET`, and the `sov_recovery` safety model.
 >
 > **Phase 38.2 deltas (Reliability & Vault Verification Closeout):**

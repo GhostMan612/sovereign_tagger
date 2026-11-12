@@ -21,7 +21,24 @@ Session-end law: update rows 2–4 every session (+ row 5 when a new gotcha is l
 ## Where we are
 
 **Date:** 2026-11-12
-**Phase:** Phase 38.3: Defensive Hardening & Native Test Verification COMPLETE. All 22 PRs merged into `main`, full documentation suite (`README.md`, `LICENSE`, `LICENSES.md`, `SECURITY.md`, `CONTRIBUTING.md`), `impellerc` shaders (`GLES`/`Vulkan`/`SkSL`), analyzer, test suite (expanded to 47 unit tests), and Android ARM64 APK build gates VERIFIED; zero stubs remaining. F-Droid ready.
+**Phase:** Phase 38.3: Defensive Hardening & Native Test Verification COMPLETE. PR #23 review revisions applied (live destination hash verification before COMMITTED_PRE_CLEANUP, discard failure status validation, idempotent orphan meta sweep, collision-safe unique self-test files with guaranteed cleanup, and test suite expanded to 49 unit tests).
+
+## What shipped — Phase 38.3 PR #23 Review Hardening & Revisions (2026-11-12)
+
+1. **Disallow Blind Trust in `STATUS=COMMITTED`**:
+   - In `StorageBridge.recoverPendingOverwrites()`, requires a fresh live stream hash readback from MediaStore matching `srcSha` (`currentDestSha == srcSha`) before classifying any backup as `COMMITTED_PRE_CLEANUP`.
+   - If the destination hash does not match or the destination URI is unreadable, it is assigned `DESTINATION_HASH_UNVERIFIED` and retains full operator `RESTORE` and `DISCARD` controls in the UI.
+2. **Discard Success & Incomplete Status Validation**:
+   - In `SettingsScreen._discardPendingMedia()`, verifies the boolean return of `StorageClient.discardPendingOverwrite()`.
+   - Surfaces explicit failure notice (`> ERR: DISCARD INCOMPLETE — UNABLE TO PURGE ALL VAULT FILES.`) if any vault artifact fails to delete, preventing false-positive purge confirmation.
+3. **Idempotent Discard Cleanup & Orphan Sweeping**:
+   - In `StorageBridge.discardPendingOverwrite()`, logs partial deletion failures and flags orphaned `.meta` files if `.bak` was deleted.
+   - In `StorageBridge.recoverPendingOverwrites()`, automatically sweeps orphaned `.meta` files whose corresponding `.bak` binary is absent, guaranteeing recovery idempotence.
+4. **Collision-Safe Native Self-Test Files**:
+   - In `StorageBridge.runNativeSecuritySelfTest()`, replaced fixed `sov_rec_999999.bak` / `.meta` with collision-safe unique filenames (`sov_rec_selftest_${System.currentTimeMillis()}_$randomSuffix.bak`) wrapped in guaranteed `try-finally` cleanup.
+   - Surfaces `discard_cleanup_success` and `discard_atomic_success` verification assertions.
+5. **Expanded Cryptographic & Recovery Test Suite**:
+   - Added unit tests in `test/backup_crypto_test.dart` for unverified destination hash handling (`DESTINATION_HASH_UNVERIFIED`), incomplete discard failure preservation, and cleanup assertions, expanding test suite to 49 unit tests.
 
 ## What shipped — Phase 38.3: Defensive Hardening & Native Test Verification (2026-11-12)
 
