@@ -21,13 +21,39 @@ Session-end law: update rows 2–4 every session (+ row 5 when a new gotcha is l
 ## Where we are
 
 **Date:** 2026-11-11
-**Phase:** 0–36 implementation + PR #1–#7 MERGED (Sentinel Slice 1, Photo Viewer, Audio Suite Core, Grabber Choices included), full documentation suite (`README.md`, `LICENSE`, `LICENSES.md`, `SECURITY.md`, `CONTRIBUTING.md`), `impellerc` shader (`GLES`/`Vulkan`/`SkSL`), analyzer, and Android ARM64 APK build gates VERIFIED; zero stubs remaining. F-Droid ready.
+**Phase:** 0–37 implementation + PR #1–#22 COMPLETE & MERGED (All 22 project pull requests merged into `main`), full documentation suite (`README.md`, `LICENSE`, `LICENSES.md`, `SECURITY.md`, `CONTRIBUTING.md`), `impellerc` shader (`GLES`/`Vulkan`/`SkSL`), analyzer, and Android ARM64 APK build gates VERIFIED; zero stubs remaining. F-Droid ready.
 - `flutter analyze --no-pub` -> `No issues found!`.
 - `flutter test` -> `All 6 tests passed!`.
+- `python test/python/test_doctor.py` -> `Ran 2 tests in 0.014s OK`.
 - `impellerc` -> `shaders/backdrop.frag` & `shaders/ghost.frag` compile cleanly across GLES, Vulkan, and SkSL.
 - `flutter build apk --debug --target-platform android-arm64` -> `LiteRT 1.4.0` + `EmbeddingGemmaBridge.kt` + `SentencePieceTokenizer.kt` + `shaders/ghost.frag` compile cleanly.
 - **Motorola Moto G (2025) Hardware Smoke Test (Android 16 / API 36, Device ID `ZT4222BMWN`): ALL PASS** — `FlutterTextureView` (`RenderMode.texture`) eliminated BLASTBufferQueue frame saturation; native hardware Equalizer/LoudnessEnhancer attached cleanly without NPE (`audioSessionId=18945`, 5 bands); live 256-D neural self-test verified via LiteRT; GhostBot decoupled `ValueNotifier` chat history verified without red `ErrorWidget` boxes; Sentinel Slice 1 live run verified with Media3 / AudioTrack 48kHz stereo decode (`c2.android.mp3.decoder`), ID3 tag handling (`00 - Metallica · Until It Sleeps.mp3`), and multi-track playback queue restored cleanly (`ProcessingState.ready`).
-**Branch:** `main` is the single canonical branch. All PR branches (`pr-1` through `pr-7`, `sentinel-slice-1`, `photo-viewer`, `audio-core`, `grabber-choices`) merged and pruned.
+**Branch:** `main` is the single canonical branch. All 22 PR branches merged and pruned (0 open PRs, 0 dead branches).
+
+## What shipped — PR #8 through #22 Full PR Suite Sweep (2026-11-11)
+
+1. **Workbench Video & Advanced Audio (PR #18, #15)**:
+   - 8 new video operations in `TabWorkbench`: frame-accurate Video Trim (Re-Encode), Rotate / Flip (`transpose` chain), Scale / Resize (1080p/720p/480p), Center Crop (16:9, 4:3, 1:1, 9:16), Mute Video (`-c:v copy`), Extract Audio (`.m4a`), Container Convert (`.mp4`/`.mkv`/`.webm`), and Video + Audio Mux with container-safe re-encoding and `-shortest`.
+   - Advanced audio: silence splitting, audio op chains, and batch processing queue with `FileType.video`/`FileType.audio` multi-file execution.
+2. **Grabber Sources, Auth & FFmpegKit Bridge (PR #14, #12)**:
+   - Source badges for 1000+ sites and secure Netscape `cookies.txt` import for age-gated/member content. Fixed `FilePicker.pickFile` API compatibility.
+   - Popen redirection of yt-dlp `ffmpeg`/`ffprobe` invocations directly through `com.arthenica.ffmpegkit.FFmpegKit.executeWithArguments` with quiet mode on json probe calls.
+3. **Cloud Streaming & Storage (PR #11)**:
+   - Native pCloud integration in player: OAuth authentication flow, multi-region API hosts (US/EU), folder tree browser, direct audio streaming, offline song/folder caching to MediaStore Music, and cloud settings card.
+4. **Photo Editor Suite (PR #10)**:
+   - `PhotoEditorScreen`: interactive crop box, 90° rotation, horizontal/vertical flip, contrast/brightness/saturation/unsharp adjustments, and non-destructive copy-only export to `Pictures/Sovereign Tagger/`. Fixed constructor key, `decodeImageFromList`, and `Matrix4.scaleByDouble`.
+5. **Sentinel Policy Migration & Workflow (PR #19, #13)**:
+   - Slice 2: full hit-list filtering, sticky status resolution, `RadioGroup` Flutter 3.32 compatibility, and 1-tap handoffs to Forge/Pipeline.
+   - Slice 2b: `TitleCleaner.buildSentinelFileName` shape engine, automatic policy formatting across Forge, Pipeline, and Grabber downloads, and the Sentinel screen `MIGRATION` view.
+6. **SDK & Pure-Dart Cascade (PR #9)**:
+   - Pure-Dart `DartSpider` (`lib/core/dart_spider.dart`) implementing the complete metadata cascade (iTunes, Deezer, MusicBrainz, LRCLIB, Genius) using `dart:io` `HttpClient` only, with parallel experimental toggle in Settings.
+7. **Python & Doctor Maintenance (PR #8, #20)**:
+   - Hard build-time pins for `yt-dlp==2026.10.26`, `mutagen==1.48.1`, and `lyricsgenius==3.15.0`.
+   - Fixed `doctor.py` release string parsing via `from yt_dlp.version import __version__` and added Python unit tests (`test/python/test_doctor.py`).
+8. **Documentation, Security & Audits (PR #16, #17, #21, #22)**:
+   - Disclosed unencrypted `.bin` export warnings across UI and documentation.
+   - Checked in Sentinel Slice 5 auto-apply spec and remote audit report.
+   - Updated `AGENTS.md` toolchain and test status.
 
 ## What shipped — PR #7 Grabber Choices: Sorted Format Picker, Audio Quality, Embed Toggles, Playlist Range, Player Client (2026-11-11)
 

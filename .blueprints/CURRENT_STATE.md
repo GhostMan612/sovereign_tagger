@@ -1,5 +1,15 @@
 # CURRENT_STATE.md — Sovereign Tagger v2 (post-Phase 36)
-> Snapshot as of 2026-11-11 — Phases 0–36 + PR #1–#7 COMPLETE (`flutter analyze --no-pub` -> `No issues found!`; `flutter test` -> 6/6 passed; Moto G 2025 hardware smoke test ALL PASS).
+> Snapshot as of 2026-11-11 — Phases 0–36 + PR #1–#22 COMPLETE (`flutter analyze --no-pub` -> `No issues found!`; `flutter test` -> 6/6 passed; Moto G 2025 hardware smoke test ALL PASS).
+>
+> **PR #8–#22 deltas (Workbench Video/Audio, pCloud, Grabber Cookies/FFmpeg, Sentinel Migration, Photo Editor, DartSpider, Python Pins):**
+> - **Workbench Video & Advanced Audio (PR #18, #15)**: 8 video operations (Trim, Rotate/Flip, Scale 1080p/720p/480p, Center Crop, Mute, Extract M4A, Convert MP4/MKV/WebM, Mux) + silence splitting, op chains, and batch processing.
+> - **pCloud Cloud Source (PR #11)**: Native OAuth, multi-region API hosts (US/EU), directory tree view, audio streaming, offline song/folder download into MediaStore Music.
+> - **Grabber Sources, Auth & FFmpegKit Bridge (PR #14, #12)**: 1000+ site badges, Netscape `cookies.txt` import, and Popen redirection through `FFmpegKit.executeWithArguments`.
+> - **Sentinel Migration & Work-The-List (PR #19, #13)**: Policy filename generation (`buildSentinelFileName`), MIGRATION chip/view, sticky status, and Forge/Pipeline handoffs.
+> - **Photo Editor (PR #10)**: Interactive crop, rotation, adjustments (brightness/contrast/saturation/unsharp), and copy-only export to Pictures.
+> - **SDK Pure-Dart Spider (PR #9)**: Complete `DartSpider` metadata cascade (iTunes, Deezer, MusicBrainz, LRCLIB, Genius) in pure Dart.
+> - **Python Pins & Doctor Test (PR #8, #20)**: Hard build-time pins (`yt-dlp==2026.10.26`, `mutagen==1.48.1`, `lyricsgenius==3.15.0`) and Python unit tests.
+> - **Security & Docs (PR #16, #17, #21, #22)**: Exported credential exposure warning and verified agent documentation.
 >
 > **PR #7 deltas (Grabber Choices — Sorted Format Picker, Audio Quality, Embed Toggles, Playlist Range, Player Client):**
 > - **Format & Quality Preferences (`lib/tabs/tab_grabber.dart`, `android/app/src/main/python/sovereign_yt/bridge.py`)**: Sorted format picker categorized by audio/video resolution and bitrate; user-selectable audio quality preference (best, 320k, 256k, 192k, 128k); custom player client selection (`android`, `web`, `ios`, `mweb`, `tv`).

@@ -300,11 +300,21 @@
 - Gate: `flutter analyze --no-pub` -> `No issues found!`; Android ARM64 APK build green; UTF-8/BOM/mojibake/zero-comment audit clean; Motorola Moto G (2025) hardware smoke test ALL PASS (2026-11-11).
 
 ## Phase 37 — Pull Request Suite Merge & Branch Hygiene [x]
-- [x] **PR #4: Sentinel Slice 1: Policy Engine, Two-Tier Scanner, Hit-List Store, Scan UI** — Full 16-issue audit, formal naming policy, two-tier TagIO scanner, hit list store, dedicated cyber Sentinel scan UI.
-- [x] **PR #5: Photo Viewer: MediaStore Grid, Full-Screen Viewer, EXIF, Share/Save** — Gallery view, pinch-to-zoom with upgraded `Matrix4` 4D translation/scaling, EXIF extraction, file export/share.
-- [x] **PR #6: Workbench Audio Suite Core: Readouts, Ducking, New DSP, Multitrack Mix, Wave-Region Delete** — Multi-track mixing engine, audio ducking processor, waveform deletion, live level/loudness readouts.
-- [x] **PR #7: Grabber Choices: Sorted Format Picker, Audio Quality, Embed Toggles, Playlist Range, Player Client** — Advanced format sorting, user audio quality preferences, embed flags, playlist slice ranges, player client override. Fixed deprecated `Switch.activeThumbColor`.
-- [x] **Repository Cleanup & Pruning** — Merged PRs #1–#7 into `main`, deleted all feature branches (`sentinel-slice-1`, `photo-viewer`, `audio-core`, `grabber-choices`), and pruned dead remote tracking references.
+- [x] **PR #1–#7: Artifact Chain, Browser WebView, GhostBrain Presets, Sentinel Slice 1, Photo Viewer, Audio Suite Core, Grabber Choices** — Merged, tested, and pruned.
+- [x] **PR #8: Python Pins** — Hard build-time pins for yt-dlp, mutagen, and lyricsgenius.
+- [x] **PR #9: SDK S0/S1 DartSpider** — Pure-Dart metadata cascade with settings toggle.
+- [x] **PR #10: Photo Editor** — Crop/rotate/flip, adjustment presets, copy-only saves to Pictures.
+- [x] **PR #11: pCloud Integration** — OAuth, browsing, audio streaming, and offline folder downloads.
+- [x] **PR #12: Chaquopy FFmpegKit Bridge** — In-process Popen redirection for yt-dlp post-processors.
+- [x] **PR #13: Sentinel Slice 2** — Hit list filtering, sticky status, and Forge/Pipeline handoffs.
+- [x] **PR #14: Grabber Sources & Cookie Login** — 1000+ site badges and Netscape cookie-file import.
+- [x] **PR #15: Workbench Advanced Audio** — Split on silence, op chains, and batch queue.
+- [x] **PR #16–#17: Sentinel Spec & Remote Audit** — Checked in Slice 5 auto-apply spec and remote audit report.
+- [x] **PR #18: Workbench Video Ops** — 8 video operations (Trim, Rotate/Flip, Scale, Crop, Mute, Extract M4A, Convert, Mux).
+- [x] **PR #19: Sentinel Slice 2b** — Policy migration shape engine (`buildSentinelFileName`) and MIGRATION view.
+- [x] **PR #20: Doctor Version Fix** — Release string parsing and Python unit tests.
+- [x] **PR #21–#22: Docs & Security** — Exported credential warnings and updated AGENTS.md.
+- [x] **Repository Cleanup & Pruning** — Merged PRs #1–#22 into `main`, deleted all feature branches, and pruned all dead remote tracking references.
 - Gate: `flutter analyze --no-pub` -> `No issues found!`; `flutter test` -> `All 6 tests passed!`; `gh pr list --state open` -> 0 open PRs.
 
 ## Phase S0–S4 — SOVEREIGN SDK EDITION [-] PARKED 2026-10-01 — spec only, do not start
