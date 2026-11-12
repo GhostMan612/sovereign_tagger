@@ -23,7 +23,9 @@ class CloudDownload {
   static Future<File> _stagePath(String fileId, String name) async {
     final temp = await StorageClient.tempDir();
     final safe = name.replaceAll(RegExp(r'[\\/:*?"<>|]'), '_');
-    return File('$temp/cloud_dl_${fileId}_$safe');
+    final stageDir = await Directory(temp).createTemp('cloud_dl_');
+    final fileName = safe.isEmpty || safe == '.' || safe == '..' ? 'cloud_media' : safe;
+    return File('${stageDir.path}/$fileName');
   }
 
   static Future<SaveResult> downloadEntry(
@@ -32,7 +34,6 @@ class CloudDownload {
     bool Function()? isCancelled,
   }) async {
     final stage = await _stagePath(entry.id, entry.name);
-    if (stage.existsSync()) await stage.delete();
     try {
       final downloadedPath = await PCloudProvider.instance.downloadToFile(
         fileId: entry.id,
@@ -46,7 +47,7 @@ class CloudDownload {
       final saved = await StorageClient.exportToLibrary(downloadedPath, entry.name);
       return saved;
     } finally {
-      if (stage.existsSync()) await stage.delete();
+      if (await stage.parent.exists()) await stage.parent.delete(recursive: true);
     }
   }
 
@@ -57,7 +58,6 @@ class CloudDownload {
     Set<String> protectedCachePaths = const <String>{},
   }) async {
     final stage = await _stagePath(entry.id, entry.name);
-    if (stage.existsSync()) await stage.delete();
     try {
       final downloadedPath = await PCloudProvider.instance.downloadToFile(
         fileId: entry.id,
@@ -71,7 +71,7 @@ class CloudDownload {
       final cached = await CloudCache.put(entry.id, entry.name, File(downloadedPath), protectedPaths: protectedCachePaths);
       return SaveResult(uri: '', path: cached.path, displayName: entry.name, overwroteOriginal: false, renamed: false);
     } finally {
-      if (stage.existsSync()) await stage.delete();
+      if (await stage.parent.exists()) await stage.parent.delete(recursive: true);
     }
   }
 
