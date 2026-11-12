@@ -240,6 +240,9 @@ class PCloudProvider implements CloudSource {
       } finally {
         await sink.close();
       }
+      if (total > 0 && received != total) {
+        throw PCloudException('DOWNLOAD INCOMPLETE — RECEIVED $received OF $total BYTES. RETRY.');
+      }
       if (!part.existsSync() || part.lengthSync() == 0) {
         if (part.existsSync()) await part.delete();
         throw const PCloudException('THE DOWNLOAD ARRIVED EMPTY — RETRY.');
