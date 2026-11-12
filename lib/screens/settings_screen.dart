@@ -687,8 +687,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
       setState(() {
         _pendingRecoveries = list;
         SovereignState.pendingRecoveriesCount.value = list.length;
+        if (_recoveryStatus.startsWith('RECOVERY SCAN FAILED')) _recoveryStatus = '';
       });
-    } catch (_) {
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _recoveryStatus = 'RECOVERY SCAN FAILED: $error';
+        SovereignState.pendingRecoveriesCount.value = -1;
+      });
     } finally {
       if (mounted) setState(() => _isLoadingRecoveries = false);
     }
@@ -879,8 +885,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
           const SizedBox(height: 6),
           if (_pendingRecoveries.isEmpty)
-            const Text(
-              "NO INTERRUPTED WRITE-BACKS. ALL MEDIASTORE OVERWRITES WERE VERIFIED OR CLEANED UP.",
+            Text(
+              _recoveryStatus.startsWith('RECOVERY SCAN FAILED')
+                  ? 'RECOVERY STATUS UNKNOWN — SCAN FAILED. RETRY BEFORE EDITING MEDIA.'
+                  : 'NO INTERRUPTED WRITE-BACKS. ALL MEDIASTORE OVERWRITES WERE VERIFIED OR CLEANED UP.',
               style: TextStyle(fontFamily: 'ShareTechMono', fontSize: 10, color: Colors.white38),
             )
           else ...[
