@@ -107,7 +107,10 @@ class _SplashScreenState extends State<SplashScreen> {
       if (pending.isNotEmpty) {
         debugPrint("BOOT: Recovered ${pending.length} pending overwrite backups from crash vault");
       }
-    } catch (_) {}
+    } catch (error) {
+      SovereignState.pendingRecoveriesCount.value = -1;
+      debugPrint('BOOT: RECOVERY VAULT STATUS UNKNOWN — SCAN FAILED: $error');
+    }
 
     if (mounted) {
       setState(() {
