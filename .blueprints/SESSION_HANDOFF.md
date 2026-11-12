@@ -21,7 +21,7 @@ Session-end law: update rows 2–4 every session (+ row 5 when a new gotcha is l
 ## Where we are
 
 **Date:** 2026-11-12
-**Phase:** Phase 38.3: Defensive Hardening & Native Test Verification — Draft PR #23 conditionally approved; final operational revision applied (unconditional startup self-test removed from splash boot to eliminate 21s delay; converted to on-demand diagnostic action in Settings > Crash Recovery Vault). Branch `hardening/phase-38.3-defensive` remains isolated; canonical `main` untouched at `57d368a`.
+**Phase:** Phase 38.3: Defensive Hardening & Native Test Verification COMPLETE & MERGED (PR #23 merged into `main` at `5ac8ef0`; dead feature branch pruned). Live destination hash verification before COMMITTED_PRE_CLEANUP, discard failure status validation, idempotent orphan meta sweep, collision-safe unique self-test files with guaranteed cleanup, test suite expanded to 49 unit tests, and native security self-test gated as an on-demand diagnostic action in Settings > Crash Recovery Vault. Canonical `main` at `5ac8ef0`.
 
 ## What shipped — Phase 38.3 PR #23 Review Hardening & Revisions (2026-11-12)
 
