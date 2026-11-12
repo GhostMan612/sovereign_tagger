@@ -63,9 +63,9 @@ F-Droid has strict inclusion criteria:
 
 ### Distribution Paths for Sovereign Tagger
 
-#### Option 1: IzzyOnDroid & Self-Hosted F-Droid Repository (Recommended Path)
-- **Status:** **Ready immediately.**
-- **Mechanism:** IzzyOnDroid and self-hosted F-Droid repositories accept signed release APKs (`SOVEREIGN_TAGGER.apk`) generated directly from GitHub Releases.
+#### Option 1: IzzyOnDroid & Self-Hosted F-Droid Repository (Distribution Candidate)
+- **Status:** **Not yet independently verified for publication.**
+- **Mechanism:** Signed APK distribution via a self-hosted repository is a possible path. Third-party repository submission, provenance, license compatibility, signing, and acceptance requirements must be verified before describing the build as ready.
 - **Payload:** Bundles the complete matrix: Chaquopy Python 3.14, prebuilt ARM64 `libneedle.a`, embedded `whistle.cact` model weights, and the ACRCloud Universal binary bridge.
 - **User Experience:** Seamless updates via the official F-Droid client app with zero feature degradation.
 
