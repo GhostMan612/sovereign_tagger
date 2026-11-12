@@ -88,15 +88,23 @@ class PCloudProvider implements CloudSource {
     }
   }
 
+  static Uri buildApiRequestUri(String host, String method, Map<String, String> params) {
+    if (params.containsKey('auth') || params.containsKey('access_token')) {
+      throw ArgumentError('Bearer credentials must be sent via the Authorization header, not a request URL.');
+    }
+    return Uri.https(CloudRegion.fromHost(host).host, '/$method', params);
+  }
+
   Future<Map<String, dynamic>> _call(String method, Map<String, String> params) async {
     if (!CloudSettings.hasToken) {
       throw const PCloudException('NOT CONNECTED — SIGN IN TO PCLOUD IN SETTINGS FIRST.');
     }
-    final query = <String, String>{'auth': CloudSettings.token, ...params};
-    final uri = Uri.https(apiHost, '/$method', query);
+    final uri = buildApiRequestUri(apiHost, method, params);
     final client = HttpClient()..connectionTimeout = const Duration(seconds: 30);
     try {
       final request = await client.getUrl(uri);
+      request.followRedirects = false;
+      request.headers.set(HttpHeaders.authorizationHeader, 'Bearer ${CloudSettings.token}');
       request.headers.set(HttpHeaders.userAgentHeader, 'SovereignTagger/2.0 (Android; pCloud)');
       request.headers.set(HttpHeaders.acceptHeader, 'application/json');
       final response = await request.close();
