@@ -22,22 +22,32 @@ Session-end law: update rows 2–4 every session (+ row 5 when a new gotcha is l
 ## Where we are
 
 **Date:** 2026-11-12
-**Phase:** Phase 39 Modularization — Stage A (100% Pure DSP Extraction & Hardening) & Stage B (Workbench Models & Batch Queue Decoupling) COMPLETE (`lib/workbench/dsp_builders.dart`, `video_dsp_builders.dart`, `workbench_models.dart`, `workbench_queue.dart` extracted, tested across `test/workbench_dsp_test.dart` and `test/workbench_queue_test.dart`, consumed in `lib/tabs/tab_workbench.dart`; 0 open PRs; main clean). Stage C: Component UI Decomposition PREPARED.
+**Phase:** Phase 39 Modularization — Stage A & Stage B Fully Hardened & Verified (B.1 Output Contract, B.2 Native MediaStore Commit Safety, B.3 Queue Lifecycle & Active Cancellation, B.4 Monotonic Progress & Test Expansion Landed; `flutter analyze` 0 issues; `flutter test` clean; Python doctor 2/2 passed; 0 open PRs; main clean). Stage C: Component UI Decomposition PREPARED.
 
-## What shipped — Stage B: Workbench Models & Batch Queue Decoupling (2026-11-12)
+## What shipped — Stage B: Workbench Models & Batch Queue Hardening (2026-11-12)
 
-1. **Decoupled Data Structures & Enums (`lib/workbench/workbench_models.dart`)**:
+1. **Output Contract & Format Override Fix (B.1)**:
+   - Passed user-selected audio (`_targetFormat`) and video (`_targetVideoFormat`) formats to `WorkbenchQueue.execute()`, preventing default `.mp3` / `.mp4` overrides on batch conversions.
+   - Refined `DspOperation` with `producesVideoOutput`, `producesAudioOutput`, and `requiresVideoInput`.
+   - Fixed `Extract Audio (Video to M4A)` output verification: correctly asserts audio stream presence (`(outStreams['audio'] ?? 0) > 0`) instead of expecting a video stream on audio output.
+2. **Native MediaStore Commit Safety (B.2)**:
+   - In `StorageBridge.addToMediaStore()`, explicitly rejected null `openOutputStream(uri)` with `IOException`.
+   - Verified that total bytes copied matches source file length (`bytesCopied == file.length()`), preventing 0-byte ghost imports.
+   - On copy failure or short write, immediately purges incomplete MediaStore URI before throwing, guaranteeing staged files remain intact for cache recovery.
+3. **Queue Lifecycle, Cancellation & Centralized Cleanup (B.3)**:
+   - Wired active `_activeQueue` in `TabWorkbench` with an on-screen `CANCEL BATCH` action while running.
+   - In `WorkbenchQueue.cancel()`, invokes `FFmpegExecutor.cancelCurrent()`, instantly interrupting running GPU/CPU FFmpeg sessions and skipping remaining queued jobs.
+   - Wrapped per-job staging in `try-finally` with automatic cleanup for non-cached temporary outputs, eliminating temporary directory leakage across unhandled exceptions or cancellations.
+4. **Monotonic Progress & Test Expansion (B.4)**:
+   - Mapped batch progress as `overallProgress = (i + jobProgress) / totalJobs`, guaranteeing strictly non-decreasing progress across multi-file queues.
+   - Expanded `test/workbench_queue_test.dart` to cover format override resolution (WAV, FLAC, WebM), M4A extraction classification, MediaStore injection failures with cache preservation, and monotonic progress calculation.
+5. **Decoupled Data Structures & Enums (`lib/workbench/workbench_models.dart`)**:
    - Extracted `MixTrack` with path validation, gain, and pan bounds checking and `copyWith`.
    - Extracted `DspOperation` with centralized operation registries (45 total, 20 chainable, 8 video, 3 forensic, 20 preserve), categorization predicates (`isBatchable`, `isVideoOp`, `isForensicOp`, `isPreserveOp`), and lossless-preserving output extension resolver.
    - Extracted `BatchJob` and `BatchJobStatus` enum (`pending`, `running`, `completed`, `failed`, `skipped`) with filename extraction, status summaries, and execution tracking.
    - Extracted `MasteringTarget` with preconfigured presets for streaming (-14 LUFS), broadcast (-23 LUFS), podcast (-16 LUFS), and dynamic compression.
    - Extracted `AudioInspectResult` holding structured volume, silence, ReplayGain, and LUFS scan metrics.
-2. **Serialized Batch Execution Queue (`lib/workbench/workbench_queue.dart`)**:
-   - Decoupled batch queue execution from UI into `WorkbenchQueue`.
-   - Implemented pause/cancel state machine (`cancel()`), stream probe validation, per-job error containment (single file failure does not abort remaining queue items), temporary file cleanup, and progress notifications.
-3. **Automated Unit Test Suite (`test/workbench_queue_test.dart`)**:
-   - Added unit test suite validating `MixTrack`, `DspOperation`, `BatchJob`, `MasteringTarget`, and `WorkbenchQueue` lifecycle, cancellation, video stream skipping, and empty queue behavior.
-4. **TabWorkbench Refactored**:
+6. **TabWorkbench Refactored**:
    - Replaced all inline batch loops and data models in `lib/tabs/tab_workbench.dart` with `WorkbenchQueue` and `workbench_models.dart`, removing obsolete `_MixTrack` class and duplicated operation lists.
 
 ## What shipped — Stage A: Workbench Pure DSP Modularization & Hardening (2026-11-12)

@@ -306,5 +306,193 @@ void main() {
       expect(summary, contains('1 skipped'));
       expect(summary, contains('NOT A VIDEO FILE'));
     });
+
+    test('format overrides are passed to output extension resolution', () async {
+      final queue = WorkbenchQueue();
+      queue.addJob('/media/source.mp3', 'Convert Format');
+
+      String? resolvedOutPath;
+      await queue.execute(
+        targetAudioFormat: 'wav',
+        commandBuilder: (op, input, out, dur) async {
+          resolvedOutPath = out;
+          throw StateError('probe stop');
+        },
+        getTempDirectory: () async => '/tmp',
+        mediaStoreInjector: (out, title) async => null,
+        durationProbe: (p) async => 1000,
+        streamProbe: (p) async => {'audio': 1},
+      );
+
+      expect(resolvedOutPath, isNotNull);
+      expect(resolvedOutPath!.endsWith('.wav'), isTrue);
+    });
+
+    test('video convert format override resolves target container', () async {
+      final queue = WorkbenchQueue();
+      queue.addJob('/media/source.mp4', 'Video Convert (Container)');
+
+      String? resolvedOutPath;
+      await queue.execute(
+        targetVideoFormat: 'webm',
+        commandBuilder: (op, input, out, dur) async {
+          resolvedOutPath = out;
+          throw StateError('probe stop');
+        },
+        getTempDirectory: () async => '/tmp',
+        mediaStoreInjector: (out, title) async => null,
+        durationProbe: (p) async => 1000,
+        streamProbe: (p) async => {'video': 1, 'audio': 1},
+      );
+
+      expect(resolvedOutPath, isNotNull);
+      expect(resolvedOutPath!.endsWith('.webm'), isTrue);
+    });
+
+    test('Extract Audio to M4A requires video input but produces audio output', () {
+      const op = "Extract Audio (Video to M4A)";
+      expect(DspOperation.requiresVideoInput(op), isTrue);
+      expect(DspOperation.producesVideoOutput(op), isFalse);
+      expect(DspOperation.producesAudioOutput(op), isTrue);
+      expect(DspOperation.outputExtension('/media/clip.mp4', op), equals('m4a'));
+    });
+
+    test('media store injection failure preserves cache output and reports cache only', () async {
+      final queue = WorkbenchQueue();
+      queue.addJob('/media/track.wav', 'Convert Format');
+
+      final summary = await queue.execute(
+        commandBuilder: (op, input, out, dur) async => '-y -i input.wav out.wav',
+        getTempDirectory: () async => '/tmp',
+        ffmpegRunner: (cmd, {onStatistics}) async => (isSuccess: true, returnCode: 0, output: ''),
+        mediaStoreInjector: (out, title) async {
+          throw Exception('PlatformException: MediaStore failed');
+        },
+        durationProbe: (p) async => 1000,
+        streamProbe: (p) async => {'audio': 1},
+      );
+
+      expect(queue.jobs[0].status, equals(BatchJobStatus.completed));
+      expect(queue.jobs[0].outputUri, isNotNull);
+      expect(queue.jobs[0].outputUri!.startsWith('/tmp/workbench_batch_'), isTrue);
+      expect(summary, contains('CACHE ONLY'));
+    });
+
+    test('overall progress is calculated monotonically across batch items', () {
+      final progressValues = <double>[];
+      const totalJobs = 4;
+
+      for (int i = 0; i < totalJobs; i++) {
+        for (double prog = 0.0; prog <= 1.0; prog += 0.25) {
+          final overall = ((i + prog) / totalJobs).clamp(0.0, 1.0);
+          progressValues.add(overall);
+        }
+      }
+
+      for (int i = 1; i < progressValues.length; i++) {
+        expect(progressValues[i] >= progressValues[i - 1], isTrue);
+      }
+      expect(progressValues.first, equals(0.0));
+      expect(progressValues.last, equals(1.0));
+    });
+
+    test('successful batch execution injects media store and tracks monotonic progress', () async {
+      final queue = WorkbenchQueue();
+      queue.addJob('/media/song1.mp3', 'Normalize Audio (LUFS -14)');
+      queue.addJob('/media/song2.flac', 'Normalize Audio (LUFS -14)');
+
+      final overallProgressList = <double>[];
+      final injectedTitles = <String>[];
+
+      final summary = await queue.execute(
+        commandBuilder: (op, input, out, dur) async => '-y -i $input out',
+        getTempDirectory: () async => '/tmp',
+        ffmpegRunner: (cmd, {onStatistics}) async => (isSuccess: true, returnCode: 0, output: 'Render complete'),
+        mediaStoreInjector: (out, title) async {
+          injectedTitles.add(title);
+          return 'content://media/external/audio/$title';
+        },
+        durationProbe: (p) async => 60000,
+        streamProbe: (p) async => {'audio': 1},
+        onJobProgress: (job, jobProgress, overallProgress) {
+          overallProgressList.add(overallProgress);
+        },
+      );
+
+      expect(queue.jobs.length, equals(2));
+      expect(queue.jobs[0].isSuccess, isTrue);
+      expect(queue.jobs[1].isSuccess, isTrue);
+      expect(injectedTitles.length, equals(2));
+      expect(injectedTitles[0], equals('song1_mod'));
+      expect(injectedTitles[1], equals('song2_mod'));
+      expect(summary, contains('Batch Done: 2/2 OK'));
+    });
+
+    test('ffmpeg filter failure records failure and continues remaining jobs', () async {
+      final queue = WorkbenchQueue();
+      queue.addJob('/media/bad_filter.mp3', 'AI Denoise (afftdn)');
+      queue.addJob('/media/good_track.mp3', 'Convert Format');
+
+      final summary = await queue.execute(
+        commandBuilder: (op, input, out, dur) async => '-y -i $input out',
+        getTempDirectory: () async => '/tmp',
+        ffmpegRunner: (cmd, {onStatistics}) async {
+          if (cmd.contains('bad_filter')) {
+            return (isSuccess: false, returnCode: 1, output: "No such filter: 'afftdn'");
+          }
+          return (isSuccess: true, returnCode: 0, output: 'OK');
+        },
+        mediaStoreInjector: (out, title) async => 'content://media/$title',
+        durationProbe: (p) async => 5000,
+        streamProbe: (p) async => {'audio': 1},
+      );
+
+      expect(queue.jobs[0].status, equals(BatchJobStatus.failed));
+      expect(queue.jobs[0].errorMessage, contains("FILTER 'afftdn' UNAVAILABLE"));
+      expect(queue.jobs[1].status, equals(BatchJobStatus.completed));
+      expect(summary, contains('1/2 OK'));
+      expect(summary, contains('1 failed'));
+    });
+
+    test('audio op fails if output stream probe reports zero audio streams', () async {
+      final queue = WorkbenchQueue();
+      queue.addJob('/media/corrupt.mp3', 'Normalize Audio (LUFS -14)');
+
+      final summary = await queue.execute(
+        commandBuilder: (op, input, out, dur) async => '-y -i $input out',
+        getTempDirectory: () async => '/tmp',
+        ffmpegRunner: (cmd, {onStatistics}) async => (isSuccess: true, returnCode: 0, output: 'Done'),
+        mediaStoreInjector: (out, title) async => 'content://media/$title',
+        durationProbe: (p) async => 5000,
+        streamProbe: (p) async => {'audio': 0},
+      );
+
+      expect(queue.jobs[0].status, equals(BatchJobStatus.failed));
+      expect(queue.jobs[0].errorMessage, equals('NO AUDIO STREAM IN OUTPUT'));
+      expect(summary, contains('1 failed'));
+    });
+
+    test('Extract Audio to M4A succeeds when input has video and output has audio', () async {
+      final queue = WorkbenchQueue();
+      queue.addJob('/media/music_video.mp4', 'Extract Audio (Video to M4A)');
+
+      final summary = await queue.execute(
+        commandBuilder: (op, input, out, dur) async => '-y -i $input -vn -c:a aac $out',
+        getTempDirectory: () async => '/tmp',
+        ffmpegRunner: (cmd, {onStatistics}) async => (isSuccess: true, returnCode: 0, output: 'Done'),
+        mediaStoreInjector: (out, title) async => 'content://media/$title',
+        durationProbe: (p) async => 120000,
+        streamProbe: (p) async {
+          if (p.endsWith('.mp4')) {
+            return {'video': 1, 'audio': 1};
+          }
+          return {'audio': 1, 'video': 0};
+        },
+      );
+
+      expect(queue.jobs[0].status, equals(BatchJobStatus.completed));
+      expect(queue.jobs[0].isSuccess, isTrue);
+      expect(summary, contains('1/1 OK'));
+    });
   });
 }

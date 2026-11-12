@@ -1,10 +1,12 @@
 # CURRENT_STATE.md — Sovereign Tagger v2 (post-Phase 39)
-> Snapshot as of 2026-11-12 — Phases 0–39 COMPLETE & MERGED on main (PRs #1–#38 ALL MERGED; Stage A Workbench Modularization COMPLETE with 100% pure DSP builder extraction; Stage B Workbench Models & Batch Queue Decoupling COMPLETE; Moto G 2025 `ZT4222BMWN` + BLU View 5 `7040016025040287` hardware verification ALL PASS).
+> Snapshot as of 2026-11-12 — Phases 0–39 COMPLETE & MERGED on main (PRs #1–#38 ALL MERGED; Stage A Workbench Modularization COMPLETE with 100% pure DSP builder extraction; Stage B Workbench Models & Batch Queue Decoupling FULLY HARDENED; Moto G 2025 `ZT4222BMWN` + BLU View 5 `7040016025040287` hardware verification ALL PASS).
 >
-> **Stage B Workbench Modularization deltas (Data Structures & Batch Queue Decoupling):**
+> **Stage B Workbench Modularization deltas (Data Structures & Batch Queue Hardening):**
+> - **Output Contract & Format Override Fix (B.1)**: Passed user-selected audio (`_targetFormat`) and video (`_targetVideoFormat`) formats to `WorkbenchQueue.execute()`, preventing default `.mp3` / `.mp4` overrides on batch conversions. Refined `DspOperation` with `producesVideoOutput`, `producesAudioOutput`, and `requiresVideoInput`. Fixed `Extract Audio (Video to M4A)` output verification to assert audio streams (`outStreams['audio'] > 0`) instead of expecting video streams on audio output.
+> - **Native MediaStore Commit Safety (B.2)**: In `StorageBridge.addToMediaStore()`, explicitly rejected null `openOutputStream(uri)` with `IOException`, verified total bytes copied against source file size, and purged incomplete records on write aborts to protect staged cache fallback.
+> - **Queue Lifecycle, Cancellation & Centralized Cleanup (B.3)**: Wired `_activeQueue` with `CANCEL BATCH` action in `TabWorkbench`. In `cancel()`, invokes `FFmpegExecutor.cancelCurrent()` to interrupt active renders instantly. Centralized temporary file cleanup in `try-finally` for non-cached outputs.
+> - **Monotonic Progress & Test Expansion (B.4)**: Mapped progress monotonically as `(i + jobProgress) / totalJobs`. Expanded `test/workbench_queue_test.dart` to cover format overrides (WAV, FLAC, WebM), M4A extraction, and MediaStore failure cache-preservation.
 > - **Decoupled Data Structures (`lib/workbench/workbench_models.dart`)**: Extracted `MixTrack` with path and parameter validation, `DspOperation` with centralized operation registries (45 ops, 20 chainable, 8 video, 3 forensic, 20 preserve) and lossless output extension resolver, `BatchJob` and `BatchJobStatus`, `MasteringTarget` presets, and `AudioInspectResult`.
-> - **Serialized Batch Execution Queue (`lib/workbench/workbench_queue.dart`)**: Decoupled batch queue execution from UI into `WorkbenchQueue`, managing cancellation, stream probe verification, per-job error containment, temporary file cleanup, and progress reporting.
-> - **Automated Unit Test Suite (`test/workbench_queue_test.dart`)**: Added tests validating data models, operation classifications, batch lifecycle, cancellation, and video stream skipping.
 > - **TabWorkbench Refactored**: Replaced inline batch loop and private `_MixTrack` class in `lib/tabs/tab_workbench.dart` with `WorkbenchQueue` and `workbench_models.dart`.
 >
 > **Stage A Workbench Modularization deltas (Pure DSP Builders, Validation & Test Fixtures):**

@@ -62,6 +62,7 @@ class WorkbenchQueue {
 
   void cancel() {
     _isCancelled = true;
+    FFmpegExecutor.cancelCurrent();
   }
 
   Future<String> execute({
@@ -70,8 +71,14 @@ class WorkbenchQueue {
     required Future<String?> Function(String outPath, String title) mediaStoreInjector,
     required Future<int?> Function(String path) durationProbe,
     required Future<Map<String, int>> Function(String path) streamProbe,
+    String targetAudioFormat = 'mp3',
+    String targetVideoFormat = 'mp4',
+    Future<({bool isSuccess, int returnCode, String output})> Function(
+      String command, {
+      void Function(Statistics stats)? onStatistics,
+    })? ffmpegRunner,
     void Function(BatchJob job, int index, int total)? onJobStarted,
-    void Function(BatchJob job, double progress)? onJobProgress,
+    void Function(BatchJob job, double jobProgress, double overallProgress)? onJobProgress,
     void Function(BatchJob job, int index, int total)? onJobCompleted,
   }) async {
     if (_isRunning) {
@@ -111,10 +118,12 @@ class WorkbenchQueue {
         job.startedAt = DateTime.now();
         onJobStarted?.call(job, i + 1, _jobs.length);
 
+        String? stagedOutPath;
+
         try {
           final dur = await durationProbe(job.inputPath);
 
-          if (DspOperation.isVideoOp(job.operation)) {
+          if (DspOperation.requiresVideoInput(job.operation)) {
             final inStreams = await streamProbe(job.inputPath);
             if ((inStreams['video'] ?? 0) == 0) {
               job.status = BatchJobStatus.skipped;
@@ -127,25 +136,52 @@ class WorkbenchQueue {
             }
           }
 
-          final ext = DspOperation.outputExtension(job.inputPath, job.operation);
+          final ext = DspOperation.outputExtension(
+            job.inputPath,
+            job.operation,
+            targetAudioFormat: targetAudioFormat,
+            targetVideoFormat: targetVideoFormat,
+          );
           final timestamp = DateTime.now().millisecondsSinceEpoch;
           final outPath = "$tempDir/workbench_batch_${timestamp}_$i.$ext";
+          stagedOutPath = outPath;
 
           final command = await commandBuilder(job.operation, job.inputPath, outPath, dur);
-          final session = await FFmpegExecutor.execute(command, onStatistics: (stats) {
-            if (dur != null && dur > 0) {
-              final prog = (stats.time / dur).clamp(0.0, 1.0);
-              job.progress = prog;
-              onJobProgress?.call(job, prog);
-            }
-          });
+          final bool isSuccess;
+          final int retCode;
+          final String output;
 
-          if (!ReturnCode.isSuccess(session.getReturnCode())) {
-            final output = session.getOutput() ?? "";
+          if (ffmpegRunner != null) {
+            final res = await ffmpegRunner(command, onStatistics: (stats) {
+              if (dur != null && dur > 0) {
+                final prog = (stats.time / dur).clamp(0.0, 1.0);
+                job.progress = prog;
+                final overallProg = ((i + prog) / _jobs.length).clamp(0.0, 1.0);
+                onJobProgress?.call(job, prog, overallProg);
+              }
+            });
+            isSuccess = res.isSuccess;
+            retCode = res.returnCode;
+            output = res.output;
+          } else {
+            final session = await FFmpegExecutor.execute(command, onStatistics: (stats) {
+              if (dur != null && dur > 0) {
+                final prog = (stats.time / dur).clamp(0.0, 1.0);
+                job.progress = prog;
+                final overallProg = ((i + prog) / _jobs.length).clamp(0.0, 1.0);
+                onJobProgress?.call(job, prog, overallProg);
+              }
+            });
+            isSuccess = ReturnCode.isSuccess(session.getReturnCode());
+            retCode = session.getReturnCode();
+            output = session.getOutput() ?? "";
+          }
+
+          if (!isSuccess) {
             final fault = _detectFilterFault(output);
             final err = fault != null
                 ? "FILTER '$fault' UNAVAILABLE IN THIS BUILD"
-                : "rc=${session.getReturnCode()}";
+                : "rc=$retCode";
             job.status = BatchJobStatus.failed;
             job.errorMessage = err;
             job.completedAt = DateTime.now();
@@ -156,8 +192,8 @@ class WorkbenchQueue {
             continue;
           }
 
-          if (DspOperation.isVideoOp(job.operation)) {
-            final outStreams = await streamProbe(outPath);
+          final outStreams = await streamProbe(outPath);
+          if (DspOperation.producesVideoOutput(job.operation)) {
             if ((outStreams['video'] ?? 0) == 0) {
               job.status = BatchJobStatus.failed;
               job.errorMessage = 'NO VIDEO STREAM IN OUTPUT';
@@ -168,11 +204,22 @@ class WorkbenchQueue {
               onJobCompleted?.call(job, i + 1, _jobs.length);
               continue;
             }
+          } else {
+            if ((outStreams['audio'] ?? 0) == 0) {
+              job.status = BatchJobStatus.failed;
+              job.errorMessage = 'NO AUDIO STREAM IN OUTPUT';
+              job.completedAt = DateTime.now();
+              failCount++;
+              lines.add("FAIL ${job.fileName}: NO AUDIO STREAM IN OUTPUT");
+              try { File(outPath).deleteSync(); } catch (_) {}
+              onJobCompleted?.call(job, i + 1, _jobs.length);
+              continue;
+            }
           }
 
-          final titleSuffix = DspOperation.isVideoOp(job.operation)
+          final titleSuffix = DspOperation.producesVideoOutput(job.operation)
               ? buildVideoOpSuffix(job.operation)
-              : '_mod';
+              : (job.operation == "Extract Audio (Video to M4A)" ? "_m4a" : "_mod");
           final title = "${job.baseName}$titleSuffix";
 
           try {
@@ -208,6 +255,12 @@ class WorkbenchQueue {
           failCount++;
           lines.add("FAIL ${job.fileName}: $e");
           onJobCompleted?.call(job, i + 1, _jobs.length);
+        } finally {
+          if (stagedOutPath != null &&
+              job.outputUri != stagedOutPath &&
+              File(stagedOutPath).existsSync()) {
+            try { File(stagedOutPath).deleteSync(); } catch (_) {}
+          }
         }
       }
     } finally {

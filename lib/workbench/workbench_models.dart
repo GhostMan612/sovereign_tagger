@@ -165,6 +165,13 @@ class DspOperation {
 
   static bool isVideoOp(String op) => videoOperations.contains(op);
 
+  static bool requiresVideoInput(String op) => videoOperations.contains(op);
+
+  static bool producesVideoOutput(String op) =>
+      videoOperations.contains(op) && op != "Extract Audio (Video to M4A)";
+
+  static bool producesAudioOutput(String op) => !producesVideoOutput(op);
+
   static bool isForensicOp(String op) => forensicOperations.contains(op);
 
   static bool isPreserveOp(String op) => preserveOperations.contains(op);

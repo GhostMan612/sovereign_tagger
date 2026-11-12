@@ -170,8 +170,16 @@ class StorageBridge(private val context: Context) {
         val collectionUri = if (isVideo) MediaStore.Video.Media.EXTERNAL_CONTENT_URI else MediaStore.Audio.Media.EXTERNAL_CONTENT_URI
         val uri = context.contentResolver.insert(collectionUri, values) ?: throw IllegalStateException("MediaStore insert refused")
         try {
-            context.contentResolver.openOutputStream(uri)?.use { outputStream ->
-                file.inputStream().use { inputStream -> inputStream.copyTo(outputStream) }
+            val outputStream = context.contentResolver.openOutputStream(uri)
+                ?: throw java.io.IOException("ERR: MediaStore opened null output stream for $uri")
+            var bytesCopied: Long
+            outputStream.use { os ->
+                file.inputStream().use { inputStream ->
+                    bytesCopied = inputStream.copyTo(os)
+                }
+            }
+            if (bytesCopied != file.length()) {
+                throw java.io.IOException("ERR: MediaStore import truncated. Expected ${file.length()} bytes, wrote $bytesCopied bytes.")
             }
             values.clear()
             values.put(MediaStore.MediaColumns.IS_PENDING, 0)

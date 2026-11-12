@@ -96,6 +96,7 @@ class _TabWorkbenchState extends State<TabWorkbench> {
   Map<String, List<String>> _savedChains = {};
   String _chainAddOp = "Normalize Audio (LUFS -14)";
   final List<String> _batchFiles = [];
+  WorkbenchQueue? _activeQueue;
   String _batchReport = "";
   String _videoRotate = "NONE";
   bool _videoFlipH = false;
@@ -1409,6 +1410,7 @@ class _TabWorkbenchState extends State<TabWorkbench> {
 
     final queue = WorkbenchQueue();
     queue.addJobs(_batchFiles, _selectedOperation);
+    _activeQueue = queue;
 
     try {
       final summary = await queue.execute(
@@ -1419,6 +1421,8 @@ class _TabWorkbenchState extends State<TabWorkbench> {
             await _storageChannel.invokeMethod('addToMediaStore', {'filePath': outPath, 'title': title}),
         durationProbe: (path) => probeDurationMs(path),
         streamProbe: (path) => probeStreams(path),
+        targetAudioFormat: _targetFormat,
+        targetVideoFormat: _targetVideoFormat,
         onJobStarted: (job, idx, total) {
           if (!mounted) return;
           setState(() {
@@ -1426,9 +1430,9 @@ class _TabWorkbenchState extends State<TabWorkbench> {
             _statusMessage = "Batch $idx/$total: ${job.fileName}";
           });
         },
-        onJobProgress: (job, prog) {
+        onJobProgress: (job, jobProgress, overallProgress) {
           if (!mounted) return;
-          setState(() => _opProgress = prog);
+          setState(() => _opProgress = overallProgress);
         },
         onJobCompleted: (job, idx, total) {
           if (!mounted) return;
@@ -1440,6 +1444,7 @@ class _TabWorkbenchState extends State<TabWorkbench> {
       TapFeedback.machineConfirm();
       setState(() {
         _isProcessing = false;
+        _activeQueue = null;
         _opProgress = 1.0;
         _batchReport = summary;
         final okCount = queue.jobs.where((j) => j.isSuccess).length;
@@ -1449,8 +1454,13 @@ class _TabWorkbenchState extends State<TabWorkbench> {
       if (!mounted) return;
       setState(() {
         _isProcessing = false;
+        _activeQueue = null;
         _statusMessage = "ERR: Batch Fault: $e";
       });
+    } finally {
+      if (mounted) {
+        setState(() => _activeQueue = null);
+      }
     }
   }
 
@@ -3233,12 +3243,23 @@ class _TabWorkbenchState extends State<TabWorkbench> {
                           ),
                         ],
                         const SizedBox(height: 12),
-                        OutlinedButton.icon(
-                          onPressed: _isProcessing || _batchFiles.isEmpty ? null : _executeBatch,
-                          icon: Icon(Icons.play_arrow, color: themeColor, size: 18),
-                          label: Text("RUN BATCH (${_batchFiles.length} FILES)", style: TextStyle(fontFamily: 'ShareTechMono', fontSize: 12, color: themeColor, fontWeight: FontWeight.bold)),
-                          style: OutlinedButton.styleFrom(side: BorderSide(color: themeColor), padding: const EdgeInsets.symmetric(vertical: 12)),
-                        ),
+                        if (_isProcessing && _activeQueue != null)
+                          OutlinedButton.icon(
+                            onPressed: () {
+                              _activeQueue?.cancel();
+                              setState(() => _statusMessage = "Cancelling Batch Queue...");
+                            },
+                            icon: const Icon(Icons.stop, color: Colors.redAccent, size: 18),
+                            label: const Text("CANCEL BATCH", style: TextStyle(fontFamily: 'ShareTechMono', fontSize: 12, color: Colors.redAccent, fontWeight: FontWeight.bold)),
+                            style: OutlinedButton.styleFrom(side: const BorderSide(color: Colors.redAccent), padding: const EdgeInsets.symmetric(vertical: 12)),
+                          )
+                        else
+                          OutlinedButton.icon(
+                            onPressed: _isProcessing || _batchFiles.isEmpty ? null : _executeBatch,
+                            icon: Icon(Icons.play_arrow, color: themeColor, size: 18),
+                            label: Text("RUN BATCH (${_batchFiles.length} FILES)", style: TextStyle(fontFamily: 'ShareTechMono', fontSize: 12, color: themeColor, fontWeight: FontWeight.bold)),
+                            style: OutlinedButton.styleFrom(side: BorderSide(color: themeColor), padding: const EdgeInsets.symmetric(vertical: 12)),
+                          ),
                         if (_batchReport.isNotEmpty) ...[
                           const SizedBox(height: 8),
                           Container(
