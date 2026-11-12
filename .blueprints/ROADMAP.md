@@ -317,6 +317,13 @@
 - [x] **Repository Cleanup & Pruning** — Merged PRs #1–#22 into `main`, deleted all feature branches, and pruned all dead remote tracking references.
 - Gate: `flutter analyze --no-pub` -> `No issues found!`; `flutter test` -> `All 6 tests passed!`; `gh pr list --state open` -> 0 open PRs.
 
+## Phase 38 — Integration Hardening & Runtime Verification [x]
+- [x] **38.1 Security & Data Integrity (Authenticated AES-256-GCM & Failure-Safe Write-Back)** — Implemented authenticated `SOV2` backup encryption (PBKDF2-HMAC-SHA256 10,000 iterations, 16-byte salt, 12-byte IV, AES-256-GCM with 128-bit auth tag) in `StorageBridge.kt` and `StorageClient.dart` with seamless backward-compatible decryption for legacy XOR `0x53` payloads. Added pre-truncate recovery caching (`.sov_recover_*.tmp`) in `StorageBridge.overwriteMedia` with automatic restore on short write or I/O error to prevent file corruption.
+- [x] **38.2 Photo Viewer EXIF Orientation & Geometry** — Integrated native EXIF orientation inspection in `_PhotoPageState` (`photos_screen.dart`) via `StorageClient.photoOrientation` and applied `PhotoEditGeometry` transformations to ensure photos display right-side up.
+- [x] **38.3 Test Coverage Expansion & Verification** — Expanded test coverage across 4 comprehensive test suites: `test/backup_crypto_test.dart` (authenticated crypto & legacy migration), `test/photo_geometry_test.dart` (EXIF orientation matrices & crop geometry), `test/sentinel_policy_test.dart` (naming normalization, conjunction handling & filename sanitization), and `test/dart_spider_test.dart` (metadata title cleaning, channel noise removal & diacritics preservation). Test suite expanded from 6 tests to 33/33 passing unit tests.
+- [x] **38.4 Real-Device Hardware Verification** — Installed and validated on Motorola Moto G 2025 (`ZT4222BMWN` on Android 16 / API 36).
+- Gate: `flutter analyze --no-pub` -> `No issues found!`; `flutter test` -> `All 33 tests passed!`; Python doctor tests -> `2/2 passed`.
+
 ## Phase S0–S4 — SOVEREIGN SDK EDITION [-] PARKED 2026-10-01 — spec only, do not start
 
 > **OPERATOR DECISION 2026-10-01: PARKED.** The operator needs to research the

@@ -21,14 +21,30 @@ Session-end law: update rows 2–4 every session (+ row 5 when a new gotcha is l
 ## Where we are
 
 **Date:** 2026-11-11
-**Phase:** 0–37 implementation + PR #1–#22 COMPLETE & MERGED (All 22 project pull requests merged into `main`), full documentation suite (`README.md`, `LICENSE`, `LICENSES.md`, `SECURITY.md`, `CONTRIBUTING.md`), `impellerc` shader (`GLES`/`Vulkan`/`SkSL`), analyzer, and Android ARM64 APK build gates VERIFIED; zero stubs remaining. F-Droid ready.
+**Phase:** 0–38 implementation + PR #1–#22 COMPLETE & MERGED (All 22 project pull requests merged into `main`), full documentation suite (`README.md`, `LICENSE`, `LICENSES.md`, `SECURITY.md`, `CONTRIBUTING.md`), `impellerc` shader (`GLES`/`Vulkan`/`SkSL`), analyzer, test suite (33/33 tests passing), and Android ARM64 APK build gates VERIFIED; zero stubs remaining. F-Droid ready.
 - `flutter analyze --no-pub` -> `No issues found!`.
-- `flutter test` -> `All 6 tests passed!`.
-- `python test/python/test_doctor.py` -> `Ran 2 tests in 0.014s OK`.
+- `flutter test` -> `All 33 tests passed!`.
+- `python test/python/test_doctor.py` -> `Ran 2 tests in 0.006s OK`.
 - `impellerc` -> `shaders/backdrop.frag` & `shaders/ghost.frag` compile cleanly across GLES, Vulkan, and SkSL.
 - `flutter build apk --debug --target-platform android-arm64` -> `LiteRT 1.4.0` + `EmbeddingGemmaBridge.kt` + `SentencePieceTokenizer.kt` + `shaders/ghost.frag` compile cleanly.
 - **Motorola Moto G (2025) Hardware Smoke Test (Android 16 / API 36, Device ID `ZT4222BMWN`): ALL PASS** — `FlutterTextureView` (`RenderMode.texture`) eliminated BLASTBufferQueue frame saturation; native hardware Equalizer/LoudnessEnhancer attached cleanly without NPE (`audioSessionId=18945`, 5 bands); live 256-D neural self-test verified via LiteRT; GhostBot decoupled `ValueNotifier` chat history verified without red `ErrorWidget` boxes; Sentinel Slice 1 live run verified with Media3 / AudioTrack 48kHz stereo decode (`c2.android.mp3.decoder`), ID3 tag handling (`00 - Metallica · Until It Sleeps.mp3`), and multi-track playback queue restored cleanly (`ProcessingState.ready`).
 **Branch:** `main` is the single canonical branch. All 22 PR branches merged and pruned (0 open PRs, 0 dead branches).
+
+## What shipped — Phase 38: Integration Hardening & Runtime Verification (2026-11-11)
+
+1. **Security & Data Integrity (Authenticated AES-256-GCM Backups & Recovery Protection)**:
+   - Migrated configuration and credential backups from legacy XOR `0x53` obfuscation to authenticated AES-256-GCM (`SOV2` envelope format) in `StorageBridge.kt` and `StorageClient.dart` utilizing PBKDF2-HMAC-SHA256 (10,000 iterations), 16-byte random salt, 12-byte random IV, and 128-bit authentication tag.
+   - Preserved seamless backward compatibility in `StorageBridge.decryptConfig` and splash boot (`main.dart` `autoImportConfig`) to automatically detect and decode legacy XOR `0x53` backup files.
+   - Implemented pre-truncate failure recovery in `StorageBridge.overwriteMedia`: stages `.sov_recover_*.tmp` backup files in the app cache before opening `openOutputStream("rwt")`, and automatically restores the original file content if an I/O error or short write occurs.
+2. **Photo Viewer EXIF Orientation**:
+   - Integrated native EXIF orientation detection in `_PhotoPageState` (`lib/screens/photos_screen.dart`) via `StorageClient.photoOrientation`.
+   - Applied `PhotoEditGeometry` rotation matrices and dimension swaps around `Alignment.center` to ensure portrait and rotated photos render upright in the full-screen photo viewer.
+3. **Automated Test Suite Expansion (33/33 Tests Passing)**:
+   - Added `test/backup_crypto_test.dart` validating legacy XOR roundtrips, authenticated AES-256-GCM fallback, and error handling for malformed data.
+   - Added `test/photo_geometry_test.dart` verifying EXIF orientation matrices (1, 2, 3, 4, 6, 8), dimensions swapping, crop calculation (`largestCenteredRect`), and crop boundary rotations.
+   - Added `test/sentinel_policy_test.dart` validating Sentinel Title Case normalization, canonical `ft.` formatting, and illegal filename character sanitization.
+   - Added `test/dart_spider_test.dart` verifying bracket noise removal, channel noise stripping, and diacritic preservation for artist names.
+   - Expanded unit test coverage from 6 to 33 passing tests (plus 2 Python doctor tests) with 0 static analyzer issues.
 
 ## What shipped — PR #8 through #22 Full PR Suite Sweep (2026-11-11)
 

@@ -1,5 +1,11 @@
-# CURRENT_STATE.md — Sovereign Tagger v2 (post-Phase 36)
-> Snapshot as of 2026-11-11 — Phases 0–36 + PR #1–#22 COMPLETE (`flutter analyze --no-pub` -> `No issues found!`; `flutter test` -> 6/6 passed; Moto G 2025 hardware smoke test ALL PASS).
+# CURRENT_STATE.md — Sovereign Tagger v2 (post-Phase 38)
+> Snapshot as of 2026-11-11 — Phases 0–38 + PR #1–#22 COMPLETE (`flutter analyze --no-pub` -> `No issues found!`; `flutter test` -> 33/33 passed; Python doctor tests -> 2/2 passed; Moto G 2025 hardware smoke test ALL PASS).
+>
+> **Phase 38 deltas (Integration Hardening & Runtime Verification):**
+> - **Authenticated Backup Encryption (SOV2)**: Replaced insecure obfuscated XOR `0x53` backups with authenticated AES-256-GCM encryption in `StorageBridge.kt` and `StorageClient.dart` (PBKDF2-HMAC-SHA256 10k iterations, 16-byte random salt, 12-byte random IV, 128-bit auth tag) while providing transparent backward-compatible fallback for legacy XOR backups.
+> - **Failure-Safe MediaStore Overwrite Protection**: Added pre-truncate recovery caching (`.sov_recover_*.tmp`) in `StorageBridge.overwriteMedia` that automatically restores original media files if a write operation aborts or encounters an I/O exception.
+> - **Photo Viewer EXIF Orientation**: Resolved unrotated/sideways photos in `photos_screen.dart` (`_PhotoPageState`) by querying native EXIF orientation via `StorageClient.photoOrientation` and applying `PhotoEditGeometry` transforms.
+> - **Test Suite Expansion**: Added unit tests in `test/backup_crypto_test.dart`, `test/photo_geometry_test.dart`, `test/sentinel_policy_test.dart`, and `test/dart_spider_test.dart`, expanding automated test coverage from 6 tests to 33/33 tests passing cleanly.
 >
 > **PR #8–#22 deltas (Workbench Video/Audio, pCloud, Grabber Cookies/FFmpeg, Sentinel Migration, Photo Editor, DartSpider, Python Pins):**
 > - **Workbench Video & Advanced Audio (PR #18, #15)**: 8 video operations (Trim, Rotate/Flip, Scale 1080p/720p/480p, Center Crop, Mute, Extract M4A, Convert MP4/MKV/WebM, Mux) + silence splitting, op chains, and batch processing.
