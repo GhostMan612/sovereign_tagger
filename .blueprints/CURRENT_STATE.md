@@ -1,5 +1,11 @@
 # CURRENT_STATE.md — Sovereign Tagger v2 (post-Phase 39)
-> Snapshot as of 2026-11-12 — Phases 0–39 COMPLETE & MERGED on main (PRs #1–#38 ALL MERGED; `flutter analyze --no-pub` -> `No issues found!`; `flutter test` -> 57/57 passed; Python doctor tests -> 2/2 passed; Moto G 2025 `ZT4222BMWN` + BLU View 5 `7040016025040287` hardware verification ALL PASS).
+> Snapshot as of 2026-11-12 — Phases 0–39 COMPLETE & MERGED on main (PRs #1–#38 ALL MERGED; Stage A Workbench Modularization COMPLETE; `flutter analyze --no-pub` -> `No issues found!`; `flutter test` -> 81/81 passed; Python doctor tests -> 2/2 passed; Moto G 2025 `ZT4222BMWN` + BLU View 5 `7040016025040287` hardware verification ALL PASS).
+>
+> **Stage A Workbench Modularization deltas (Pure DSP Builders & Tests):**
+> - **Pure Audio DSP Command Builders (`lib/workbench/dsp_builders.dart`)**: Extracted all pure audio filter string generators, argument builders, codec configurations, sample rate SOXR resamplers, Loudnorm 1-pass/2-pass arguments & JSON measurement parsers, silence detection & segment split algorithms, sidechain ducking, multitrack mixing, crossfade join, gapless join, and tone generation args from `lib/tabs/tab_workbench.dart`.
+> - **Pure Video DSP Command Builders (`lib/workbench/video_dsp_builders.dart`)**: Extracted pure video filter builders (Rotate/Flip transpose chains, Scale 1080p/720p/480p, Crop 16:9/4:3/1:1/9:16, Mute, Extract M4A, Container Convert, Mux) and stream-copy fast clip args.
+> - **Automated DSP Unit Test Suite (`test/workbench_dsp_test.dart`)**: Added 24 unit test cases validating all extracted audio and video builders, boundary conditions, error handling, and parameter parsing, expanding the test suite from 57 to 81 passing unit tests.
+> - **TabWorkbench Refactored**: Wired `lib/tabs/tab_workbench.dart` to consume the extracted builders, eliminating redundant code while preserving all state, UI, and functionality.
 >
 > **Phase 39 deltas (Security, Cloud Cache, Crash Hardening & Audit Specifications):**
 > - **OAuth API Host Validation (P0 — PR #30)**: Validates pCloud OAuth callback `hostname` against allowlisted `CloudRegion` hosts before saving tokens or sending authenticated API requests, eliminating host substitution risk. Added `test/cloud_host_security_test.dart`.
@@ -107,7 +113,10 @@ Sovereign Tagger — autonomous Android media pipeline: yt-dlp (chaquopy Python 
 
 ## Architecture map (verified)
 
-### Dart layer (`lib/`, 51 files)
+### Dart layer (`lib/`, 53 files)
+
+- **workbench/dsp_builders.dart**: Pure audio DSP command & filter argument generators (Loudnorm, Equalizers, Resamplers, Fades, Silence/Volume probes, Sidechain ducking, Multi-track mix, Tone generators).
+- **workbench/video_dsp_builders.dart**: Pure video DSP command builders (Rotate/Flip transpose chains, Scaler, Crop, Mute, Extract M4A, Container converter, Video+Audio muxer).
 
 - **main.dart**: loads `accent_color` -> `SplashScreen` (`FFmpegKitExtended.initialize` + XOR `0x53` auto-import + `MatrixRain` overlay `lib/widgets/machine_rain.dart`) -> `MainShell`.
 - **screens/main_shell.dart**: `SovereignState` bus; `AudioService` owns `just_audio` `player` (created with `handleInterruptions: false` for explicit audio_session handling), `playlist`/`currentIndex`/`videoController`/`repeatMode`/`isShuffle`/`sleepTimerMinutes`/`speedFactor` + `SovereignAudioHandler` (`lib/core/audio_handler.dart`).

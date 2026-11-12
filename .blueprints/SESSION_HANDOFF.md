@@ -22,7 +22,18 @@ Session-end law: update rows 2–4 every session (+ row 5 when a new gotcha is l
 ## Where we are
 
 **Date:** 2026-11-12
-**Phase:** Phase 39: Security, Cloud Cache & Audit Work Orders COMPLETE & FULLY MERGED (All 15 PRs #24–#38 merged into `main` at `7d6ef93`; zero open PRs; dead feature branches pruned; `flutter analyze` 0 issues; `flutter test` 57/57 passed; Python doctor tests 2/2 passed; `.blueprints/ARCHITECTURE_DECOMPOSITION.md` modularization blueprint authored).
+**Phase:** Phase 39 Modularization — Stage A: Workbench DSP Decomposition COMPLETE (`lib/workbench/dsp_builders.dart` & `lib/workbench/video_dsp_builders.dart` extracted, tested in `test/workbench_dsp_test.dart`, consumed in `lib/tabs/tab_workbench.dart`; `flutter analyze` 0 issues; `flutter test` 81/81 passed; Python doctor tests 2/2 passed; 0 open PRs; main clean).
+
+## What shipped — Stage A: Workbench Pure DSP Modularization (2026-11-12)
+
+1. **Pure Audio DSP Command Builders (`lib/workbench/dsp_builders.dart`)**:
+   - Extracted all pure audio filter string generators, argument builders, codec configurations, sample rate SOXR resamplers, Loudnorm 1-pass/2-pass arguments & JSON measurement parsers, silence detection & segment split algorithms, sidechain ducking, multitrack mixing, crossfade join, gapless join, and tone generation args from `lib/tabs/tab_workbench.dart`.
+2. **Pure Video DSP Command Builders (`lib/workbench/video_dsp_builders.dart`)**:
+   - Extracted pure video filter builders (Rotate/Flip transpose chains, Scale 1080p/720p/480p, Crop 16:9/4:3/1:1/9:16, Mute, Extract M4A, Container Convert, Mux) and stream-copy fast clip args.
+3. **Automated DSP Unit Test Suite (`test/workbench_dsp_test.dart`)**:
+   - Added 24 unit test cases validating all extracted audio and video builders, boundary conditions, error handling, and parameter parsing, expanding the test suite from 57 to 81 passing unit tests.
+4. **TabWorkbench Refactored**:
+   - Wired `lib/tabs/tab_workbench.dart` to consume the extracted builders, eliminating redundant code while preserving all state, UI, and functionality.
 
 ## What shipped — Phase 39 Audit Code-Fix Integrations (2026-11-12)
 

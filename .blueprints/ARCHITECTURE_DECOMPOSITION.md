@@ -55,8 +55,8 @@ During the Phase 38–39 architectural audit, six modules were identified as dis
 
 - **Target Directory:** `lib/workbench/`
 - **Component Breakdown:**
-  1. `lib/workbench/dsp_builders.dart`: Pure FFmpeg audio filter generators (Loudnorm, Equalizer, Resampler, Pitch/Tempo, Reverb, Compressor, Limiter, Fades, Mono-fold).
-  2. `lib/workbench/video_dsp_builders.dart`: Pure FFmpeg video filter generators (Crop, Scale, Rotate, Mute, Mux, Trim).
+  1. `lib/workbench/dsp_builders.dart` `[COMPLETED - Stage A]`: Pure FFmpeg audio filter generators (Loudnorm, Equalizer, Resampler, Pitch/Tempo, Reverb, Compressor, Limiter, Fades, Mono-fold). Tested in `test/workbench_dsp_test.dart`.
+  2. `lib/workbench/video_dsp_builders.dart` `[COMPLETED - Stage A]`: Pure FFmpeg video filter generators (Crop, Scale, Rotate, Mute, Mux, Trim). Tested in `test/workbench_dsp_test.dart`.
   3. `lib/workbench/workbench_models.dart`: Data structures (`DspOperation`, `BatchJob`, `MasteringTarget`, `AudioInspectResult`).
   4. `lib/workbench/workbench_queue.dart`: Serialized batch execution runner, pause/cancel state machine, and progress notifications.
   5. `lib/workbench/components/waveform_editor.dart`: Waveform rendering, region drag handles, and selection calculations.

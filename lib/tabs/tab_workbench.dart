@@ -24,6 +24,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../widgets/waveform_studio.dart';
 import '../core/whisper_model.dart';
 import '../core/ghost_commands.dart';
+import '../workbench/dsp_builders.dart';
+import '../workbench/video_dsp_builders.dart';
 
 class TabWorkbench extends StatefulWidget {
   const TabWorkbench({super.key});
@@ -117,27 +119,9 @@ class _TabWorkbenchState extends State<TabWorkbench> {
 
   static const List<String> _preservedContainers = ['mp3', 'flac', 'wav', 'm4a', 'ogg', 'opus'];
 
-  String _audioCodecArgs(String container) {
-    switch (container) {
-      case 'flac':
-        return _bitDepth == 24 ? '-c:a flac -sample_fmt s32' : '-c:a flac';
-      case 'wav':
-        return _bitDepth == 24 ? '-c:a pcm_s24le' : '-c:a pcm_s16le';
-      case 'm4a':
-        return '-c:a aac -b:a 256k';
-      case 'ogg':
-        return '-c:a libvorbis -q:a 6';
-      case 'opus':
-        return '-c:a libopus -b:a 256k';
-      default:
-        return '-c:a libmp3lame -b:a 320k';
-    }
-  }
+  String _audioCodecArgs(String container) => buildAudioCodecArgs(container, bitDepth: _bitDepth);
 
-  String _resampleFilter() {
-    if (_sampleRate == "Source") return "";
-    return "aresample=$_sampleRate:resampler=soxr";
-  }
+  String _resampleFilter() => buildResampleFilter(_sampleRate);
 
   String _fmtHms(Duration d) {
     String two(int n) => n.toString().padLeft(2, '0');
@@ -163,29 +147,7 @@ class _TabWorkbenchState extends State<TabWorkbench> {
     );
   }
 
-  Map<String, String>? _parseLoudnormMeasurements(String output) {
-    try {
-      final matches = RegExp(r'\{[^{}]*"input_i"[^{}]*\}').allMatches(output);
-      if (matches.isEmpty) return null;
-      final last = matches.last.group(0)!;
-      final decoded = jsonDecode(last);
-      if (decoded is Map<String, dynamic> && decoded.containsKey('input_i')) {
-        return decoded.map((k, v) => MapEntry(k.toString(), v?.toString() ?? ""));
-      }
-    } catch (_) {
-      try {
-        final start = output.lastIndexOf('{');
-        final end = output.lastIndexOf('}');
-        if (start >= 0 && end > start) {
-          final decoded = jsonDecode(output.substring(start, end + 1));
-          if (decoded is Map<String, dynamic> && decoded.containsKey('input_i')) {
-            return decoded.map((k, v) => MapEntry(k.toString(), v?.toString() ?? ""));
-          }
-        }
-      } catch (_) {}
-    }
-    return null;
-  }
+  Map<String, String>? _parseLoudnormMeasurements(String output) => parseLoudnormMeasurements(output);
 
   final List<String> _operations = [
     "Extract Audio (Video to MP3)",
@@ -281,7 +243,7 @@ class _TabWorkbenchState extends State<TabWorkbench> {
     if (_selectedFilePath.isEmpty || _isProcessing) return;
     setState(() { _isProcessing = true; _lufsReport = "Scanning EBU R128 Integrated Loudness..."; });
     try {
-      final session = await FFmpegExecutor.execute('-y -i "$_selectedFilePath" -af ebur128 -f null -');
+      final session = await FFmpegExecutor.execute(buildEbuR128Args(_selectedFilePath));
       final output = session.getOutput() ?? "";
       final match = RegExp(r'I:\s*(-?\d+\.?\d*)\s*LUFS').firstMatch(output);
       if (!mounted) return;
@@ -304,7 +266,7 @@ class _TabWorkbenchState extends State<TabWorkbench> {
     if (_selectedFilePath.isEmpty || _isProcessing) return;
     setState(() { _isProcessing = true; _replayGainReport = "Scanning ReplayGain (EBU R128)..."; });
     try {
-      final session = await FFmpegExecutor.execute('-y -i "$_selectedFilePath" -af ebur128 -f null -');
+      final session = await FFmpegExecutor.execute(buildEbuR128Args(_selectedFilePath));
       final output = session.getOutput() ?? "";
       
 
@@ -409,7 +371,7 @@ class _TabWorkbenchState extends State<TabWorkbench> {
     if (_selectedFilePath.isEmpty || _isProcessing) return;
     setState(() { _isProcessing = true; _volumeReport = "Scanning Volume (volumedetect)..."; });
     try {
-      final session = await FFmpegExecutor.execute('-y -i "$_selectedFilePath" -af volumedetect -f null -');
+      final session = await FFmpegExecutor.execute(buildVolumeDetectArgs(_selectedFilePath));
       final output = session.getOutput() ?? "";
       final fault = _filterFaultHint(output);
       if (!mounted) return;
@@ -440,7 +402,7 @@ class _TabWorkbenchState extends State<TabWorkbench> {
     if (_selectedFilePath.isEmpty || _isProcessing) return;
     setState(() { _isProcessing = true; _silenceReport = "Scanning Silence (silencedetect -45dB / 0.3s)..."; });
     try {
-      final session = await FFmpegExecutor.execute('-y -i "$_selectedFilePath" -af silencedetect=noise=-45dB:d=0.3 -f null -');
+      final session = await FFmpegExecutor.execute(buildSilenceDetectArgs(_selectedFilePath));
       final output = session.getOutput() ?? "";
       final fault = _filterFaultHint(output);
       if (!mounted) return;
@@ -476,41 +438,10 @@ class _TabWorkbenchState extends State<TabWorkbench> {
     }
   }
 
-  List<({double start, double? end})> _parseSilences(String output) {
-    final starts = RegExp(r'silence_start:\s*([\d.]+)').allMatches(output).map((m) => double.tryParse(m.group(1) ?? "") ?? 0.0).toList();
-    final ends = RegExp(r'silence_end:\s*([\d.]+)\s*\|\s*silence_duration:\s*([\d.]+)').allMatches(output).map((m) => double.tryParse(m.group(1) ?? "") ?? 0.0).toList();
-    final out = <({double start, double? end})>[];
-    for (int i = 0; i < starts.length; i++) {
-      out.add((start: starts[i], end: i < ends.length ? ends[i] : null));
-    }
-    return out;
-  }
+  List<({double start, double? end})> _parseSilences(String output) => parseSilences(output);
 
-  List<({double start, double end})> _splitSegmentsFromSilence(String output, int? durationMs) {
-    final silences = _parseSilences(output);
-    double? totalSec;
-    if (durationMs != null && durationMs > 0) {
-      totalSec = durationMs / 1000.0;
-    } else if (silences.isNotEmpty && silences.last.end != null) {
-      totalSec = silences.last.end;
-    } else if (silences.isNotEmpty) {
-      totalSec = silences.last.start;
-    }
-    if (totalSec == null || totalSec <= 0) return [];
-    final segments = <({double start, double end})>[];
-    double cursor = 0.0;
-    for (final s in silences) {
-      if (s.start - cursor >= _splitMinSegmentSec) {
-        segments.add((start: cursor, end: s.start));
-      }
-      if (s.end == null) return segments;
-      cursor = s.end!;
-    }
-    if (totalSec - cursor >= _splitMinSegmentSec) {
-      segments.add((start: cursor, end: totalSec));
-    }
-    return segments;
-  }
+  List<({double start, double end})> _splitSegmentsFromSilence(String output, int? durationMs) =>
+      splitSegmentsFromSilence(output, durationMs, minSegmentSec: _splitMinSegmentSec);
 
   Future<void> _executeSplitOnSilence() async {
     if (_selectedFilePath.isEmpty || _isProcessing) return;
@@ -518,7 +449,7 @@ class _TabWorkbenchState extends State<TabWorkbench> {
     try {
       final durationMs = await probeDurationMs(_selectedFilePath);
       if (!mounted) return;
-      final session = await FFmpegExecutor.execute('-y -i "$_selectedFilePath" -af silencedetect=noise=-45dB:d=0.3 -f null -');
+      final session = await FFmpegExecutor.execute(buildSilenceDetectArgs(_selectedFilePath));
       final output = session.getOutput() ?? "";
       final fault = _filterFaultHint(output);
       if (!mounted) return;
@@ -595,12 +526,7 @@ class _TabWorkbenchState extends State<TabWorkbench> {
     switch (op) {
       case "Apply Fades":
         if (durationMs == null) throw StateError("ERR: Cannot Determine Duration For Fade Out Point.");
-        final totalSec = durationMs / 1000.0;
-        if (_fadeInSec > 0) filters.add("afade=t=in:st=0:d=${_fadeInSec.toStringAsFixed(2)}");
-        if (_fadeOutSec > 0) {
-          final outStart = (totalSec - _fadeOutSec).clamp(0.0, totalSec).toStringAsFixed(2);
-          filters.add("afade=t=out:st=$outStart:d=${_fadeOutSec.toStringAsFixed(2)}");
-        }
+        filters.addAll(buildFadeFilter(fadeInSec: _fadeInSec, fadeOutSec: _fadeOutSec, totalDurationSec: durationMs / 1000.0));
         break;
       case "Fold To Mono":
         filters.add("pan=mono|c0=0.5*c0+0.5*c1");
@@ -613,10 +539,7 @@ class _TabWorkbenchState extends State<TabWorkbench> {
       case "Delete Region": {
         final sMs = _waveSelInMs ?? _parseHmsSafe(_startCtrl.text).inMilliseconds;
         final eMs = _waveSelOutMs ?? _parseHmsSafe(_endCtrl.text).inMilliseconds;
-        final sSec = sMs / 1000.0;
-        final eSec = eMs / 1000.0;
-        if (eSec <= sSec) throw StateError("ERR: END Must Exceed START (use wave selection).");
-        filters.add("aselect='not(between(t,$sSec,$eSec))',asetpts=N/SR/TB");
+        filters.add(buildDeleteRegionFilter(startSec: sMs / 1000.0, endSec: eMs / 1000.0));
         break;
       }
       case "Click/Pop Repair (adeclick)":
@@ -646,57 +569,23 @@ class _TabWorkbenchState extends State<TabWorkbench> {
       case "Compand (dynamic shaping)":
         filters.add("compand=attacks=0.05:decays=0.3:points=-80/-80|-60/-50|-30/-25|-10/-8|0/0:gain=${_compandGainDb.toStringAsFixed(1)}");
         break;
-      case "Firequalizer Curve EQ": {
-        final curve = "firequalizer=gain_entry='entry(100,${_eqBass.toStringAsFixed(1)});entry(320,${_eqLowMid.toStringAsFixed(1)});entry(1000,${_eqMid.toStringAsFixed(1)});entry(3500,${_eqHighMid.toStringAsFixed(1)});entry(8000,${_eqTreble.toStringAsFixed(1)})'";
-        if (_eqBass == 0 && _eqLowMid == 0 && _eqMid == 0 && _eqHighMid == 0 && _eqTreble == 0) {
-          throw StateError("ERR: All EQ Bands At Zero. Nothing To Apply.");
-        }
-        filters.add(curve);
+      case "Firequalizer Curve EQ":
+        filters.add(buildFirequalizerCurve(bass: _eqBass, lowMid: _eqLowMid, mid: _eqMid, highMid: _eqHighMid, treble: _eqTreble));
         break;
-      }
       case "Granular Audio DSP (Speed/Reverb)":
-        if (_isReversed) filters.add("areverse");
-        if (_audioSpeed != 1.0) {
-          final s = _audioSpeed.toStringAsFixed(2);
-          switch (_pitchMode) {
-            case "RUBBERBAND (pitch only)":
-              filters.add("rubberband=pitch=$s");
-              break;
-            case "ATEMPO (tempo only)":
-              filters.add("atempo=${_audioSpeed.clamp(0.5, 2.0).toStringAsFixed(2)}");
-              break;
-            default:
-              filters.add("asetrate=44100*$s,aresample=44100");
-          }
-        }
-        if (_reverbIntensity > 0) {
-          final delay = 60 + (_reverbIntensity * 40);
-          final decay = 0.2 + (_reverbIntensity * 0.4);
-          filters.add("aecho=0.8:0.88:$delay:$decay");
-        }
+        filters.addAll(buildGranularSpeedFilter(speed: _audioSpeed, pitchMode: _pitchMode, isReversed: _isReversed, reverbIntensity: _reverbIntensity));
         break;
       case "AI Denoise (afftdn)":
         filters.add("afftdn=nf=-25");
         break;
       case "Parametric EQ":
-        if (_eqBass != 0) filters.add("bass=g=${_eqBass.toStringAsFixed(1)}:f=100");
-        if (_eqLowMid != 0) filters.add("equalizer=f=320:t=q:w=1.2:g=${_eqLowMid.toStringAsFixed(1)}");
-        if (_eqMid != 0) filters.add("equalizer=f=1000:t=q:w=1.2:g=${_eqMid.toStringAsFixed(1)}");
-        if (_eqHighMid != 0) filters.add("equalizer=f=3500:t=q:w=1.2:g=${_eqHighMid.toStringAsFixed(1)}");
-        if (_eqTreble != 0) filters.add("treble=g=${_eqTreble.toStringAsFixed(1)}:f=8000");
-        if (filters.isEmpty) throw StateError("ERR: All EQ Bands At Zero. Nothing To Apply.");
+        filters.addAll(buildEqFilter(bass: _eqBass, lowMid: _eqLowMid, mid: _eqMid, highMid: _eqHighMid, treble: _eqTreble));
         break;
       case "Compress Dynamics":
         filters.add("acompressor=threshold=0.1:ratio=${_compRatio.toStringAsFixed(1)}:attack=50:release=500");
         break;
       case "15-Band Equalizer (AutoEq)":
-        for (int i = 0; i < 15; i++) {
-          if (_eq15Bands[i] != 0) {
-            final freq = _eq15Freqs[i];
-            filters.add("equalizer=f=$freq:t=q:w=1.2:g=${_eq15Bands[i].toStringAsFixed(1)}");
-          }
-        }
-        if (filters.isEmpty) throw StateError("ERR: All EQ Bands At Zero. Nothing To Apply.");
+        filters.addAll(build15BandEqFilter(_eq15Bands));
         break;
       case "Normalize Audio (LUFS -14)":
         break;
@@ -711,129 +600,24 @@ class _TabWorkbenchState extends State<TabWorkbench> {
     return name.contains('.') ? name.substring(0, name.lastIndexOf('.')) : name;
   }
 
-  String _videoCodecArgs(String container) {
-    switch (container) {
-      case 'webm':
-        return '-c:v libvpx-vp9 -crf 30 -b:v 0 -pix_fmt yuv420p -c:a libopus -b:a 192k';
-      default:
-        return '-c:v libx264 -preset veryfast -crf 23 -pix_fmt yuv420p -c:a aac -b:a 192k';
-    }
-  }
-
-  String _videoAudioCodecArgs(String container) {
-    return container == 'webm' ? '-c:a libopus -b:a 192k' : '-c:a aac -b:a 192k';
-  }
-
-  String _videoRotateChain() {
-    final parts = <String>[];
-    switch (_videoRotate) {
-      case "90 CW":
-        parts.add("transpose=1");
-        break;
-      case "180":
-        parts.add("transpose=1,transpose=1");
-        break;
-      case "90 CCW":
-        parts.add("transpose=2");
-        break;
-    }
-    if (_videoFlipH) parts.add("hflip");
-    if (_videoFlipV) parts.add("vflip");
-    return parts.join(',');
-  }
-
-  int _videoScaleHeight() {
-    switch (_videoScale) {
-      case "720p":
-        return 720;
-      case "480p":
-        return 480;
-      default:
-        return 1080;
-    }
-  }
-
-  String _videoCropFilter() {
-    switch (_videoCropAspect) {
-      case "4:3":
-        return "crop='min(iw,ih*4/3)':'min(ih,iw*3/4)'";
-      case "1:1":
-        return "crop='min(iw,ih)':'min(iw,ih)'";
-      case "9:16":
-        return "crop='min(iw,ih*9/16)':'min(ih,iw*16/9)'";
-      default:
-        return "crop='min(iw,ih*16/9)':'min(ih,iw*9/16)'";
-    }
-  }
-
-  String _videoOpSuffix(String op) {
-    switch (op) {
-      case "Video Trim (Re-Encode)":
-        return "_trim";
-      case "Video Rotate / Flip":
-        return "_rot";
-      case "Video Scale / Resize":
-        return "_scale";
-      case "Video Crop (Center)":
-        return "_crop";
-      case "Mute Video (Drop Audio)":
-        return "_mute";
-      case "Extract Audio (Video to M4A)":
-        return "_m4a";
-      case "Video Convert (Container)":
-        return "_conv";
-      case "Mux Video + Audio":
-        return "_mux";
-      default:
-        return "_mod";
-    }
-  }
+  String _videoOpSuffix(String op) => buildVideoOpSuffix(op);
 
   String _buildVideoCommand(String op, String inputPath, String outPath, int? durationMs) {
-    final parts = inputPath.split('.');
-    final srcExt = parts.length > 1 ? parts.last.toLowerCase() : "";
-    final container = ['mp4', 'mkv', 'webm'].contains(srcExt) ? srcExt : "mp4";
-    final vcodecs = _videoCodecArgs(container);
-    switch (op) {
-      case "Video Trim (Re-Encode)": {
-        final timeFmt = RegExp(r'^\d{1,2}:\d{2}:\d{2}$');
-        final startText = _startCtrl.text.trim();
-        final endText = _endCtrl.text.trim();
-        if (!timeFmt.hasMatch(startText) || !timeFmt.hasMatch(endText)) throw StateError("ERR: Clip Bounds Must Be HH:MM:SS.");
-        Duration parseHms(String s) {
-          final p = s.split(':').map((e) => int.parse(e)).toList();
-          return Duration(hours: p[0], minutes: p[1], seconds: p[2]);
-        }
-        final start = parseHms(startText);
-        final end = parseHms(endText);
-        if (end <= start) throw StateError("ERR: END Must Exceed START.");
-        if (durationMs != null && end.inMilliseconds > durationMs + 500) throw StateError("ERR: END Exceeds Source Duration (${_fmtHms(Duration(milliseconds: durationMs))}).");
-        return '-y -i "$inputPath" -ss $startText -to $endText -map 0:v:0 -map 0:a? $vcodecs "$outPath"';
-      }
-      case "Video Rotate / Flip": {
-        final chain = _videoRotateChain();
-        if (chain.isEmpty) throw StateError("ERR: NOTHING TO ROTATE OR FLIP. Pick a rotation or a flip first.");
-        return '-y -i "$inputPath" -vf "$chain" -map 0:v:0 -map 0:a? $vcodecs "$outPath"';
-      }
-      case "Video Scale / Resize":
-        return '-y -i "$inputPath" -vf "scale=-2:${_videoScaleHeight()}" -map 0:v:0 -map 0:a? $vcodecs "$outPath"';
-      case "Video Crop (Center)":
-        return '-y -i "$inputPath" -vf "${_videoCropFilter()}" -map 0:v:0 -map 0:a? $vcodecs "$outPath"';
-      case "Mute Video (Drop Audio)":
-        return '-y -i "$inputPath" -map 0:v:0 -c:v copy "$outPath"';
-      case "Extract Audio (Video to M4A)":
-        return '-y -i "$inputPath" -vn -c:a aac -b:a 256k "$outPath"';
-      case "Video Convert (Container)": {
-        final targetCodecs = _videoCodecArgs(_targetVideoFormat);
-        return '-y -i "$inputPath" -map 0:v:0 -map 0:a? $targetCodecs "$outPath"';
-      }
-      case "Mux Video + Audio": {
-        if (_secondFilePath.isEmpty) throw StateError("ERR: MOUNT SECOND MEDIA FIRST (AUDIO TRACK).");
-        return '-y -i "$inputPath" -i "$_secondFilePath" -map 0:v:0 -map 1:a:0 -c:v copy ${_videoAudioCodecArgs(container)} -shortest "$outPath"';
-      }
-      default:
-        throw StateError("ERR: OP '$op' HAS NO VIDEO CHAIN.");
-    }
+    return buildVideoCommand(
+      op: op,
+      inputPath: inputPath,
+      outPath: outPath,
+      durationMs: durationMs,
+      startHms: _startCtrl.text,
+      endHms: _endCtrl.text,
+      rotate: _videoRotate,
+      flipH: _videoFlipH,
+      flipV: _videoFlipV,
+      scale: _videoScale,
+      cropAspect: _videoCropAspect,
+      targetVideoFormat: _targetVideoFormat,
+      secondFilePath: _secondFilePath,
+    );
   }
 
   Future<String> _injectToMediaStore(String outPath, String title) async {
@@ -1003,11 +787,8 @@ class _TabWorkbenchState extends State<TabWorkbench> {
     try {
       final tempDir = await _storageChannel.invokeMethod('getTempDirectory');
       final outPath = "$tempDir/tone_${DateTime.now().millisecondsSinceEpoch}.wav";
-      final d = _toneDurSec.toStringAsFixed(2);
-      final input = _toneType == "SINE"
-          ? "sine=frequency=${_toneFreq.round()}:duration=$d:sample_rate=48000"
-          : "anoisesrc=color=${_toneType == 'WHITE NOISE' ? 'white' : 'pink'}:duration=$d:sample_rate=48000:amplitude=0.6";
-      await FFmpegExecutor.execute('-y -f lavfi -i "$input" -c:a pcm_s16le "$outPath"');
+      final cmd = buildToneArgs(toneType: _toneType, freq: _toneFreq, durationSec: _toneDurSec, outPath: outPath);
+      await FFmpegExecutor.execute(cmd);
       String note = "Tone Generated + Mounted For DSP.";
       try {
         await _storageChannel.invokeMethod('addToMediaStore', {'filePath': outPath, 'title': 'Machine Tone ${_toneFreq.round()}Hz'});
@@ -1389,16 +1170,22 @@ class _TabWorkbenchState extends State<TabWorkbench> {
           return;
         }
         if (isVideoSrc) {
-          if (start > Duration.zero) {
-            command = '-y -ss $startText -i "$_selectedFilePath" -t ${_fmtHms(end - start)} -c copy -avoid_negative_ts make_zero "$outPath"';
-          } else {
-            command = '-y -i "$_selectedFilePath" -to $endText -c copy -avoid_negative_ts make_zero "$outPath"';
-          }
+          command = buildClipVideoArgs(
+            inputPath: _selectedFilePath,
+            outPath: outPath,
+            startHms: startText,
+            endHms: endText,
+          );
         } else {
-          command = '-y -i "$_selectedFilePath" -ss $startText -to $endText -c copy "$outPath"';
+          command = buildClipAudioArgs(
+            inputPath: _selectedFilePath,
+            outPath: outPath,
+            startHms: startText,
+            endHms: endText,
+          );
         }
       } else if (_selectedOperation == "Spectrogram Snapshot") {
-        command = '-y -i "$_selectedFilePath" -lavfi "showspectrumpic=s=1280x720:legend=1" -frames:v 1 "$outPath"';
+        command = buildSpectrogramArgs(inputPath: _selectedFilePath, outPath: outPath);
       } else if (_selectedOperation == "Mix With File") {
         final extra = List<_MixTrack>.from(_mixTracks);
         if (extra.isEmpty && _secondFilePath.isNotEmpty) {
@@ -1415,38 +1202,27 @@ class _TabWorkbenchState extends State<TabWorkbench> {
         final warn = _mixGuardWarning(extra);
         if (warn != null) setState(() => _statusMessage = "WARN: $warn");
         final inputs = <String>[_selectedFilePath, ...extra.map((t) => t.path)];
-        final chainParts = <String>[];
-        final mixLabels = <String>[];
-        for (int i = 0; i < inputs.length; i++) {
-          final gain = i == 0 ? 1.0 : extra[i - 1].gain;
-          final pan = i == 0 ? 0.0 : extra[i - 1].pan;
-          final left = (pan <= 0 ? 1.0 : 1.0 - pan).toStringAsFixed(2);
-          final right = (pan >= 0 ? 1.0 : 1.0 + pan).toStringAsFixed(2);
-          chainParts.add("[$i:a]aresample=48000:ocl=stereo:resampler=soxr,volume=${gain.toStringAsFixed(2)},pan=stereo|c0=$left*c0|c1=$right*c1[a$i]");
-          mixLabels.add("[a$i]");
-        }
-        final filterComplex = "${chainParts.join(';')};${mixLabels.join('')}amix=inputs=${inputs.length}:duration=longest:normalize=0,alimiter=limit=0.95:attack=5:release=50";
-        final inputArgs = inputs.map((p) => '-i "$p"').join(' ');
-        command = '-y $inputArgs -filter_complex "$filterComplex" ${_audioCodecArgs(ext)} "$outPath"';
+        final gains = [1.0, ...extra.map((t) => t.gain)];
+        final pans = [0.0, ...extra.map((t) => t.pan)];
+        command = buildMultitrackMixArgs(inputPaths: inputs, gains: gains, pans: pans, outPath: outPath, container: ext, bitDepth: _bitDepth);
       } else if (_selectedOperation == "Gapless Join (concat)") {
         if (_secondFilePath.isEmpty) {
           setState(() { _isProcessing = false; _statusMessage = "ERR: MOUNT SECOND MEDIA FIRST."; });
           return;
         }
-        command = '-y -i "$_selectedFilePath" -i "$_secondFilePath" -filter_complex "[0:a]aresample=48000:ocl=stereo:resampler=soxr[a0];[1:a]aresample=48000:ocl=stereo:resampler=soxr[a1];[a0][a1]concat=n=2:v=0:a=1[out]" -map "[out]" ${_audioCodecArgs(ext)} "$outPath"';
+        command = buildGaplessJoinArgs(firstPath: _selectedFilePath, secondPath: _secondFilePath, outPath: outPath, container: ext, bitDepth: _bitDepth);
       } else if (_selectedOperation == "Sidechain Duck (sidechaincompress)") {
         if (_secondFilePath.isEmpty) {
           setState(() { _isProcessing = false; _statusMessage = "ERR: MOUNT VOICE MEDIA FIRST (SECOND FILE = SIDECHAIN)."; });
           return;
         }
-        final thresh = pow(10.0, _duckThresholdDb / 20.0).clamp(0.015625, 1.0).toDouble();
-        command = '-y -i "$_selectedFilePath" -i "$_secondFilePath" -filter_complex "[0:a][1:a]sidechaincompress=threshold=${thresh.toStringAsFixed(4)}:ratio=${_duckRatio.toStringAsFixed(1)}:attack=${_duckAttackMs.toStringAsFixed(0)}:release=${_duckReleaseMs.toStringAsFixed(0)}[out]" -map "[out]" -vn ${_audioCodecArgs(ext)} "$outPath"';
+        command = buildSidechainDuckArgs(mainPath: _selectedFilePath, sidechainPath: _secondFilePath, outPath: outPath, thresholdDb: _duckThresholdDb, ratio: _duckRatio, attackMs: _duckAttackMs, releaseMs: _duckReleaseMs, container: ext, bitDepth: _bitDepth);
       } else if (_selectedOperation == "Crossfade Join") {
         if (_secondFilePath.isEmpty) {
           setState(() { _isProcessing = false; _statusMessage = "ERR: MOUNT SECOND MEDIA FIRST."; });
           return;
         }
-        command = '-y -i "$_selectedFilePath" -i "$_secondFilePath" -filter_complex "[0:a][1:a]acrossfade=d=${_xfadeSec.toStringAsFixed(2)}:c1=tri:c2=tri" ${_audioCodecArgs(ext)} "$outPath"';
+        command = buildCrossfadeJoinArgs(firstPath: _selectedFilePath, secondPath: _secondFilePath, outPath: outPath, xfadeSec: _xfadeSec, container: ext, bitDepth: _bitDepth);
       } else if (_selectedOperation == "Extract Audio (Video to MP3)") {
         command = '-y -i "$_selectedFilePath" -vn -c:a libmp3lame -b:a 320k "$outPath"';
       } else if (_selectedOperation == "Convert Format") {
@@ -1478,17 +1254,17 @@ class _TabWorkbenchState extends State<TabWorkbench> {
         String? loudnormFilter;
         if (_selectedOperation == "Normalize Audio (LUFS -14)") {
           if (_normMode == "DYNAMIC (dynaudnorm)") {
-            loudnormFilter = 'dynaudnorm=p=0.9:m=12';
+            loudnormFilter = buildLoudnormFilter(mode: _normMode);
           } else {
-            loudnormFilter = 'loudnorm=I=-14:LRA=11:TP=-1.5';
+            loudnormFilter = buildLoudnormFilter(mode: _normMode);
             if (_twoPassLoudnorm) {
               setState(() => _statusMessage = "LOUDNORM PASS 1/2: ANALYZING...");
-              final analysisCmd = '-y -i "$_selectedFilePath" -af "loudnorm=I=-14:LRA=11:TP=-1.5:print_format=json" -f null -';
+              final analysisCmd = buildLoudnormFirstPassArgs(_selectedFilePath);
               final pass1 = await FFmpegExecutor.execute(analysisCmd);
               if (!mounted) return;
               final measured = _parseLoudnormMeasurements(pass1.getOutput() ?? "");
               if (measured != null) {
-                loudnormFilter = 'loudnorm=I=-14:LRA=11:TP=-1.5:measured_I=${measured['input_i']}:measured_LRA=${measured['input_lra']}:measured_TP=${measured['input_tp']}:measured_thresh=${measured['input_thresh']}:offset=${measured['target_offset']}:linear=true';
+                loudnormFilter = buildLoudnormFilter(mode: _normMode, measured: measured);
               } else {
                 setState(() => _statusMessage = "WARN: Pass-1 Analysis Unreadable. Falling Back To Single-Pass.");
               }
@@ -1601,7 +1377,7 @@ class _TabWorkbenchState extends State<TabWorkbench> {
     for (final op in ops) {
       final sub = _filtersForOperation(op, durationMs);
       if (op == "Normalize Audio (LUFS -14)") {
-        sub.insert(0, _normMode == "DYNAMIC (dynaudnorm)" ? 'dynaudnorm=p=0.9:m=12' : 'loudnorm=I=-14:LRA=11:TP=-1.5');
+        sub.insert(0, buildLoudnormFilter(mode: _normMode));
       }
       out.addAll(sub);
     }
@@ -1684,7 +1460,7 @@ class _TabWorkbenchState extends State<TabWorkbench> {
     final resample = _resampleFilter();
     if (resample.isNotEmpty) filters.insert(0, resample);
     if (op == "Normalize Audio (LUFS -14)") {
-      filters.insert(0, _normMode == "DYNAMIC (dynaudnorm)" ? 'dynaudnorm=p=0.9:m=12' : 'loudnorm=I=-14:LRA=11:TP=-1.5');
+      filters.insert(0, buildLoudnormFilter(mode: _normMode));
     }
     final chain = filters.isNotEmpty ? '-af "${filters.join(',')}"' : "";
     return '-y -i "$inputPath" $chain -vn ${_audioCodecArgs(_outputExtFor(inputPath, op))} "$outPath"';

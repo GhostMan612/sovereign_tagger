@@ -349,7 +349,7 @@
 - [x] **38.3.6 Security Documentation Synchronized** — Updated `SECURITY.md` Section 3 with AES-256-GCM authenticated storage, KDF bounding, StrongBox/TEE Keystore mode, the migration role and plaintext caveat of `LEGACY_PHASE38_SECRET`, and the `sov_recovery` safety model.
 - Gate: `flutter analyze --no-pub` -> `No issues found!`; `flutter test` -> `All 49 tests passed!`; Python doctor tests -> `2/2 passed`.
 
-## Phase 39 — Security, Cloud Cache & Crash Hardening [x]
+## Phase 39 — Security, Cloud Cache, Crash Hardening & Subsystem Modularization [x]
 - [x] **39.1 OAuth Host Validation (PR #30)** — Constrained pCloud OAuth callback hostname to regional API allowlist (`CloudRegion`), rejecting arbitrary host redirection and preventing bearer-token leakage.
 - [x] **39.2 Atomic Cloud Cache Replacement (PR #24)** — Staged cache file replacement via `.part` files with atomic rename upon verification, preserving existing offline cache on network/file failures.
 - [x] **39.3 Isolated Cloud Staging (PR #25)** — Isolated concurrent cloud downloads into dedicated temporary directories (`Directory.createTemp`), preventing collision and truncation.
@@ -359,7 +359,8 @@
 - [x] **39.7 Dead Code Pruning & Documentation Alignment (PR #26, #28, #37)** — Pruned unreferenced Sentinel naming wrappers and refreshed architectural documentation.
 - [x] **39.8 Architecture Decomposition Blueprint Authored** — Authored `.blueprints/ARCHITECTURE_DECOMPOSITION.md` defining 3-stage modularization plans for the 6 oversized modules (~611 KB).
 - [x] **39.9 Remote Audit Register & Work Orders Landed (PR #31, #33, #34, #35, #36, #38)** — Committed canonical audit register (`docs/remote-audit-2026-11-12.md`) and five dedicated work-order specifications into `docs/audit-workorders/`.
-- Gate: `flutter analyze --no-pub` -> `No issues found!`; `flutter test` -> `All 57 tests passed!`; Python doctor tests -> `2/2 passed`.
+- [x] **39.10 Stage A: Workbench Pure DSP Extraction** — Extracted pure audio filter builders to `lib/workbench/dsp_builders.dart` and pure video builders to `lib/workbench/video_dsp_builders.dart`; added 24 unit tests in `test/workbench_dsp_test.dart` (test suite expanded to 81 tests); refactored `lib/tabs/tab_workbench.dart`.
+- Gate: `flutter analyze --no-pub` -> `No issues found!`; `flutter test` -> `All 81 tests passed!`; Python doctor tests -> `2/2 passed`.
 
 ## Phase S0–S4 — SOVEREIGN SDK EDITION [-] PARKED 2026-10-01 — spec only, do not start
 
