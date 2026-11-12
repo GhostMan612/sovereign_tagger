@@ -1,5 +1,16 @@
-# CURRENT_STATE.md — Sovereign Tagger v2 (post-Phase 38.3)
-> Snapshot as of 2026-11-12 — Phases 0–38.3 + PR #1–#23 COMPLETE & MERGED on main (frozen baseline `ba708fe`; `flutter analyze --no-pub` -> `No issues found!`; `flutter test` -> 49/49 passed; Python doctor tests -> 2/2 passed; Moto G 2025 `ZT4222BMWN` + BLU View 5 `7040016025040287` hardware verification ALL PASS; CI runs #43155973232 and #43156247313 green).
+# CURRENT_STATE.md — Sovereign Tagger v2 (post-Phase 39 Wave 1)
+> Snapshot as of 2026-11-12 — Phases 0–39 Wave 1 COMPLETE & MERGED on main (PRs #1–#30, #32, #37 merged; `flutter analyze --no-pub` -> `No issues found!`; `flutter test` -> 57/57 passed; Python doctor tests -> 2/2 passed; Moto G 2025 `ZT4222BMWN` + BLU View 5 `7040016025040287` hardware verification ALL PASS).
+>
+> **Phase 39 Wave 1 deltas (Security, Cloud Cache & Crash Hardening):**
+> - **OAuth API Host Validation (P0 — PR #30)**: Validates pCloud OAuth callback `hostname` against allowlisted `CloudRegion` hosts before saving tokens or sending authenticated API requests, eliminating host substitution risk. Added `test/cloud_host_security_test.dart`.
+> - **Atomic Cloud Cache Staging (P1 — PR #24)**: Preserves existing offline pCloud cache on replacement failures by staging to `.part` and atomically renaming upon verification. Added `test/cloud_cache_test.dart`.
+> - **Isolated Cloud Download Staging (P1 — PR #25)**: Isolates concurrent pCloud file downloads inside unique OS temporary directories (`Directory.createTemp`), preventing temporary file collision and truncation.
+> - **Truncated Download Rejection (P1 — PR #32)**: Enforces `Content-Length` verification on pCloud file downloads; rejects and purges partial media when received bytes do not match expected length.
+> - **Fail-Closed Recovery Scanning (P1 — PR #27)**: Propagates platform-channel recovery scan errors rather than rendering an empty list; surfaces explicit error state and sentinel `-1` indicator in UI.
+> - **UUID Recovery Transaction Identifiers (P1 — PR #29)**: Appends random UUIDs to millisecond timestamps in `StorageBridge.overwriteMedia` backup/journal naming (`sov_rec_${time}_${uuid}.bak`), eliminating collision risk across concurrent writes.
+> - **Dead Code Pruning (P3 — PR #28)**: Pruned unreferenced `SentinelNamingPolicy` wrappers (`stripNoiseAndNormalizeFeat`, `toTitleCase`).
+> - **Documentation Alignment (P3 — PR #26, #37)**: Corrected documentation drift across `AGENTS.md`, `ARCHITECTURE.md`, `README.md`, `LICENSES.md`, `SECURITY.md`, and `CONTRIBUTING.md`.
+> - **Modularization Blueprint**: Authored `.blueprints/ARCHITECTURE_DECOMPOSITION.md` defining 3-stage modularization plans for `tab_workbench.dart`, `settings_screen.dart`, `ghost_brain.dart`, `tab_grabber.dart`, `main_shell.dart`, and `StorageBridge.kt`.
 >
 > **Phase 38.3 deltas (Defensive Hardening & PR #23 Review Revisions):**
 > - **Live Destination Hash Verification**: In `recoverPendingOverwrites()`, requires live destination stream SHA-256 computation matching `srcSha` (`currentDestSha == srcSha`) before marking a backup as `COMMITTED_PRE_CLEANUP`. Otherwise assigns `DESTINATION_HASH_UNVERIFIED` and preserves full `RESTORE` and `DISCARD` UI actions.

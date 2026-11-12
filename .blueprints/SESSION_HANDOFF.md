@@ -12,6 +12,7 @@
 | 4 | `.blueprints/ROADMAP.md` | Phase tracker (Phases 0–31, `[x]/[~]/[ ]/[-]`) with per-phase verification gates | when planning/phases |
 | 5 | `.blueprints/BLUEPRINTS.md` | Design specs + **append-only GOTCHA REGISTRY** (SPEC-S* ids, G1–G46) | before novel features |
 | 6 | `.blueprints/ARCHITECTURE.md` | Boot flow + data-flow reference diagrams | structural changes |
+| 7 | `.blueprints/ARCHITECTURE_DECOMPOSITION.md` | 6-file modularization blueprint (Workbench, Settings, Ghost, Grabber, Shell, StorageBridge) | refactoring/modularization |
 | — | `README.md` (root) | Operator-facing capabilities/API-keys/maintenance docs (kept synced with reality) | release/closeout/doc work |
 | — | `pubspec.yaml`, `android/app/build.gradle`, `gradle.properties` | **Executable truth**: frozen dep ceiling pins, `SOVEREIGN_TAGGER.apk` name, debug-signing fallback, chaquopy/python version, builtInKotlin opt-out | any dependency/signing/build question |
 
@@ -21,7 +22,27 @@ Session-end law: update rows 2–4 every session (+ row 5 when a new gotcha is l
 ## Where we are
 
 **Date:** 2026-11-12
-**Phase:** Phase 38.3: Defensive Hardening & Native Test Verification OFFICIALLY CLOSED & FROZEN at baseline `ba708fe` (PR #23 merged into `main` at `5ac8ef0`; doc checkpoint `ba708fe`; zero open PRs; CI passed across runs #43155973232 and #43156247313). Live destination hash verification before COMMITTED_PRE_CLEANUP, discard failure status validation, idempotent orphan meta sweep, collision-safe unique self-test files with guaranteed cleanup, test suite expanded to 49 unit tests, and native security self-test gated as an on-demand diagnostic action in Settings > Crash Recovery Vault. Canonical `main` frozen at `ba708fe`.
+**Phase:** Phase 39: Security, Cloud Cache & Crash Hardening Wave 1 COMPLETE. All 9 executable code-fix & documentation PRs (#24, #25, #26, #27, #28, #29, #30, #32, #37) merged into `main` cleanly; dead feature branches pruned; test suite expanded to 57 passing unit tests; `.blueprints/ARCHITECTURE_DECOMPOSITION.md` modularization blueprint authored for the 6 oversized modules.
+
+## What shipped — Phase 39 Audit Code-Fix Integrations (2026-11-12)
+
+1. **OAuth Host Validation (P0 — PR #30)**:
+   - Validates pCloud OAuth callback `hostname` against allowlisted `CloudRegion` hosts before saving tokens or sending authenticated API requests, eliminating host substitution risk. Added `test/cloud_host_security_test.dart`.
+2. **Atomic Offline Cloud Cache (P1 — PR #24)**:
+   - Preserves existing offline pCloud cache on replacement failures by staging to `.part` and atomically renaming upon verification. Added `test/cloud_cache_test.dart`.
+3. **Isolated Cloud Download Staging (P1 — PR #25)**:
+   - Isolates concurrent pCloud file downloads inside unique OS temporary directories (`Directory.createTemp`), preventing temporary file collision and truncation.
+4. **Truncated Download Rejection (P1 — PR #32)**:
+   - Enforces `Content-Length` verification on pCloud file downloads; rejects and purges partial media when received bytes do not match expected length.
+5. **Fail-Closed Crash Recovery Scanning (P1 — PR #27)**:
+   - Propagates platform-channel recovery scan errors rather than rendering an empty list; surfaces explicit error state and sentinel `-1` indicator in UI.
+6. **UUID-Backed Recovery Transaction Identifiers (P1 — PR #29)**:
+   - Appends random UUIDs to millisecond timestamps in `StorageBridge.overwriteMedia` backup/journal naming (`sov_rec_${time}_${uuid}.bak`), eliminating collision risk across concurrent writes.
+7. **Documentation Drift & Dead Code Pruning (P3 — PR #26, #28, #37)**:
+   - Pruned dead `SentinelNamingPolicy` wrappers (`stripNoiseAndNormalizeFeat`, `toTitleCase`).
+   - Corrected documentation drift across `AGENTS.md`, `ARCHITECTURE.md`, `README.md`, `LICENSES.md`, `SECURITY.md`, and `CONTRIBUTING.md`.
+8. **6-Module Architecture Decomposition Blueprint Authored**:
+   - Authored `.blueprints/ARCHITECTURE_DECOMPOSITION.md` defining 3-stage modularization plans for `tab_workbench.dart`, `settings_screen.dart`, `ghost_brain.dart`, `tab_grabber.dart`, `main_shell.dart`, and `StorageBridge.kt`.
 
 ## What shipped — Phase 38.3 PR #23 Review Hardening & Revisions (2026-11-12)
 
