@@ -75,6 +75,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
   List<Map<String, String>> _pendingRecoveries = [];
   bool _isLoadingRecoveries = false;
   String _recoveryStatus = "";
+  bool _isSelfTesting = false;
+  String _selfTestReport = "";
 
   @override
   void initState() {
@@ -772,16 +774,26 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
     if (confirm != true) return;
     try {
-      await StorageClient.discardPendingOverwrite(backupPath);
+      final ok = await StorageClient.discardPendingOverwrite(backupPath);
       await _loadPendingRecoveries();
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('> RECOVERY BACKUP PURGED.', style: TextStyle(fontFamily: 'ShareTechMono')),
-          backgroundColor: Colors.black,
-          shape: RoundedRectangleBorder(side: BorderSide(color: Colors.redAccent)),
-        ),
-      );
+      if (ok) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('> RECOVERY BACKUP PURGED.', style: TextStyle(fontFamily: 'ShareTechMono')),
+            backgroundColor: Colors.black,
+            shape: RoundedRectangleBorder(side: BorderSide(color: Colors.redAccent)),
+          ),
+        );
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('> ERR: DISCARD INCOMPLETE — UNABLE TO PURGE ALL VAULT FILES.', style: TextStyle(fontFamily: 'ShareTechMono')),
+            backgroundColor: Colors.black,
+            shape: RoundedRectangleBorder(side: BorderSide(color: Colors.redAccent)),
+          ),
+        );
+      }
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -791,6 +803,37 @@ class _SettingsScreenState extends State<SettingsScreen> {
           shape: const RoundedRectangleBorder(side: BorderSide(color: Colors.redAccent)),
         ),
       );
+    }
+  }
+
+  Future<void> _runSecuritySelfTest() async {
+    TapFeedback.machineTap();
+    setState(() {
+      _isSelfTesting = true;
+      _selfTestReport = "EXECUTING NATIVE SECURITY & INTEGRITY SELF-TEST...";
+    });
+    try {
+      final res = await StorageClient.runNativeSecuritySelfTest();
+      if (!mounted) return;
+      final allPassed = res['all_passed'] == true;
+      final summary = [
+        "ENVELOPE FORMAT: ${res['format_correct'] == true ? 'PASS' : 'FAIL'}",
+        "PASSPHRASE ROUNDTRIP: ${res['roundtrip_passphrase'] == true ? 'PASS' : 'FAIL'}",
+        "TAMPER RESISTANCE: ${res['tamper_resistance'] == true ? 'PASS' : 'FAIL'}",
+        "MIN ITERATIONS (1k): ${res['min_iterations_enforced'] == true ? 'PASS' : 'FAIL'}",
+        "MAX ITERATIONS (2M): ${res['max_iterations_enforced'] == true ? 'PASS' : 'FAIL'}",
+        "LEGACY PH38 FALLBACK: ${res['legacy_phase38_fallback'] == true ? 'PASS' : 'FAIL'}",
+        "PATH CONFINEMENT: ${res['path_traversal_confinement'] == true ? 'PASS' : 'FAIL'}",
+        "DISCARD CLEANUP: ${res['discard_cleanup_success'] == true ? 'PASS' : 'FAIL'}",
+        "DISCARD ATOMICITY: ${res['discard_atomic_success'] == true ? 'PASS' : 'FAIL'}",
+        "OVERALL RESULT: ${allPassed ? 'ALL ASSERTIONS PASSED ✓' : 'SELF-TEST FAILED ✗'}",
+      ].join('\n');
+      setState(() => _selfTestReport = summary);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _selfTestReport = "ERR: SELF-TEST FAULT: $e");
+    } finally {
+      if (mounted) setState(() => _isSelfTesting = false);
     }
   }
 
@@ -876,7 +919,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     ),
                     const SizedBox(height: 2),
                     Text(
-                      "SIZE: $size BYTES | STATUS: $status",
+                      "SIZE: $size BYTES",
                       style: const TextStyle(fontFamily: 'ShareTechMono', fontSize: 10, color: Colors.white38),
                     ),
                     if (sha256.isNotEmpty) ...[
@@ -888,25 +931,50 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     ],
                     const SizedBox(height: 8),
                     Row(
-                      mainAxisAlignment: MainAxisAlignment.end,
                       children: [
-                        OutlinedButton(
-                          onPressed: () => _discardPendingMedia(path),
-                          style: OutlinedButton.styleFrom(
-                            side: const BorderSide(color: Colors.redAccent),
-                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                        Expanded(
+                          child: Text(
+                            "STATUS: $status",
+                            style: TextStyle(
+                              fontFamily: 'ShareTechMono',
+                              fontSize: 10,
+                              fontWeight: FontWeight.bold,
+                              color: status == 'COMMITTED_PRE_CLEANUP'
+                                  ? Colors.greenAccent
+                                  : (status == 'DESTINATION_HASH_UNVERIFIED'
+                                      ? Colors.redAccent
+                                      : Colors.amberAccent),
+                            ),
                           ),
-                          child: const Text('DISCARD', style: TextStyle(fontFamily: 'ShareTechMono', fontSize: 10, color: Colors.redAccent)),
                         ),
-                        const SizedBox(width: 8),
-                        OutlinedButton(
-                          onPressed: () => _restorePendingMedia(path),
-                          style: OutlinedButton.styleFrom(
-                            side: const BorderSide(color: Colors.greenAccent),
-                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                        if (status == 'COMMITTED_PRE_CLEANUP')
+                          OutlinedButton(
+                            onPressed: () => _discardPendingMedia(path),
+                            style: OutlinedButton.styleFrom(
+                              side: const BorderSide(color: Colors.greenAccent),
+                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                            ),
+                            child: const Text('PURGE (LANDED)', style: TextStyle(fontFamily: 'ShareTechMono', fontSize: 10, color: Colors.greenAccent)),
+                          )
+                        else ...[
+                          OutlinedButton(
+                            onPressed: () => _discardPendingMedia(path),
+                            style: OutlinedButton.styleFrom(
+                              side: const BorderSide(color: Colors.redAccent),
+                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                            ),
+                            child: const Text('DISCARD', style: TextStyle(fontFamily: 'ShareTechMono', fontSize: 10, color: Colors.redAccent)),
                           ),
-                          child: const Text('RESTORE', style: TextStyle(fontFamily: 'ShareTechMono', fontSize: 10, color: Colors.greenAccent, fontWeight: FontWeight.bold)),
-                        ),
+                          const SizedBox(width: 8),
+                          OutlinedButton(
+                            onPressed: () => _restorePendingMedia(path),
+                            style: OutlinedButton.styleFrom(
+                              side: const BorderSide(color: Colors.greenAccent),
+                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                            ),
+                            child: const Text('RESTORE', style: TextStyle(fontFamily: 'ShareTechMono', fontSize: 10, color: Colors.greenAccent, fontWeight: FontWeight.bold)),
+                          ),
+                        ],
                       ],
                     ),
                   ],
@@ -917,6 +985,39 @@ class _SettingsScreenState extends State<SettingsScreen> {
           if (_recoveryStatus.isNotEmpty) ...[
             const SizedBox(height: 8),
             Text("> $_recoveryStatus", textAlign: TextAlign.center, style: const TextStyle(fontFamily: 'VT323', fontSize: 14, color: Colors.amberAccent)),
+          ],
+          const SizedBox(height: 12),
+          OutlinedButton.icon(
+            onPressed: _isSelfTesting ? null : _runSecuritySelfTest,
+            icon: _isSelfTesting
+                ? SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2, color: themeColor))
+                : Icon(Icons.security, size: 16, color: themeColor),
+            label: Text(
+              _isSelfTesting ? 'RUNNING SECURITY AUDIT...' : 'RUN SECURITY & INTEGRITY SELF-TEST',
+              style: TextStyle(fontFamily: 'ShareTechMono', fontSize: 11, color: themeColor),
+            ),
+            style: OutlinedButton.styleFrom(
+              side: BorderSide(color: themeColor.withValues(alpha: 0.6)),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            ),
+          ),
+          if (_selfTestReport.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: Colors.white.withValues(alpha: 0.04),
+                border: Border.all(color: _selfTestReport.contains('ALL ASSERTIONS PASSED') ? Colors.greenAccent : Colors.redAccent),
+              ),
+              child: Text(
+                _selfTestReport,
+                style: TextStyle(
+                  fontFamily: 'ShareTechMono',
+                  fontSize: 10,
+                  color: _selfTestReport.contains('ALL ASSERTIONS PASSED') ? Colors.greenAccent : Colors.redAccent,
+                ),
+              ),
+            ),
           ],
         ],
       ),

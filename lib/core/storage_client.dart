@@ -286,6 +286,15 @@ class StorageClient {
     return ok ?? false;
   }
 
+  static Future<Map<String, Object?>> runNativeSecuritySelfTest() async {
+    try {
+      final Map<Object?, Object?>? res = await _channel.invokeMethod<Map<Object?, Object?>>('runNativeSecuritySelfTest');
+      return res?.map((k, v) => MapEntry(k.toString(), v)) ?? const {};
+    } catch (_) {
+      return const {};
+    }
+  }
+
   static void _sweepStaging(Directory dir) {
     try {
       final cutoff = DateTime.now().subtract(const Duration(hours: 6));

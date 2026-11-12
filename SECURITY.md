@@ -58,8 +58,20 @@ Sovereign Tagger was engineered under the **Air-Gapped Local Autonomy** doctrine
 Operators can backup their application preferences, custom 15-band EQ presets, favorite playlists, and third-party API keys (Genius / ACRCloud / Hugging Face tokens) using the **Kernel Vault Export** feature.
 
 - **Storage Format:** Staged as an encrypted binary blob (`.bin`).
-- **Cryptographic Scheme:** Symmetric XOR cipher keyed against fixed project salt `0x53` coupled with Base64 framing and strict JSON schema version verification (`backup['version'] == 1`).
-- **Threat Mitigation:** Prevents casual discovery of API keys and personal playlists by third-party file scanning utilities on external storage.
+- **Cryptographic Scheme (SOV2 Authenticated Encryption):**
+  - **Portable Mode (`SOV2:P:<iterations>:<salt>:<iv>:<cipher>`):** AES-256-GCM authenticated cipher with 128-bit authentication tag, 16-byte cryptographically secure random salt, and 12-byte random IV. Key derivation utilizes `PBKDF2WithHmacSHA256` with a calibrated baseline of **250,000 iterations**. KDF parameters are strictly bounded at the native boundary (`1,000 <= iterations <= 2,000,000`) to prevent computational denial-of-service from malformed payloads.
+  - **Device-Locked Mode (`SOV2:K:<iv>:<cipher>`):** AES-256-GCM keys generated and held in hardware via `AndroidKeyStore` (`SovereignLocalVaultKey`) with hardware StrongBox backing where available, falling back to standard TEE hardware.
+  - **Strict Authentication Enforcement:** All `SOV2` decryptions enforce cryptographic tag validation (`AEADBadTagException`). Failed authentications and corrupt envelopes throw immediate errors and never fall back to plaintext or legacy XOR.
+  - **Historical Migration Fallback (`LEGACY_PHASE38_SECRET`):** A fixed derivation secret (`SovereignVault::KernelMasterKey::v2`) is retained strictly as an immutable, read-only fallback to allow operators to restore intermediate backups created during early Phase 38 development. New exports NEVER use this secret. Operators are advised that historical Phase 38 backups are decryptable by anyone with access to the source code and should be re-exported with a user passphrase.
+  - **Legacy XOR Fallback:** Pre-Phase 38 legacy backups (XOR `0x53`) are supported for read-only migration if the input does not start with `SOV2:`.
+
+### Pre-Overwrite Media Safety Vault (`sov_recovery`)
+When writing updated audio tags or metadata directly to MediaStore content URIs in-place:
+1. **Pre-Truncate Staging:** The original file stream is copied to an isolated app-internal backup (`filesDir/sov_recovery/sov_rec_<timestamp>.bak`) and SHA-256 hashed before destination file descriptors open with `"rwt"` or `"wt"`.
+2. **Path Traversal Confinement:** All recovery operations validate canonical file paths against `filesDir/sov_recovery` and enforce strict filename format rules (`sov_rec_*.bak`), rejecting any path traversal or arbitrary filesystem access.
+3. **Cryptographic Destination Readback:** Overwrites are declared verified only when the destination content URI is re-read and its SHA-256 hash matches the source hash.
+4. **Transaction State Disambiguation:** Overwrites record transaction states (`PENDING`, `COMMITTED`, `RETAINED_FAILED_RESTORE`) with source and destination hashes, distinguishing interrupted cleanup from uncommitted writes.
+5. **Atomic Discard:** Purging a recovery backup requires full deletion of both the backup binary and its associated metadata file (`bOk && mOk`).
 
 ---
 

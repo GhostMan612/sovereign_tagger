@@ -220,5 +220,122 @@ void main() {
       expect(ok, isTrue);
       expect(discardedPath, '/data/user/0/sov_recovery/sov_rec_1.bak');
     });
+
+    test('recoverPendingOverwrites preserves COMMITTED_PRE_CLEANUP transaction state', () async {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger.setMockMethodCallHandler(
+        channel,
+        (MethodCall call) async {
+          if (call.method == 'recoverPendingOverwrites') {
+            return [
+              {
+                'backupPath': '/data/user/0/sov_recovery/sov_rec_2.bak',
+                'backupName': 'sov_rec_2.bak',
+                'uri': 'content://media/external/audio/media/200',
+                'size': '8192',
+                'sha256': '1111222233334444555566667777888811112222333344445555666677778888',
+                'status': 'COMMITTED_PRE_CLEANUP',
+                'srcSha': 'aaaabbbbccccddddeeeeffff00001111aaaabbbbccccddddeeeeffff00001111',
+                'destSha': 'aaaabbbbccccddddeeeeffff00001111aaaabbbbccccddddeeeeffff00001111',
+              }
+            ];
+          }
+          return null;
+        },
+      );
+
+      final reports = await StorageClient.recoverPendingOverwrites();
+      expect(reports.length, 1);
+      expect(reports[0]['status'], 'COMMITTED_PRE_CLEANUP');
+      expect(reports[0]['srcSha'], reports[0]['destSha']);
+    });
+
+    test('recoverPendingOverwrites marks unverified destination as DESTINATION_HASH_UNVERIFIED', () async {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger.setMockMethodCallHandler(
+        channel,
+        (MethodCall call) async {
+          if (call.method == 'recoverPendingOverwrites') {
+            return [
+              {
+                'backupPath': '/data/user/0/sov_recovery/sov_rec_3.bak',
+                'backupName': 'sov_rec_3.bak',
+                'uri': 'content://media/external/audio/media/300',
+                'size': '4096',
+                'sha256': '1111222233334444555566667777888811112222333344445555666677778888',
+                'status': 'DESTINATION_HASH_UNVERIFIED',
+                'srcSha': 'aaaabbbbccccddddeeeeffff00001111aaaabbbbccccddddeeeeffff00001111',
+                'destSha': '',
+              }
+            ];
+          }
+          return null;
+        },
+      );
+
+      final reports = await StorageClient.recoverPendingOverwrites();
+      expect(reports.length, 1);
+      expect(reports[0]['status'], 'DESTINATION_HASH_UNVERIFIED');
+    });
+
+    test('discardPendingOverwrite preserves false on incomplete native deletion', () async {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger.setMockMethodCallHandler(
+        channel,
+        (MethodCall call) async {
+          if (call.method == 'discardPendingOverwrite') {
+            return false;
+          }
+          return null;
+        },
+      );
+
+      final ok = await StorageClient.discardPendingOverwrite('/data/user/0/sov_recovery/sov_rec_1.bak');
+      expect(ok, isFalse);
+    });
+
+    test('runNativeSecuritySelfTest invokes native channel and receives all passed', () async {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger.setMockMethodCallHandler(
+        channel,
+        (MethodCall call) async {
+          if (call.method == 'runNativeSecuritySelfTest') {
+            return {
+              'format_correct': true,
+              'roundtrip_passphrase': true,
+              'tamper_resistance': true,
+              'min_iterations_enforced': true,
+              'max_iterations_enforced': true,
+              'legacy_phase38_fallback': true,
+              'path_traversal_confinement': true,
+              'discard_cleanup_success': true,
+              'discard_atomic_success': true,
+              'all_passed': true,
+            };
+          }
+          return null;
+        },
+      );
+
+      final results = await StorageClient.runNativeSecuritySelfTest();
+      expect(results['all_passed'], isTrue);
+      expect(results['path_traversal_confinement'], isTrue);
+      expect(results['tamper_resistance'], isTrue);
+      expect(results['discard_cleanup_success'], isTrue);
+      expect(results['discard_atomic_success'], isTrue);
+    });
+
+    test('restorePendingOverwrite bubbles SecurityException on path traversal attempt', () async {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger.setMockMethodCallHandler(
+        channel,
+        (MethodCall call) async {
+          if (call.method == 'restorePendingOverwrite') {
+            throw PlatformException(code: 'STORAGE_ERROR', message: 'SecurityException: Path traversal rejected');
+          }
+          return null;
+        },
+      );
+
+      expect(
+        () => StorageClient.restorePendingOverwrite('../../etc/hosts'),
+        throwsA(isA<PlatformException>()),
+      );
+    });
   });
 }

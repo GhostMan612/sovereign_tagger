@@ -420,6 +420,9 @@ class MainActivity: AudioServiceActivity() {
                     val backupPath = call.argument<String>("backupPath") ?: ""
                     runAsync(result, "STORAGE_ERROR") { storageBridge.discardPendingOverwrite(backupPath) }
                 }
+                "runNativeSecuritySelfTest" -> {
+                    runAsync(result, "STORAGE_ERROR") { storageBridge.runNativeSecuritySelfTest() }
+                }
                 "exportConfig" -> {
                     val data = call.argument<String>("data") ?: ""
                     runAsync(result, "STORAGE_ERROR") { storageBridge.exportConfig(data) }
