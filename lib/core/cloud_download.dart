@@ -15,8 +15,30 @@ class CloudDownloadSummary {
   final int succeeded;
   final int failed;
   final bool cancelled;
+  final bool truncated;
+  final String truncationReason;
 
-  const CloudDownloadSummary({required this.succeeded, required this.failed, required this.cancelled});
+  const CloudDownloadSummary({
+    required this.succeeded,
+    required this.failed,
+    required this.cancelled,
+    this.truncated = false,
+    this.truncationReason = '',
+  });
+}
+
+class CloudFolderScanResult {
+  final List<CloudEntry> audio;
+  final bool truncated;
+  final bool cancelled;
+  final String truncationReason;
+
+  const CloudFolderScanResult({
+    required this.audio,
+    required this.truncated,
+    required this.cancelled,
+    required this.truncationReason,
+  });
 }
 
 class CloudDownload {
@@ -80,40 +102,95 @@ class CloudDownload {
     void Function(String name, int done, int total)? onFile,
     bool Function()? isCancelled,
   }) async {
-    final audio = <CloudEntry>[];
-    await _collectAudio(folder, audio, depth: 0);
+    final scan = await scanFolder(folder, isCancelled: isCancelled);
     var succeeded = 0;
     var failed = 0;
-    var cancelled = false;
-    for (var i = 0; i < audio.length; i++) {
+    var cancelled = scan.cancelled;
+    for (var i = 0; i < scan.audio.length; i++) {
       if (isCancelled != null && isCancelled()) {
         cancelled = true;
         break;
       }
-      final entry = audio[i];
-      onFile?.call(entry.name, i, audio.length);
+      final entry = scan.audio[i];
+      onFile?.call(entry.name, i, scan.audio.length);
       try {
         await downloadEntry(entry, isCancelled: isCancelled);
         succeeded++;
       } catch (_) {
+        if (isCancelled != null && isCancelled()) {
+          cancelled = true;
+          break;
+        }
         failed++;
       }
     }
-    onFile?.call('', audio.length, audio.length);
-    return CloudDownloadSummary(succeeded: succeeded, failed: failed, cancelled: cancelled);
+    onFile?.call('', succeeded + failed, scan.audio.length);
+    return CloudDownloadSummary(
+      succeeded: succeeded,
+      failed: failed,
+      cancelled: cancelled,
+      truncated: scan.truncated,
+      truncationReason: scan.truncationReason,
+    );
   }
 
-  static Future<void> _collectAudio(CloudEntry folder, List<CloudEntry> out, {required int depth}) async {
-    if (depth > 3 || out.length >= 500) return;
-    final entries = await PCloudProvider.instance.listFolder(folderId: folder.id);
-    for (final entry in entries) {
-      if (entry.isFolder) {
-        await _collectAudio(entry, out, depth: depth + 1);
-      } else if (entry.isAudio) {
-        out.add(entry);
-      }
-      if (out.length >= 500) return;
+  static Future<CloudFolderScanResult> scanFolder(
+    CloudEntry folder, {
+    Future<List<CloudEntry>> Function(String folderId)? listEntries,
+    bool Function()? isCancelled,
+    int maxDepth = 3,
+    int maxAudio = 500,
+  }) async {
+    if (maxDepth < 0 || maxAudio < 1) {
+      throw ArgumentError('Folder scan limits must be positive.');
     }
+    final fetch = listEntries ??
+        (String id) => PCloudProvider.instance.listFolder(folderId: id);
+    final audio = <CloudEntry>[];
+    final visitedFolders = <String>{};
+    final seenFiles = <String>{};
+    var cancelled = false;
+    var truncated = false;
+    var reason = '';
+
+    Future<void> visit(CloudEntry current, int depth) async {
+      if (cancelled || truncated) return;
+      if (isCancelled != null && isCancelled()) {
+        cancelled = true;
+        return;
+      }
+      if (depth > maxDepth) {
+        truncated = true;
+        reason = 'Folder depth limit reached ($maxDepth).';
+        return;
+      }
+      if (!visitedFolders.add(current.id)) return;
+      final children = await fetch(current.id);
+      for (final child in children) {
+        if (isCancelled != null && isCancelled()) {
+          cancelled = true;
+          return;
+        }
+        if (child.isFolder) {
+          await visit(child, depth + 1);
+        } else if (child.isAudio && seenFiles.add(child.id)) {
+          audio.add(child);
+          if (audio.length >= maxAudio) {
+            truncated = true;
+            reason = 'Folder audio limit reached ($maxAudio files).';
+          }
+        }
+        if (cancelled || truncated) return;
+      }
+    }
+
+    await visit(folder, 0);
+    return CloudFolderScanResult(
+      audio: List<CloudEntry>.unmodifiable(audio),
+      truncated: truncated,
+      cancelled: cancelled,
+      truncationReason: reason,
+    );
   }
 
   static String displayName(String name) {
