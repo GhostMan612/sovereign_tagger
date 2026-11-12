@@ -138,13 +138,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   Future<void> _connectPcloud() async {
+    if (_pcloudBusy) return;
     TapFeedback.machineTap();
     await CloudSettings.setClientId(_pcloudClientIdCtrl.text.trim());
     if (CloudSettings.clientId.isEmpty) {
       setState(() => _pcloudStatus = 'ENTER YOUR PCLOUD OAUTH CLIENT ID FIRST.');
       return;
     }
-    final url = PCloudProvider.instance.buildAuthorizeUrl();
+    final authState = PCloudProvider.generateOAuthState();
+    final url = PCloudProvider.instance.buildAuthorizeUrl(state: authState);
     setState(() {
       _pcloudBusy = true;
       _pcloudStatus = 'SIGN IN IN YOUR BROWSER — THE APP CATCHES THE RETURN.';
@@ -176,7 +178,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       setState(() => _pcloudStatus = 'NO SIGN-IN CAME BACK — TRY AGAIN.');
       return;
     }
-    final auth = PCloudProvider.parseAuthRedirect(redirect);
+    final auth = PCloudProvider.parseAuthRedirect(redirect, expectedState: authState);
     if (auth == null) {
       setState(() => _pcloudStatus = 'THE SIGN-IN RETURN WAS NOT READABLE — TRY AGAIN.');
       return;
@@ -204,20 +206,19 @@ class _SettingsScreenState extends State<SettingsScreen> {
     TapFeedback.machineTap();
     final pasted = _pcloudTokenCtrl.text.trim();
     if (pasted.isEmpty) {
-      setState(() => _pcloudStatus = 'PASTE THE RETURN LINK OR THE TOKEN FIRST.');
+      setState(() => _pcloudStatus = 'PASTE THE ACCESS TOKEN FIRST.');
       return;
     }
-    PCloudAuthResult? auth;
     if (pasted.startsWith('sovereigntagger://')) {
-      auth = PCloudProvider.parseAuthRedirect(pasted);
-    } else {
-      final isEu = _pcloudAuthHost == CloudSettings.authorizeHostEu;
-      auth = PCloudAuthResult(token: pasted, apiHost: isEu ? CloudRegion.eu.host : CloudRegion.us.host, locationId: isEu ? 2 : 1);
-    }
-    if (auth == null) {
-      setState(() => _pcloudStatus = 'THAT LINK WAS NOT READABLE — TRY AGAIN.');
+      setState(() => _pcloudStatus = 'PASTED LOGIN LINKS CANNOT BYPASS OAUTH STATE. USE CONNECT OR PASTE THE TOKEN ONLY.');
       return;
     }
+    final isEu = _pcloudAuthHost == CloudSettings.authorizeHostEu;
+    final auth = PCloudAuthResult(
+      token: pasted,
+      apiHost: isEu ? CloudRegion.eu.host : CloudRegion.us.host,
+      locationId: isEu ? 2 : 1,
+    );
     _pcloudTokenCtrl.clear();
     await CloudSettings.setToken(token: auth.token, apiHost: auth.apiHost, locationId: auth.locationId);
     final ok = await PCloudProvider.instance.testConnection();
@@ -1912,12 +1913,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 const SizedBox(height: 12),
                 _buildSettingsField(_pcloudCacheCtrl, 'OFFLINE CACHE SIZE (MB, DEFAULT 1024)', Colors.cyanAccent),
                 const SizedBox(height: 12),
-                _buildSettingsField(_pcloudTokenCtrl, 'PASTE RETURN LINK OR TOKEN (FALLBACK ONLY)', Colors.cyanAccent),
+                _buildSettingsField(_pcloudTokenCtrl, 'PASTE ACCESS TOKEN (MANUAL FALLBACK ONLY)', Colors.cyanAccent),
                 const SizedBox(height: 8),
                 OutlinedButton.icon(
                   onPressed: _savePastedToken,
                   icon: const Icon(Icons.paste, color: Colors.cyanAccent),
-                  label: const Text('SAVE PASTED SIGN-IN', style: TextStyle(fontFamily: 'ShareTechMono', color: Colors.cyanAccent, fontWeight: FontWeight.bold)),
+                  label: const Text('SAVE MANUAL ACCESS TOKEN', style: TextStyle(fontFamily: 'ShareTechMono', color: Colors.cyanAccent, fontWeight: FontWeight.bold)),
                   style: OutlinedButton.styleFrom(side: const BorderSide(color: Colors.cyanAccent), backgroundColor: Colors.black, padding: const EdgeInsets.symmetric(vertical: 12)),
                 ),
 
