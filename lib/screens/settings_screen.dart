@@ -138,13 +138,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   Future<void> _connectPcloud() async {
+    if (_pcloudBusy) return;
     TapFeedback.machineTap();
     await CloudSettings.setClientId(_pcloudClientIdCtrl.text.trim());
     if (CloudSettings.clientId.isEmpty) {
       setState(() => _pcloudStatus = 'ENTER YOUR PCLOUD OAUTH CLIENT ID FIRST.');
       return;
     }
-    final url = PCloudProvider.instance.buildAuthorizeUrl();
+    final authState = PCloudProvider.generateOAuthState();
+    final url = PCloudProvider.instance.buildAuthorizeUrl(state: authState);
     setState(() {
       _pcloudBusy = true;
       _pcloudStatus = 'SIGN IN IN YOUR BROWSER — THE APP CATCHES THE RETURN.';
@@ -176,7 +178,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       setState(() => _pcloudStatus = 'NO SIGN-IN CAME BACK — TRY AGAIN.');
       return;
     }
-    final auth = PCloudProvider.parseAuthRedirect(redirect);
+    final auth = PCloudProvider.parseAuthRedirect(redirect, expectedState: authState);
     if (auth == null) {
       setState(() => _pcloudStatus = 'THE SIGN-IN RETURN WAS NOT READABLE — TRY AGAIN.');
       return;
@@ -209,7 +211,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
     PCloudAuthResult? auth;
     if (pasted.startsWith('sovereigntagger://')) {
-      auth = PCloudProvider.parseAuthRedirect(pasted);
+      setState(() => _pcloudStatus = 'PASTED LOGIN LINKS CANNOT BYPASS OAUTH STATE. USE CONNECT OR PASTE THE TOKEN ONLY.');
+      return;
     } else {
       final isEu = _pcloudAuthHost == CloudSettings.authorizeHostEu;
       auth = PCloudAuthResult(token: pasted, apiHost: isEu ? CloudRegion.eu.host : CloudRegion.us.host, locationId: isEu ? 2 : 1);
