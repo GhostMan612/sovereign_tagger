@@ -64,6 +64,63 @@ void main() {
     );
   });
 
+  test('pCloud OAuth rejects conflicting host and regional location ID', () {
+    expect(
+      PCloudProvider.parseAuthRedirect(
+        'sovereigntagger://pcloud/callback#access_token=example&locationid=2&hostname=api.pcloud.com&state=$state',
+        expectedState: state,
+      ),
+      isNull,
+    );
+    expect(
+      PCloudProvider.parseAuthRedirect(
+        'sovereigntagger://pcloud/callback#access_token=example&locationid=1&hostname=eapi.pcloud.com&state=$state',
+        expectedState: state,
+      ),
+      isNull,
+    );
+  });
+
+  test('pCloud OAuth rejects missing or invalid region metadata', () {
+    expect(
+      PCloudProvider.parseAuthRedirect(
+        'sovereigntagger://pcloud/callback#access_token=example&hostname=api.pcloud.com&state=$state',
+        expectedState: state,
+      ),
+      isNull,
+    );
+    expect(
+      PCloudProvider.parseAuthRedirect(
+        'sovereigntagger://pcloud/callback#access_token=example&locationid=2&state=$state',
+        expectedState: state,
+      ),
+      isNull,
+    );
+  });
+
+  test('region mismatch is rejected before persisting any bearer token', () async {
+    SharedPreferences.setMockInitialValues(<String, Object>{});
+    final prefs = await SharedPreferences.getInstance();
+    await CloudSettings.load(prefs);
+    await expectLater(
+      CloudSettings.setToken(token: 'example', apiHost: 'api.pcloud.com', locationId: 2),
+      throwsA(isA<ArgumentError>()),
+    );
+    expect(CloudSettings.hasToken, isFalse);
+  });
+
+  test('stored contradictory host and location fail closed on reload', () async {
+    SharedPreferences.setMockInitialValues(<String, Object>{
+      'pcloud_token': 'existing-secret',
+      'pcloud_api_host': 'api.pcloud.com',
+      'pcloud_location_id': 2,
+    });
+    final prefs = await SharedPreferences.getInstance();
+    await CloudSettings.load(prefs);
+    expect(CloudSettings.hasToken, isFalse);
+    expect(CloudSettings.apiHost, isEmpty);
+  });
+
   test('pCloud refuses to persist a token with an unapproved host', () async {
     SharedPreferences.setMockInitialValues(<String, Object>{});
     final prefs = await SharedPreferences.getInstance();

@@ -80,6 +80,11 @@ class CloudSettings {
       _token = '';
     }
     _locationId = prefs.getInt(_locationKey) ?? 0;
+    if (_apiHost.isNotEmpty &&
+        _apiHost != (_locationId == 1 ? CloudRegion.us.host : _locationId == 2 ? CloudRegion.eu.host : '')) {
+      _token = '';
+      _apiHost = '';
+    }
     _authorizeHost = prefs.getString(_authHostKey) ?? authorizeHostUs;
     _rootPath = prefs.getString(_rootPathKey) ?? '/';
     _rootId = prefs.getInt(_rootIdKey) ?? 0;
@@ -112,6 +117,9 @@ class CloudSettings {
 
   static Future<void> setToken({required String token, required String apiHost, required int locationId}) async {
     final approvedHost = CloudRegion.fromHost(apiHost).host;
+    if (approvedHost != (locationId == 1 ? CloudRegion.us.host : locationId == 2 ? CloudRegion.eu.host : '')) {
+      throw ArgumentError.value(locationId, 'locationId', 'pCloud API host and location ID must agree.');
+    }
     _token = token;
     _apiHost = approvedHost;
     _locationId = locationId;
