@@ -362,6 +362,7 @@ void main() {
 
     test('media store injection failure preserves cache output and reports cache only', () async {
       final queue = WorkbenchQueue();
+      final recoveryRoot = await Directory.systemTemp.createTemp('workbench_pending_case_');
       queue.addJob('/media/track.wav', 'Convert Format');
 
       final summary = await queue.execute(
@@ -370,6 +371,7 @@ void main() {
           return '-y -i input.wav out.wav';
         },
         getTempDirectory: () async => Directory.systemTemp.path,
+        getRecoveryDirectory: () async => recoveryRoot.path,
         ffmpegRunner: (cmd, {onStatistics}) async => (isSuccess: true, returnCode: 0, output: ''),
         mediaStoreInjector: (out, title) async {
           throw Exception('PlatformException: MediaStore failed');
@@ -378,11 +380,11 @@ void main() {
         streamProbe: (p) async => {'audio': 1},
       );
 
-      expect(queue.jobs[0].status, equals(BatchJobStatus.completed));
+      expect(queue.jobs[0].status, equals(BatchJobStatus.pendingImport));
       expect(queue.jobs[0].outputUri, isNotNull);
       expect(File(queue.jobs[0].outputUri!).existsSync(), isTrue);
-      expect(summary, contains('CACHE ONLY'));
-      try { File(queue.jobs[0].outputUri!).deleteSync(); } catch (_) {}
+      expect(summary, contains('PENDING IMPORT'));
+      await recoveryRoot.delete(recursive: true);
     });
 
     test('overall progress is calculated monotonically across batch items', () {
@@ -432,7 +434,7 @@ void main() {
       expect(injectedTitles.length, equals(2));
       expect(injectedTitles[0], equals('song1_mod'));
       expect(injectedTitles[1], equals('song2_mod'));
-      expect(summary, contains('Batch Done: 2/2 OK'));
+      expect(summary, contains('Batch Done: 2/2 SAVED'));
     });
 
     test('ffmpeg filter failure records failure and continues remaining jobs', () async {
@@ -629,6 +631,7 @@ void main() {
 
     test('mediaStoreInjector returning null marks job completed as CACHE ONLY and preserves staged output on disk', () async {
       final queue = WorkbenchQueue();
+      final recoveryRoot = await Directory.systemTemp.createTemp('workbench_pending_case_');
       queue.addJob('/media/song.mp3', 'Normalize Audio (LUFS -14)');
 
       String? stagedPath;
@@ -639,6 +642,7 @@ void main() {
           return '-y -i input out';
         },
         getTempDirectory: () async => Directory.systemTemp.path,
+        getRecoveryDirectory: () async => recoveryRoot.path,
         ffmpegRunner: (cmd, {onStatistics}) async {
           File(stagedPath!).writeAsStringSync('valid audio data');
           return (isSuccess: true, returnCode: 0, output: 'OK');
@@ -648,15 +652,16 @@ void main() {
         streamProbe: (p) async => {'audio': 1},
       );
 
-      expect(queue.jobs[0].status, equals(BatchJobStatus.completed));
-      expect(queue.jobs[0].outputUri, equals(stagedPath));
-      expect(File(stagedPath!).existsSync(), isTrue);
-      expect(summary, contains('CACHE ONLY'));
-      try { File(stagedPath!).deleteSync(); } catch (_) {}
+      expect(queue.jobs[0].status, equals(BatchJobStatus.pendingImport));
+      expect(queue.jobs[0].outputUri, isNot(equals(stagedPath)));
+      expect(File(stagedPath!).existsSync(), isFalse);
+      expect(summary, contains('PENDING IMPORT'));
+      await recoveryRoot.delete(recursive: true);
     });
 
     test('mediaStoreInjector returning empty or whitespace string preserves staged output on disk', () async {
       final queue = WorkbenchQueue();
+      final recoveryRoot = await Directory.systemTemp.createTemp('workbench_pending_case_');
       queue.addJob('/media/song.mp3', 'Normalize Audio (LUFS -14)');
 
       String? stagedPath;
@@ -667,6 +672,7 @@ void main() {
           return '-y -i input out';
         },
         getTempDirectory: () async => Directory.systemTemp.path,
+        getRecoveryDirectory: () async => recoveryRoot.path,
         ffmpegRunner: (cmd, {onStatistics}) async {
           File(stagedPath!).writeAsStringSync('valid audio data');
           return (isSuccess: true, returnCode: 0, output: 'OK');
@@ -676,11 +682,11 @@ void main() {
         streamProbe: (p) async => {'audio': 1},
       );
 
-      expect(queue.jobs[0].status, equals(BatchJobStatus.completed));
-      expect(queue.jobs[0].outputUri, equals(stagedPath));
-      expect(File(stagedPath!).existsSync(), isTrue);
-      expect(summary, contains('CACHE ONLY'));
-      try { File(stagedPath!).deleteSync(); } catch (_) {}
+      expect(queue.jobs[0].status, equals(BatchJobStatus.pendingImport));
+      expect(queue.jobs[0].outputUri, isNot(equals(stagedPath)));
+      expect(File(stagedPath!).existsSync(), isFalse);
+      expect(summary, contains('PENDING IMPORT'));
+      await recoveryRoot.delete(recursive: true);
     });
 
     test('mediaStoreInjector returning valid URI deletes staged output and records content URI', () async {
