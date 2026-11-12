@@ -1,6 +1,6 @@
 # Sovereign Tagger — Remote Audit Register (2026-11-12)
 
-**Base:** `main` `ba708fe347aa83cba199375e1441ad4aeb1c7408`
+**Code baseline:** `ba708fe347aa83cba199375e1441ad4aeb1c7408`. **Remote `main` at audit start:** `8cef0891ae1fd134c91d5d2169375d8154aee953` (documentation-only descendant of `ba708fe`; implementation unchanged).
 **Method:** Read-only remote source review, GitHub tree enumeration (273 entries), indexed symbol searches, targeted full-source reads across Flutter/Dart, Kotlin/Android, Python/Chaquopy, test and documentation surfaces, plus isolated draft changes created on branches. **Not a line-by-line verification of every source file.** No local Android build, Flutter execution, ADB operation, or destructive media test performed by this auditor.
 **Disposition:** 14 remediation drafts created separately as PR #24–#37, all targeting `main`, none merged as part of this audit. The PRs below are the individual review units.
 
