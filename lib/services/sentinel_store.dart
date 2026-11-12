@@ -261,17 +261,6 @@ class SentinelNamingPolicy {
     };
   }
 
-  static String stripNoiseAndNormalizeFeat(String raw) {
-    final stripped = SentinelPolicy.stripVersionNoise(raw);
-    final normalized = stripped.replaceAll(
-        RegExp(r'\b(?:featuring|feat\.?|\bft\b)\.?\s+', caseSensitive: false), 'ft. ');
-    return normalized.replaceAll(RegExp(r'\s+'), ' ').trim();
-  }
-
-  static String toTitleCase(String input) {
-    return SentinelPolicy.titleCase(stripNoiseAndNormalizeFeat(input));
-  }
-
   static String formatExpectedFilename({required SentinelTagSnapshot tags, required String currentFilename}) {
     return SentinelPolicy.expectedFileName(_tagsOf(tags), displayName: currentFilename);
   }
