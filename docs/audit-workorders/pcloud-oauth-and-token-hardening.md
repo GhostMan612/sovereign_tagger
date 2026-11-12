@@ -1,7 +1,7 @@
 # Security work order — pCloud OAuth redirect binding and token storage
 
 **Baseline:** `main` `ba708fe`
-**Related immediate fix:** Draft PR #30 validates allowed regional API hosts before storing/sending bearer tokens.
+**Related immediate fix:** PR #30 merged on main and validates allowed regional API hosts before storing/sending bearer tokens.
 **Type:** design and acceptance only; no authentication flow change in this PR.
 
 ## O1 — OAuth callback lacks initiation binding (P1)
@@ -39,3 +39,23 @@ PR #30 allowlists `api.pcloud.com` and `eapi.pcloud.com`. Add a consistency chec
 - Document precise provider assumptions; no production token in test logs.
 
 **Do not merge this specification as an implemented security fix.** Split the protocol and credential-storage changes into separately reviewed runtime PRs.
+
+## Provider-contract decision (2026-11-12)
+
+Official pCloud documentation validates the existing client-only token/implicit flow and its `state` parameter, which is returned in the URI fragment:
+https://docs.pcloud.com/methods/oauth_2.0/authorize.html
+
+The documented OAuth API authentication mechanisms are `access_token` (global parameter) and `Authorization: Bearer`, **not** the legacy `auth` token mechanism:
+https://docs.pcloud.com/methods/oauth_2.0/
+https://docs.pcloud.com/methods/intro/global_parameters.html
+
+pCloud's code-flow token exchange requires a client secret and the provider page does not document PKCE:
+https://docs.pcloud.com/methods/oauth_2.0/oauth2_token.html
+
+Therefore do **not** embed a client secret or unverified PKCE logic in this standalone Android APK. Keep the supported mobile token flow pending a verified provider alternative. Track executable drafts separately:
+- [PR #39](https://github.com/GhostMan612/sovereign_tagger/pull/39): random per-attempt `state` binding and callback checks
+- [PR #40](https://github.com/GhostMan612/sovereign_tagger/pull/40): OAuth Bearer header; remove URL credentials
+- [PR #41](https://github.com/GhostMan612/sovereign_tagger/pull/41): strict host + locationid consistency
+- [PR #42](https://github.com/GhostMan612/sovereign_tagger/pull/42): Keystore migration spec; **no functional token-at-rest fix yet**
+
+The follow-up Keystore implementation is specified in `docs/audit-workorders/pcloud-keystore-credential-migration.md`. The code drafts are independent branches from the same pre-hardening baseline and should be reviewed/merged with regression tests. Existing findings are kept here as a historical record, not a statement that all work has landed.
