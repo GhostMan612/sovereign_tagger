@@ -71,7 +71,14 @@ class CloudSettings {
     _prefs = prefs;
     _clientId = prefs.getString(_clientIdKey) ?? '';
     _token = prefs.getString(_tokenKey) ?? '';
-    _apiHost = prefs.getString(_hostKey) ?? '';
+    final storedHost = prefs.getString(_hostKey) ?? '';
+    try {
+      _apiHost = storedHost.isEmpty ? '' : CloudRegion.fromHost(storedHost).host;
+      if (_apiHost.isEmpty) _token = '';
+    } on ArgumentError {
+      _apiHost = '';
+      _token = '';
+    }
     _locationId = prefs.getInt(_locationKey) ?? 0;
     _authorizeHost = prefs.getString(_authHostKey) ?? authorizeHostUs;
     _rootPath = prefs.getString(_rootPathKey) ?? '/';
@@ -104,12 +111,13 @@ class CloudSettings {
   }
 
   static Future<void> setToken({required String token, required String apiHost, required int locationId}) async {
+    final approvedHost = CloudRegion.fromHost(apiHost).host;
     _token = token;
-    _apiHost = apiHost;
+    _apiHost = approvedHost;
     _locationId = locationId;
     final prefs = await _ensurePrefs();
     await prefs.setString(_tokenKey, token);
-    await prefs.setString(_hostKey, apiHost);
+    await prefs.setString(_hostKey, approvedHost);
     await prefs.setInt(_locationKey, locationId);
     _refreshNotifiers();
   }
