@@ -28,6 +28,7 @@ import '../workbench/dsp_builders.dart';
 import '../workbench/video_dsp_builders.dart';
 import '../workbench/workbench_models.dart';
 import '../workbench/workbench_queue.dart';
+import '../workbench/pending_import_store.dart';
 
 class TabWorkbench extends StatefulWidget {
   const TabWorkbench({super.key});
@@ -1424,6 +1425,8 @@ class _TabWorkbenchState extends State<TabWorkbench> {
         commandBuilder: (op, inputPath, outPath, durationMs) async =>
             _buildTransformCommand(op, inputPath, outPath, durationMs),
         getTempDirectory: () async => await _storageChannel.invokeMethod('getTempDirectory'),
+        getRecoveryDirectory: () async =>
+            (await _storageChannel.invokeMethod<String>('getAppDocDir')) ?? '',
         mediaStoreInjector: (outPath, title) async {
           final res = await _storageChannel.invokeMethod('addToMediaStore', {'filePath': outPath, 'title': title});
           if (res is Map) {
@@ -1473,6 +1476,138 @@ class _TabWorkbenchState extends State<TabWorkbench> {
       if (mounted) {
         setState(() => _activeQueue = null);
       }
+    }
+  }
+
+  Future<void> _showPendingImports() async {
+    TapFeedback.machineTap();
+    try {
+      final appDir = await _storageChannel.invokeMethod<String>('getAppDocDir');
+      if (appDir == null || appDir.isEmpty) {
+        throw StateError('App-private recovery directory unavailable');
+      }
+      final store = PendingImportStore(Directory(appDir));
+      final pending = await store.list();
+      if (!mounted) return;
+      await showDialog<void>(
+        context: context,
+        builder: (dialogContext) => StatefulBuilder(
+          builder: (dialogContext, refresh) => AlertDialog(
+            backgroundColor: Colors.black,
+            title: const Text('PENDING WORKBENCH IMPORTS',
+                style: TextStyle(color: Colors.cyanAccent, fontSize: 16)),
+            content: SizedBox(
+              width: 420,
+              height: 360,
+              child: pending.isEmpty
+                  ? const Center(
+                      child: Text('NO PENDING LIBRARY IMPORTS',
+                          style: TextStyle(color: Colors.white70)))
+                  : ListView.builder(
+                      itemCount: pending.length,
+                      itemBuilder: (context, i) {
+                        final item = pending[i];
+                        return Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(item.title,
+                                style: const TextStyle(color: Colors.white)),
+                            Text(
+                              item.available
+                                  ? '${item.bytes} BYTES · VERIFIED SHA-256 · SAVED IN PRIVATE RECOVERY'
+                                  : 'RECOVERY FILE IS MISSING OR FAILED INTEGRITY CHECK',
+                              style: TextStyle(
+                                color: item.available
+                                    ? Colors.greenAccent
+                                    : Colors.orangeAccent,
+                                fontSize: 11,
+                              ),
+                            ),
+                            Row(
+                              children: [
+                                TextButton(
+                                  onPressed: !item.available
+                                      ? null
+                                      : () async {
+                                          try {
+                                            final uri = await store.retry(
+                                              item,
+                                              (path, title) async {
+                                                final result = await _storageChannel.invokeMethod(
+                                                  'addToMediaStore',
+                                                  {'filePath': path, 'title': title},
+                                                );
+                                                if (result is Map) return result['uri']?.toString();
+                                                return result?.toString();
+                                              },
+                                            );
+                                            if (!dialogContext.mounted) return;
+                                            refresh(() => pending.removeAt(i));
+                                            ScaffoldMessenger.of(dialogContext).showSnackBar(
+                                              SnackBar(content: Text('RECOVERED TO LIBRARY: $uri')),
+                                            );
+                                          } catch (e) {
+                                            if (!dialogContext.mounted) return;
+                                            ScaffoldMessenger.of(dialogContext).showSnackBar(
+                                              SnackBar(content: Text('RETRY FAILED — SOURCE PRESERVED: $e')),
+                                            );
+                                          }
+                                        },
+                                  child: const Text('RETRY IMPORT'),
+                                ),
+                                TextButton(
+                                  onPressed: () async {
+                                    final confirmed = await showDialog<bool>(
+                                      context: dialogContext,
+                                      builder: (ctx) => AlertDialog(
+                                        title: const Text('DISCARD RECOVERY FILE?'),
+                                        content: const Text('This permanently deletes the recovered output.'),
+                                        actions: [
+                                          TextButton(
+                                            onPressed: () => Navigator.pop(ctx, false),
+                                            child: const Text('KEEP'),
+                                          ),
+                                          TextButton(
+                                            onPressed: () => Navigator.pop(ctx, true),
+                                            child: const Text('DISCARD'),
+                                          ),
+                                        ],
+                                      ),
+                                    );
+                                    if (confirmed != true) return;
+                                    try {
+                                      await store.discard(item);
+                                      if (!dialogContext.mounted) return;
+                                      refresh(() => pending.removeAt(i));
+                                    } catch (e) {
+                                      if (!dialogContext.mounted) return;
+                                      ScaffoldMessenger.of(dialogContext).showSnackBar(
+                                        SnackBar(content: Text('DISCARD FAILED: $e')),
+                                      );
+                                    }
+                                  },
+                                  child: const Text('DISCARD', style: TextStyle(color: Colors.redAccent)),
+                                ),
+                              ],
+                            ),
+                            const Divider(color: Colors.white24),
+                          ],
+                        );
+                      },
+                    ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext),
+                child: const Text('CLOSE'),
+              ),
+            ],
+          ),
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _statusMessage = 'ERR: Pending import recovery unavailable: $e');
     }
   }
 
@@ -3272,6 +3407,22 @@ class _TabWorkbenchState extends State<TabWorkbench> {
                             label: Text("RUN BATCH (${_batchFiles.length} FILES)", style: TextStyle(fontFamily: 'ShareTechMono', fontSize: 12, color: themeColor, fontWeight: FontWeight.bold)),
                             style: OutlinedButton.styleFrom(side: BorderSide(color: themeColor), padding: const EdgeInsets.symmetric(vertical: 12)),
                           ),
+                        const SizedBox(height: 8),
+                        OutlinedButton.icon(
+                          onPressed: _isProcessing ? null : _showPendingImports,
+                          icon: const Icon(Icons.restore, color: Colors.amberAccent),
+                          label: const Text(
+                            'RECOVER PENDING LIBRARY IMPORTS',
+                            style: TextStyle(
+                              color: Colors.amberAccent,
+                              fontFamily: 'ShareTechMono',
+                              fontSize: 11,
+                            ),
+                          ),
+                          style: OutlinedButton.styleFrom(
+                            side: const BorderSide(color: Colors.amberAccent),
+                          ),
+                        ),
                         if (_batchReport.isNotEmpty) ...[
                           const SizedBox(height: 8),
                           Container(
