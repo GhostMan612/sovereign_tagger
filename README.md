@@ -8,7 +8,7 @@
 [![Flutter: 3.x](https://img.shields.io/badge/Flutter-3.x%20%2F%20Dart%203.x-blue.svg)](https://flutter.dev)
 [![FFmpeg: 9.0.1 GPL](https://img.shields.io/badge/FFmpeg-9.0.1%20full%2Bgpl-red.svg)](https://ffmpeg.org)
 [![Neural: EmbeddingGemma--300M](https://img.shields.io/badge/Neural-EmbeddingGemma--300M%20(LiteRT)-purple.svg)](https://ai.google.dev)
-[![F-Droid: Ready](https://img.shields.io/badge/F--Droid-Compatible-brightgreen.svg)](https://f-droid.org)
+[![F-Droid: Review Pending](https://img.shields.io/badge/F--Droid-Review%20Pending-lightgrey.svg)](https://f-droid.org)
 
 ```
        _____ ____ _   _ _____ ____  _____ ___ ____ _   _   _____ _    ____ ____ _____ ____  
@@ -27,10 +27,10 @@
 **Sovereign Tagger** is an industrial-grade, fully autonomous, local-first media workstation engineered for Android. Built outside the walled gardens of proprietary app stores and streaming-rental ecosystems, it provides phone-native, desktop-class digital signal processing (DSP), high-throughput metadata tagging, stream extraction, audio forensics, and on-device neural edge computing.
 
 ### The Sovereign Directives
-1. **Absolute Local Sovereignty (Anti-Rental // Anti-DRM):** You own your media files. Sovereign Tagger operates directly on local storage. No accounts, no subscriptions, and no cloud server dependencies.
+1. **Absolute Local Sovereignty (Anti-Rental // Anti-DRM):** You own your media files. Core media processing operates on local storage without an account; optional pCloud connectivity, metadata services, and acquisition sources require network access and may require external accounts.
 2. **Lossless Fidelity Guarantee:** The editor never transcodes or recompresses audio without explicit operator instruction. FLAC stays bit-exact FLAC; WAV stays uncompressed WAV; M4A streams are copied byte-for-byte directly from container streams.
 3. **Air-Gapped & Zero-Telemetry:** Zero advertising libraries, zero telemetry trackers (no Firebase, no Crashlytics, no Adjust), and zero background surveillance daemons. Offline execution is a first-class guarantee.
-4. **Copyleft Protection (GPLv3):** Licensed under the **GNU General Public License v3.0**, guaranteeing freedom for inspection, modification, and community distribution on **F-Droid** and **IzzyOnDroid**.
+4. **Copyleft Protection (GPLv3):** Licensed under the **GNU General Public License v3.0**, supporting community redistribution, subject to third-party binary licensing, reproducible build, and repository acceptance review before **F-Droid** or **IzzyOnDroid** publication.
 
 ---
 

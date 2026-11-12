@@ -43,7 +43,7 @@ Sovereign Tagger was engineered under the **Air-Gapped Local Autonomy** doctrine
 ### 2.1 File System & Scoped Storage
 - **Android Scoped Storage Compatibility:** Sovereign Tagger strictly adheres to Android 11+ (API 30–36) scoped storage laws.
 - **In-Place Mutation Security:** When editing existing media via **The Forge** or **The Batch Pipeline**, the application leverages Android's system `createWriteRequest` / `MediaStore.createWriteRequest` API. Android's system dialog is presented directly to the operator.
-- **Fail-Safe Working Copies:** All tag edits and audio DSP operations are executed on temporary working copies staged within the app-private cache (`context.cacheDir` or `${getApplicationSupportDirectory()}`). The original file is touched only after a successful read-back verification pass. If a crash or error occurs, the working copy is discarded and the original file remains byte-exact and untouched.
+- **Fail-Safe Working Copies:** All tag edits and audio DSP operations are executed on temporary working copies staged within the app-private cache (`context.cacheDir` or `${getApplicationSupportDirectory()}`). The original file is overwritten only after staging and verifying a recovery backup. A crash or I/O error during an in-place MediaStore overwrite may leave the destination incomplete; the retained backup can require explicit operator restoration through the Crash Recovery Vault. Never assume that an interrupted original is untouched.
 
 ### 2.2 Memory Safety & Process Isolation
 - **LiteRT RAM Guarding:** On devices with `< 6 GB` of total RAM (such as budget devices like the Moto G), the `ModelLifecycle` watchdog automatically releases the 300M-parameter `EmbeddingGemma` flatbuffer from RAM after 5 minutes of idle time.

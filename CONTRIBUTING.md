@@ -40,7 +40,7 @@ During active editing and plan execution, terminal commands must **never** be ex
   ```powershell
   # The End-of-Plan Batch
   C:\android\flutter\bin\flutter.bat analyze --no-pub
-  python .scripts/verify_audit_fixes.py
+  python -m unittest discover -s test/python -p "test_*.py"
   C:\android\flutter\bin\flutter.bat build apk --debug --target-platform android-arm64
   ```
 
