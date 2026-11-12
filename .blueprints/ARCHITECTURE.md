@@ -6,7 +6,7 @@
 main() ──▶ SharedPreferences(accent_color) ──▶ MaterialApp(dark, seed=accent)
         └─▶ SplashScreen._bootSequence()
               ├─ FFmpegKitExtended.initialize()
-              ├─ storage/autoImportConfig (XOR 0x53 .bin keys → prefs)
+              ├─ storage/autoImportConfig (device-local SOV2:K AES-GCM, legacy XOR migration → prefs)
               └─ pushReplacement ▶ MainShell (Stack → CyberBackdrop shader variant per tab → AnimatedTabStack → mini-player → CyberNavBar)
 ```
 
@@ -14,7 +14,7 @@ main() ──▶ SharedPreferences(accent_color) ──▶ MaterialApp(dark, see
 ```
 SovereignState (statics)            AudioService (statics + handler)
 ├─ currentTab ValueNotifier         ├─ player (just_audio, 48000/256k or PCM wav)
-├─ pendingForgePath ValueNotifier   ├─ player playlist API (setAudioSources/insert/move/remove, serialized via _queueLock)
+├─ pendingForge ValueNotifier   ├─ player playlist API (setAudioSources/insert/move/remove, serialized via _queueLock)
 └─ accentColor ValueNotifier        ├─ playlist ValueNotifier<List<File>>
                                     ├─ currentIndex ValueNotifier<int>
                                     ├─ videoController ValueNotifier<VideoPlayerController?>
@@ -31,7 +31,7 @@ RULE: mutate queues ONLY via AudioService mutators inside _withQueueLock (replac
 | `ytdlp` | `searchMedia` · `getFormats` · `downloadMedia(jobId UUID)` · `cancelDownload` · `updateCore` · `updateFullStack` · `runDoctor` · `getDoctorRegistry` | `bridge.py` (`job_id` templated `_v/_a.%(ext)s`, split `"vid+aud"` into two `YoutubeDL` runs with `extractor_args player_client=android,web`, orphan `temp_v` cleanup) + `updater.py` + `doctor.py` |
 | `ytdlp_events` | `EventChannel` progress JSON `{jobId,status,percent,speed,eta,current_file}` | `bridge.py` `create_hook` |
 | `id3` | `readTags` · `writeTags` (now `deleteField` on empty, `deleteArtworkField` on empty art) | `Id3Tagger.kt` jaudiotagger lossless in-place |
-| `storage` | `queryAudio` · `loadArtwork` · `resolveMediaUri` · `requestWriteAccess` · `overwriteMedia` · `requestDelete` · `exportToLibrary` · `getTempDirectory` · `addToMediaStore` (now MIME map `flac→flac, wav→wav, m4a→mp4, ogg→ogg, opus→opus, mkv→x-matroska`) · `exportConfig` · `autoImportConfig` | `StorageBridge.kt` `RELATIVE_PATH MUSIC/MOVIES` + `IS_PENDING` |
+| `storage` | `queryAudio` · `loadArtwork` · `resolveMediaUri` · `requestWriteAccess` · `overwriteMedia` · `requestDelete` · `exportToLibrary` · `getTempDirectory` · `addToMediaStore` (now MIME map `flac→flac, wav→wav, m4a→mp4, ogg→ogg, opus→opus, mkv→x-matroska`) · `exportConfig` · `autoImportConfig` · `encryptConfig` · `decryptConfig` · `recoverPendingOverwrites` · `restorePendingOverwrite` · `discardPendingOverwrite` · `runNativeSecuritySelfTest` | `StorageBridge.kt` `RELATIVE_PATH MUSIC/MOVIES` + `IS_PENDING` |
 | `acrcloud` | `initialize` · `identify` | `AcrCloudBridge` |
 | `spider` | `scrape` · `fetchLyrics` · `fetchArtwork` | `spider.py` (scored iTunes/Deezer/MusicBrainz candidates + LRCLIB lyrics, Genius optional) |
 | `share` (Event) | shared URL strings | `MainActivity` ACTION_SEND |
