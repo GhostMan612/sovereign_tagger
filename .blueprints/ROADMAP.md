@@ -358,6 +358,7 @@
 - [x] **39.6 UUID Recovery Transaction Identifiers (PR #29)** — Replaced millisecond timestamps with UUID-suffixed filenames for crash backups to prevent concurrent overwrite collisions.
 - [x] **39.7 Dead Code Pruning & Documentation Alignment (PR #26, #28, #37)** — Pruned unreferenced Sentinel naming wrappers and refreshed architectural documentation.
 - [x] **39.8 Architecture Decomposition Blueprint Authored** — Authored `.blueprints/ARCHITECTURE_DECOMPOSITION.md` defining 3-stage modularization plans for the 6 oversized modules (~611 KB).
+- [x] **39.9 Remote Audit Register & Work Orders Landed (PR #31, #33, #34, #35, #36, #38)** — Committed canonical audit register (`docs/remote-audit-2026-11-12.md`) and five dedicated work-order specifications into `docs/audit-workorders/`.
 - Gate: `flutter analyze --no-pub` -> `No issues found!`; `flutter test` -> `All 57 tests passed!`; Python doctor tests -> `2/2 passed`.
 
 ## Phase S0–S4 — SOVEREIGN SDK EDITION [-] PARKED 2026-10-01 — spec only, do not start

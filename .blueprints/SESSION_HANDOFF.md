@@ -22,7 +22,7 @@ Session-end law: update rows 2–4 every session (+ row 5 when a new gotcha is l
 ## Where we are
 
 **Date:** 2026-11-12
-**Phase:** Phase 39: Security, Cloud Cache & Crash Hardening Wave 1 COMPLETE. All 9 executable code-fix & documentation PRs (#24, #25, #26, #27, #28, #29, #30, #32, #37) merged into `main` cleanly; dead feature branches pruned; test suite expanded to 57 passing unit tests; `.blueprints/ARCHITECTURE_DECOMPOSITION.md` modularization blueprint authored for the 6 oversized modules.
+**Phase:** Phase 39: Security, Cloud Cache & Audit Work Orders COMPLETE & FULLY MERGED (All 15 PRs #24–#38 merged into `main` at `7d6ef93`; zero open PRs; dead feature branches pruned; `flutter analyze` 0 issues; `flutter test` 57/57 passed; Python doctor tests 2/2 passed; `.blueprints/ARCHITECTURE_DECOMPOSITION.md` modularization blueprint authored).
 
 ## What shipped — Phase 39 Audit Code-Fix Integrations (2026-11-12)
 
@@ -43,6 +43,8 @@ Session-end law: update rows 2–4 every session (+ row 5 when a new gotcha is l
    - Corrected documentation drift across `AGENTS.md`, `ARCHITECTURE.md`, `README.md`, `LICENSES.md`, `SECURITY.md`, and `CONTRIBUTING.md`.
 8. **6-Module Architecture Decomposition Blueprint Authored**:
    - Authored `.blueprints/ARCHITECTURE_DECOMPOSITION.md` defining 3-stage modularization plans for `tab_workbench.dart`, `settings_screen.dart`, `ghost_brain.dart`, `tab_grabber.dart`, `main_shell.dart`, and `StorageBridge.kt`.
+9. **Permanent Audit Register & Work Orders Landed (PR #31, #33, #34, #35, #36, #38)**:
+   - Landed `docs/remote-audit-2026-11-12.md` and five dedicated work-order specifications in `docs/audit-workorders/` covering Python updater rollback safety, pCloud OAuth state/Keystore token storage, voice fallback, media integrity verification, and Sentinel/native dead-ends.
 
 ## What shipped — Phase 38.3 PR #23 Review Hardening & Revisions (2026-11-12)
 

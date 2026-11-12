@@ -1,7 +1,7 @@
-# CURRENT_STATE.md — Sovereign Tagger v2 (post-Phase 39 Wave 1)
-> Snapshot as of 2026-11-12 — Phases 0–39 Wave 1 COMPLETE & MERGED on main (PRs #1–#30, #32, #37 merged; `flutter analyze --no-pub` -> `No issues found!`; `flutter test` -> 57/57 passed; Python doctor tests -> 2/2 passed; Moto G 2025 `ZT4222BMWN` + BLU View 5 `7040016025040287` hardware verification ALL PASS).
+# CURRENT_STATE.md — Sovereign Tagger v2 (post-Phase 39)
+> Snapshot as of 2026-11-12 — Phases 0–39 COMPLETE & MERGED on main (PRs #1–#38 ALL MERGED; `flutter analyze --no-pub` -> `No issues found!`; `flutter test` -> 57/57 passed; Python doctor tests -> 2/2 passed; Moto G 2025 `ZT4222BMWN` + BLU View 5 `7040016025040287` hardware verification ALL PASS).
 >
-> **Phase 39 Wave 1 deltas (Security, Cloud Cache & Crash Hardening):**
+> **Phase 39 deltas (Security, Cloud Cache, Crash Hardening & Audit Specifications):**
 > - **OAuth API Host Validation (P0 — PR #30)**: Validates pCloud OAuth callback `hostname` against allowlisted `CloudRegion` hosts before saving tokens or sending authenticated API requests, eliminating host substitution risk. Added `test/cloud_host_security_test.dart`.
 > - **Atomic Cloud Cache Staging (P1 — PR #24)**: Preserves existing offline pCloud cache on replacement failures by staging to `.part` and atomically renaming upon verification. Added `test/cloud_cache_test.dart`.
 > - **Isolated Cloud Download Staging (P1 — PR #25)**: Isolates concurrent pCloud file downloads inside unique OS temporary directories (`Directory.createTemp`), preventing temporary file collision and truncation.
