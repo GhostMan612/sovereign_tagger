@@ -5,6 +5,7 @@
 
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math' as math;
 
 import 'cloud_settings.dart';
 import 'cloud_source.dart';
@@ -42,21 +43,38 @@ class PCloudProvider implements CloudSource {
   @override
   CloudPlaybackPolicy get defaultPlaybackPolicy => CloudSettings.policy;
 
-  Uri buildAuthorizeUrl() {
+  static String generateOAuthState() {
+    final random = math.Random.secure();
+    final bytes = List<int>.generate(32, (_) => random.nextInt(256));
+    return base64Url.encode(bytes).replaceAll('=', '');
+  }
+
+  Uri buildAuthorizeUrl({required String state}) {
+    if (state.length < 32) {
+      throw ArgumentError.value(state, 'state', 'OAuth state must be unpredictable and at least 32 characters.');
+    }
     return CloudSettings.authorizeUri.replace(queryParameters: <String, String>{
       'client_id': CloudSettings.clientId,
       'response_type': _tokenFlow,
       'redirect_uri': CloudSettings.redirectUri,
+      'state': state,
     });
   }
 
-  static PCloudAuthResult? parseAuthRedirect(String redirect) {
+  static PCloudAuthResult? parseAuthRedirect(String redirect, {required String expectedState}) {
+    if (expectedState.isEmpty) return null;
     final uri = Uri.tryParse(redirect);
     if (uri == null) return null;
-    if (uri.scheme != 'sovereigntagger' || uri.host != 'pcloud') return null;
+    if (uri.scheme != 'sovereigntagger' || uri.host != 'pcloud' || uri.path != '/callback') return null;
     final fragment = uri.fragment;
     if (fragment.isEmpty) return null;
-    final params = Uri.splitQueryString(fragment);
+    late final Map<String, String> params;
+    try {
+      params = Uri.splitQueryString(fragment);
+    } on FormatException {
+      return null;
+    }
+    if (params['state'] != expectedState) return null;
     final token = params['access_token'] ?? '';
     if (token.isEmpty) return null;
     final locationId = int.tryParse(params['locationid'] ?? '') ?? 0;
