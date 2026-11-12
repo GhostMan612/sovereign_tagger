@@ -133,7 +133,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     } catch (_) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('CREDENTIAL VAULT ERROR — NOTHING REPORTED AS SAVED.')),
+        const SnackBar(content: Text('CREDENTIAL VAULT ERROR — VERIFY WHICH CREDENTIALS WERE SAVED.')),
       );
     } finally {
       if (mounted) setState(() => _isSaving = false);
@@ -1593,8 +1593,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   Widget _buildSettingsField(TextEditingController controller, String label, Color accentColor) {
+    final sensitive = identical(controller, _geniusKeyCtrl) ||
+        identical(controller, _acrKeyCtrl) ||
+        identical(controller, _acrSecretCtrl) ||
+        identical(controller, _hfTokenCtrl);
     return TextField(
-      controller: controller, 
+      controller: controller,
+      obscureText: sensitive,
+      enableSuggestions: !sensitive,
+      autocorrect: !sensitive, 
       style: TextStyle(fontFamily: 'ShareTechMono', color: accentColor),
       decoration: InputDecoration(
         labelText: label,
