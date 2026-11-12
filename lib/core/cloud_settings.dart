@@ -84,9 +84,8 @@ class CloudSettings {
     final validLegacyRegion = storedHost ==
         (storedLocation == 1 ? CloudRegion.us.host : storedLocation == 2 ? CloudRegion.eu.host : '');
     try {
-      if (hasLegacyToken && !validLegacyRegion) {
-        await prefs.remove(_tokenKey);
-      }
+      // Reject contradictory legacy host metadata without deleting the only
+      // recoverable token. An operator may reconnect or repair the region.
       final encryptedRecord = hasLegacyToken && !validLegacyRegion
           ? ''
           : await SecretStore.read(prefs, _tokenKey);
