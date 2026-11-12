@@ -459,7 +459,7 @@ void main() {
       expect(queue.jobs[0].status, equals(BatchJobStatus.failed));
       expect(queue.jobs[0].errorMessage, contains("FILTER 'afftdn' UNAVAILABLE"));
       expect(queue.jobs[1].status, equals(BatchJobStatus.completed));
-      expect(summary, contains('1/2 OK'));
+      expect(summary, contains('1/2 SAVED'));
       expect(summary, contains('1 failed'));
     });
 
@@ -501,7 +501,7 @@ void main() {
 
       expect(queue.jobs[0].status, equals(BatchJobStatus.completed));
       expect(queue.jobs[0].isSuccess, isTrue);
-      expect(summary, contains('1/1 OK'));
+      expect(summary, contains('1/1 SAVED'));
     });
 
     test('scoped cancellation sets current job description and cancels matching session only', () async {
@@ -559,7 +559,7 @@ void main() {
       expect(runnerCalled, isFalse);
       expect(queue.jobs[0].status, equals(BatchJobStatus.skipped));
       expect(queue.jobs[1].status, equals(BatchJobStatus.skipped));
-      expect(summary, contains('0/2 OK (2 skipped)'));
+      expect(summary, contains('0/2 SAVED (2 skipped)'));
     });
 
     test('cancellation at commandBuilder skips job and cleans up staged file', () async {
