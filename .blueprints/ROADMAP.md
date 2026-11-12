@@ -340,6 +340,15 @@
 - [x] **38.2.5 Test Suite Expansion & End-of-Plan Verification** — Added comprehensive tests in `test/backup_crypto_test.dart` for iteration parsing, legacy Phase 38 envelope fallback delegation, vault reports parsing, restore execution with SHA-256 verification, and discard operations.
 - Gate: `flutter analyze --no-pub` -> `No issues found!`; `flutter test` -> `All 44 tests passed!`; Python doctor tests -> `2/2 passed`.
 
+## Phase 38.3 — Defensive Hardening & Native Test Verification [x]
+- [x] **38.3.1 Path Traversal Confinement** — Added `validateRecoveryFile(backupPath: String): File` in `StorageBridge.kt` enforcing canonical directory containment within `context.filesDir/sov_recovery`, rejecting path traversal with `SecurityException`, and validating filename prefixes (`sov_rec_*.bak`).
+- [x] **38.3.2 Strict Discard Atomicity** — Required both backup binary and metadata file deletion (`bOk && mOk`) in `discardPendingOverwrite` to prevent partial deletion false-positives.
+- [x] **38.3.3 Interrupted Write Disambiguation** — In `overwriteMedia`, commits `STATUS=COMMITTED\nSRC_SHA=$srcSha\nDEST_SHA=$destSha\n` upon hash validation prior to cleanup. In `recoverPendingOverwrites()`, resolves status to `COMMITTED_PRE_CLEANUP` when destination matches `srcSha` or status is `COMMITTED`, surfacing `[PURGE (LANDED)]` in `SettingsScreen`.
+- [x] **38.3.4 Bounded PBKDF2 Iterations** — Enforced native boundary `1,000 <= iterations <= 2,000,000` in `decryptConfig`, throwing `IllegalArgumentException` on out-of-bounds or malformed rounds.
+- [x] **38.3.5 Native Security Self-Test & Expanded Test Coverage** — Implemented `StorageBridge.runNativeSecuritySelfTest()` verifying envelope format, roundtrip decryption, tamper rejection, iteration bounds, legacy Phase 38 fallback, traversal rejection, and atomic discard. Expanded `test/backup_crypto_test.dart` to 47 unit tests.
+- [x] **38.3.6 Security Documentation Synchronized** — Updated `SECURITY.md` Section 3 with AES-256-GCM authenticated storage, KDF bounding, StrongBox/TEE Keystore mode, the migration role and plaintext caveat of `LEGACY_PHASE38_SECRET`, and the `sov_recovery` safety model.
+- Gate: `flutter analyze --no-pub` -> `No issues found!`; `flutter test` -> `All 47 tests passed!`; Python doctor tests -> `2/2 passed`.
+
 ## Phase S0–S4 — SOVEREIGN SDK EDITION [-] PARKED 2026-10-01 — spec only, do not start
 
 > **OPERATOR DECISION 2026-10-01: PARKED.** The operator needs to research the

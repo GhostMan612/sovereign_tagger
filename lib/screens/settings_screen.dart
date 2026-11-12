@@ -876,7 +876,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     ),
                     const SizedBox(height: 2),
                     Text(
-                      "SIZE: $size BYTES | STATUS: $status",
+                      "SIZE: $size BYTES",
                       style: const TextStyle(fontFamily: 'ShareTechMono', fontSize: 10, color: Colors.white38),
                     ),
                     if (sha256.isNotEmpty) ...[
@@ -888,25 +888,46 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     ],
                     const SizedBox(height: 8),
                     Row(
-                      mainAxisAlignment: MainAxisAlignment.end,
                       children: [
-                        OutlinedButton(
-                          onPressed: () => _discardPendingMedia(path),
-                          style: OutlinedButton.styleFrom(
-                            side: const BorderSide(color: Colors.redAccent),
-                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                        Expanded(
+                          child: Text(
+                            "STATUS: $status",
+                            style: TextStyle(
+                              fontFamily: 'ShareTechMono',
+                              fontSize: 10,
+                              fontWeight: FontWeight.bold,
+                              color: status.contains('COMMITTED') ? Colors.greenAccent : Colors.amberAccent,
+                            ),
                           ),
-                          child: const Text('DISCARD', style: TextStyle(fontFamily: 'ShareTechMono', fontSize: 10, color: Colors.redAccent)),
                         ),
-                        const SizedBox(width: 8),
-                        OutlinedButton(
-                          onPressed: () => _restorePendingMedia(path),
-                          style: OutlinedButton.styleFrom(
-                            side: const BorderSide(color: Colors.greenAccent),
-                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                        if (status.contains('COMMITTED'))
+                          OutlinedButton(
+                            onPressed: () => _discardPendingMedia(path),
+                            style: OutlinedButton.styleFrom(
+                              side: const BorderSide(color: Colors.greenAccent),
+                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                            ),
+                            child: const Text('PURGE (LANDED)', style: TextStyle(fontFamily: 'ShareTechMono', fontSize: 10, color: Colors.greenAccent)),
+                          )
+                        else ...[
+                          OutlinedButton(
+                            onPressed: () => _discardPendingMedia(path),
+                            style: OutlinedButton.styleFrom(
+                              side: const BorderSide(color: Colors.redAccent),
+                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                            ),
+                            child: const Text('DISCARD', style: TextStyle(fontFamily: 'ShareTechMono', fontSize: 10, color: Colors.redAccent)),
                           ),
-                          child: const Text('RESTORE', style: TextStyle(fontFamily: 'ShareTechMono', fontSize: 10, color: Colors.greenAccent, fontWeight: FontWeight.bold)),
-                        ),
+                          const SizedBox(width: 8),
+                          OutlinedButton(
+                            onPressed: () => _restorePendingMedia(path),
+                            style: OutlinedButton.styleFrom(
+                              side: const BorderSide(color: Colors.greenAccent),
+                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                            ),
+                            child: const Text('RESTORE', style: TextStyle(fontFamily: 'ShareTechMono', fontSize: 10, color: Colors.greenAccent, fontWeight: FontWeight.bold)),
+                          ),
+                        ],
                       ],
                     ),
                   ],

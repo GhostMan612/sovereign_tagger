@@ -49,7 +49,21 @@ class StorageBridge(private val context: Context) {
         private const val ANDROID_KEYSTORE = "AndroidKeyStore"
         private const val DEFAULT_PBKDF2_ITERATIONS = 250000
         private const val LEGACY_PBKDF2_ITERATIONS = 10000
+        private const val MIN_PBKDF2_ITERATIONS = 1000
+        private const val MAX_PBKDF2_ITERATIONS = 2000000
         private const val LEGACY_PHASE38_SECRET = "SovereignVault::KernelMasterKey::v2"
+    }
+
+    private fun validateRecoveryFile(backupPath: String): File {
+        val recoveryDir = File(context.filesDir, "sov_recovery").canonicalFile
+        val file = File(backupPath).canonicalFile
+        if (!file.path.startsWith(recoveryDir.path + File.separator)) {
+            throw SecurityException("Path traversal rejected: $backupPath is outside recovery vault (${recoveryDir.path})")
+        }
+        if (!file.name.startsWith("sov_rec_") || !file.name.endsWith(".bak")) {
+            throw SecurityException("Invalid recovery backup filename: ${file.name}")
+        }
+        return file
     }
 
     private data class Quad<A, B, C, D>(val first: A, val second: B, val third: C, val fourth: D)
@@ -737,6 +751,9 @@ class StorageBridge(private val context: Context) {
                 }
             }
 
+            try {
+                metaFile.writeText("URI=$uriString\nSIZE=${recoveryFile.length()}\nSHA256=$bakSha\nSRC_SHA=$srcSha\nDEST_SHA=$destSha\nTIME=$opId\nSTATUS=COMMITTED\n")
+            } catch (_: Throwable) {}
             success = true
         } finally {
             if (success) {
@@ -776,7 +793,7 @@ class StorageBridge(private val context: Context) {
         val recoveryDir = File(context.filesDir, "sov_recovery")
         if (!recoveryDir.exists()) return emptyList()
         val reports = mutableListOf<Map<String, String>>()
-        val baks = recoveryDir.listFiles { _, name -> name.endsWith(".bak") } ?: return emptyList()
+        val baks = recoveryDir.listFiles { _, name -> name.startsWith("sov_rec_") && name.endsWith(".bak") } ?: return emptyList()
         for (bak in baks) {
             val meta = File(recoveryDir, "${bak.nameWithoutExtension}.meta")
             var uri = ""
@@ -784,6 +801,8 @@ class StorageBridge(private val context: Context) {
             var sha256 = ""
             var time = ""
             var status = "UNKNOWN"
+            var srcSha = ""
+            var destSha = ""
             if (meta.exists()) {
                 val lines = meta.readLines()
                 for (line in lines) {
@@ -797,6 +816,8 @@ class StorageBridge(private val context: Context) {
                             "SHA256" -> sha256 = value
                             "TIME" -> time = value
                             "STATUS" -> status = value
+                            "SRC_SHA" -> srcSha = value
+                            "DEST_SHA" -> destSha = value
                         }
                     }
                 }
@@ -806,21 +827,34 @@ class StorageBridge(private val context: Context) {
                     sha256 = computeSha256(bak)
                 } catch (_: Throwable) {}
             }
+            var resolvedStatus = status
+            if (status == "COMMITTED") {
+                resolvedStatus = "COMMITTED_PRE_CLEANUP"
+            } else if (uri.isNotEmpty() && srcSha.isNotEmpty()) {
+                try {
+                    val currentDestSha = computeSha256(Uri.parse(uri))
+                    if (currentDestSha == srcSha) {
+                        resolvedStatus = "COMMITTED_PRE_CLEANUP"
+                    }
+                } catch (_: Throwable) {}
+            }
             reports.add(mapOf(
-                "backupPath" to bak.absolutePath,
+                "backupPath" to bak.canonicalPath,
                 "backupName" to bak.name,
                 "uri" to uri,
                 "size" to size,
                 "sha256" to sha256,
                 "time" to time,
-                "status" to status
+                "status" to resolvedStatus,
+                "srcSha" to srcSha,
+                "destSha" to destSha
             ))
         }
         return reports
     }
 
     fun restorePendingOverwrite(backupPath: String): Map<String, String> {
-        val bak = File(backupPath)
+        val bak = validateRecoveryFile(backupPath)
         if (!bak.exists()) throw IllegalStateException("Backup file does not exist: $backupPath")
         val meta = File(bak.parentFile, "${bak.nameWithoutExtension}.meta")
         var uriString = ""
@@ -886,11 +920,11 @@ class StorageBridge(private val context: Context) {
     }
 
     fun discardPendingOverwrite(backupPath: String): Boolean {
-        val bak = File(backupPath)
+        val bak = validateRecoveryFile(backupPath)
         val meta = File(bak.parentFile, "${bak.nameWithoutExtension}.meta")
         val bOk = if (bak.exists()) bak.delete() else true
         val mOk = if (meta.exists()) meta.delete() else true
-        return bOk || mOk
+        return bOk && mOk
     }
 
     fun deleteDirect(uriString: String): Boolean {
@@ -986,7 +1020,11 @@ class StorageBridge(private val context: Context) {
             val ivB64: String
             val cipherB64: String
             if (parts.size >= 6) {
-                iterations = parts[2].toIntOrNull() ?: DEFAULT_PBKDF2_ITERATIONS
+                val parsed = parts[2].toIntOrNull()
+                if (parsed == null || parsed < MIN_PBKDF2_ITERATIONS || parsed > MAX_PBKDF2_ITERATIONS) {
+                    throw IllegalArgumentException("PBKDF2 iterations out of bounds: ${parts[2]} (allowed: $MIN_PBKDF2_ITERATIONS..$MAX_PBKDF2_ITERATIONS)")
+                }
+                iterations = parsed
                 saltB64 = parts[3]
                 ivB64 = parts[4]
                 cipherB64 = parts[5]
@@ -1045,6 +1083,74 @@ class StorageBridge(private val context: Context) {
             if (decoded.startsWith("{")) return decoded
         } catch (_: Exception) {}
         throw IllegalArgumentException("Unrecognized or corrupted backup payload")
+    }
+
+    fun runNativeSecuritySelfTest(): Map<String, Any> {
+        val results = mutableMapOf<String, Any>()
+        val plainText = "SOVEREIGN_VAULT_TEST_PAYLOAD_αβγ_12345"
+        val passphrase = "test-passphrase-alpha"
+
+        val encP = encryptConfig(plainText, passphrase)
+        val pParts = encP.split(":")
+        results["format_correct"] = encP.startsWith("SOV2:P:250000:") && pParts.size == 6
+
+        val decP = decryptConfig(encP, passphrase)
+        results["roundtrip_passphrase"] = (decP == plainText)
+
+        var tamperCaught = false
+        try {
+            val badCipher = encP.substring(0, encP.length - 4) + "AAAA"
+            decryptConfig(badCipher, passphrase)
+        } catch (_: Throwable) {
+            tamperCaught = true
+        }
+        results["tamper_resistance"] = tamperCaught
+
+        var lowIterCaught = false
+        try {
+            decryptConfig("SOV2:P:500:${pParts[3]}:${pParts[4]}:${pParts[5]}", passphrase)
+        } catch (_: IllegalArgumentException) {
+            lowIterCaught = true
+        }
+        results["min_iterations_enforced"] = lowIterCaught
+
+        var highIterCaught = false
+        try {
+            decryptConfig("SOV2:P:5000000:${pParts[3]}:${pParts[4]}:${pParts[5]}", passphrase)
+        } catch (_: IllegalArgumentException) {
+            highIterCaught = true
+        }
+        results["max_iterations_enforced"] = highIterCaught
+
+        val random = SecureRandom()
+        val legacySalt = ByteArray(16).also { random.nextBytes(it) }
+        val legacyIv = ByteArray(12).also { random.nextBytes(it) }
+        val legacyKey = derivePassphraseKey(LEGACY_PHASE38_SECRET, legacySalt, LEGACY_PBKDF2_ITERATIONS)
+        val legacyCipher = Cipher.getInstance("AES/GCM/NoPadding")
+        legacyCipher.init(Cipher.ENCRYPT_MODE, legacyKey, GCMParameterSpec(128, legacyIv))
+        val legacyCipherBytes = legacyCipher.doFinal(plainText.toByteArray(Charsets.UTF_8))
+        val legacyPayload = "SOV2:${Base64.encodeToString(legacySalt, Base64.NO_WRAP)}:${Base64.encodeToString(legacyIv, Base64.NO_WRAP)}:${Base64.encodeToString(legacyCipherBytes, Base64.NO_WRAP)}"
+        val decLegacy = decryptConfig(legacyPayload, null)
+        results["legacy_phase38_fallback"] = (decLegacy == plainText)
+
+        var pathTraversalCaught = false
+        try {
+            validateRecoveryFile("../../etc/hosts")
+        } catch (_: SecurityException) {
+            pathTraversalCaught = true
+        }
+        results["path_traversal_confinement"] = pathTraversalCaught
+
+        val recoveryDir = File(context.filesDir, "sov_recovery").apply { mkdirs() }
+        val testBak = File(recoveryDir, "sov_rec_999999.bak")
+        val testMeta = File(recoveryDir, "sov_rec_999999.meta")
+        testBak.writeText("TEST_BACKUP")
+        testMeta.writeText("URI=content://media/test\nSTATUS=PENDING\n")
+        val discardSuccess = discardPendingOverwrite(testBak.absolutePath)
+        results["discard_atomic_success"] = discardSuccess && !testBak.exists() && !testMeta.exists()
+
+        results["all_passed"] = results.values.all { it == true }
+        return results
     }
 
     fun exportConfig(data: String): Boolean {

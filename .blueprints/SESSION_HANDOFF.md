@@ -21,7 +21,26 @@ Session-end law: update rows 2–4 every session (+ row 5 when a new gotcha is l
 ## Where we are
 
 **Date:** 2026-11-12
-**Phase:** Phase 38.2: Reliability and Vault Verification Closeout COMPLETE. All 22 PRs merged into `main`, full documentation suite (`README.md`, `LICENSE`, `LICENSES.md`, `SECURITY.md`, `CONTRIBUTING.md`), `impellerc` shaders (`GLES`/`Vulkan`/`SkSL`), analyzer, test suite (expanded to 44 unit tests), and Android ARM64 APK build gates VERIFIED; zero stubs remaining. F-Droid ready.
+**Phase:** Phase 38.3: Defensive Hardening & Native Test Verification COMPLETE. All 22 PRs merged into `main`, full documentation suite (`README.md`, `LICENSE`, `LICENSES.md`, `SECURITY.md`, `CONTRIBUTING.md`), `impellerc` shaders (`GLES`/`Vulkan`/`SkSL`), analyzer, test suite (expanded to 47 unit tests), and Android ARM64 APK build gates VERIFIED; zero stubs remaining. F-Droid ready.
+
+## What shipped — Phase 38.3: Defensive Hardening & Native Test Verification (2026-11-12)
+
+1. **Path Traversal Confinement**:
+   - Added `validateRecoveryFile(backupPath: String): File` in `StorageBridge.kt` enforcing canonical directory containment within `context.filesDir/sov_recovery`.
+   - Rejects any traversal attempt (`../`, `/data/system/`, external storage) with `SecurityException` and restricts file names strictly to `sov_rec_*.bak`.
+2. **Strict Discard Atomicity**:
+   - Updated `discardPendingOverwrite` to require both backup binary and metadata file deletion (`bOk && mOk`), preventing misleading partial success reports.
+3. **Interrupted Write Disambiguation**:
+   - In `overwriteMedia`, commits `STATUS=COMMITTED\nSRC_SHA=$srcSha\nDEST_SHA=$destSha\n` immediately upon successful SHA-256 verification before cleanup.
+   - In `recoverPendingOverwrites()`, resolves status to `COMMITTED_PRE_CLEANUP` when destination matches `srcSha` or status is `COMMITTED`.
+   - In `SettingsScreen`, surfaces distinct `[PURGE (LANDED)]` action for completed writes, preventing redundant restore confusion.
+4. **Bounded PBKDF2 Iterations**:
+   - Bounded iteration counts in `decryptConfig` to `1,000 <= iterations <= 2,000,000`. Rejects out-of-bounds or malformed iteration counts with `IllegalArgumentException`.
+5. **Native Security Self-Test & Expanded Test Coverage**:
+   - Implemented `StorageBridge.runNativeSecuritySelfTest()` exercising envelope format, roundtrip decryption, tamper rejection, iteration bounds, legacy Phase 38 fallback, traversal rejection, and atomic discard.
+   - Expanded `test/backup_crypto_test.dart` to 47 unit tests covering self-test integration, `COMMITTED_PRE_CLEANUP` state preservation, and traversal bubbling.
+6. **Security Documentation Synchronized**:
+   - Updated `SECURITY.md` Section 3 with full documentation of AES-256-GCM authenticated storage, KDF bounding, StrongBox/TEE Keystore mode, the migration role and plaintext caveat of `LEGACY_PHASE38_SECRET`, and the `sov_recovery` safety model.
 
 ## What shipped — Phase 38.2: Reliability & Vault Verification Closeout (2026-11-12)
 
