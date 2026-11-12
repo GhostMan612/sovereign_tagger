@@ -109,25 +109,32 @@ class _SplashScreenState extends State<SplashScreen> {
     
     try {
       const storageChannel = MethodChannel('com.sovereign.tagger/storage');
-      final encryptedData = await storageChannel.invokeMethod('autoImportConfig');
-      if (encryptedData != null && encryptedData.toString().isNotEmpty) {
-        final decoded = base64Decode(encryptedData.toString());
-        final decryptedBytes = decoded.map((b) => b ^ 0x53).toList();
-        final jsonStr = utf8.decode(decryptedBytes);
-        final config = jsonDecode(jsonStr);
-        
-        if (mounted) {
-          setState(() {
-            _progress = 0.85;
-            _statusText = "SYNCING KERNEL PREFERENCES...";
-          });
+      final data = await storageChannel.invokeMethod('autoImportConfig');
+      if (data != null && data.toString().isNotEmpty) {
+        String jsonStr = data.toString().trim();
+        if (!jsonStr.startsWith('{')) {
+          try {
+            final decoded = base64Decode(jsonStr);
+            final decryptedBytes = decoded.map((b) => b ^ 0x53).toList();
+            jsonStr = utf8.decode(decryptedBytes);
+          } catch (_) {}
         }
+        if (jsonStr.startsWith('{')) {
+          final config = jsonDecode(jsonStr);
+          
+          if (mounted) {
+            setState(() {
+              _progress = 0.85;
+              _statusText = "SYNCING KERNEL PREFERENCES...";
+            });
+          }
 
-        final prefs = await SharedPreferences.getInstance();
-        if (config["genius_key"] != null) await prefs.setString('genius_key', config["genius_key"]);
-        if (config["acr_host"] != null) await prefs.setString('acr_host', config["acr_host"]);
-        if (config["acr_key"] != null) await prefs.setString('acr_key', config["acr_key"]);
-        if (config["acr_secret"] != null) await prefs.setString('acr_secret', config["acr_secret"]);
+          final prefs = await SharedPreferences.getInstance();
+          if (config["genius_key"] != null) await prefs.setString('genius_key', config["genius_key"]);
+          if (config["acr_host"] != null) await prefs.setString('acr_host', config["acr_host"]);
+          if (config["acr_key"] != null) await prefs.setString('acr_key', config["acr_key"]);
+          if (config["acr_secret"] != null) await prefs.setString('acr_secret', config["acr_secret"]);
+        }
       }
     } catch (e) {
       debugPrint("BOOT: storage vault decrypt FAILED — running on stored prefs: $e");

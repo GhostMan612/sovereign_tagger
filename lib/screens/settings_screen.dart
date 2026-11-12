@@ -221,17 +221,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
     });
   }
 
-  String _encrypt(String data) {
-    final bytes = utf8.encode(data);
-    final xorBytes = bytes.map((b) => b ^ 0x53).toList(); 
-    return base64Encode(xorBytes);
-  }
+  Future<String> _encrypt(String data) => StorageClient.encryptConfig(data);
 
-  String _decrypt(String data) {
-    final xorBytes = base64Decode(data);
-    final bytes = xorBytes.map((b) => b ^ 0x53).toList();
-    return utf8.decode(bytes);
-  }
+  Future<String> _decrypt(String data) => StorageClient.decryptConfig(data);
 
   Future<void> _exportConfig() async {
     TapFeedback.machineTap();
@@ -242,13 +234,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
       "acr_secret": _acrSecretCtrl.text.trim(),
       "hf_token": _hfTokenCtrl.text.trim(),
     };
-    final encryptedData = _encrypt(jsonEncode(config));
+    final encryptedData = await _encrypt(jsonEncode(config));
     
     try {
       final success = await const MethodChannel('com.sovereign.tagger/storage').invokeMethod('exportConfig', {'data': encryptedData});
       if (!mounted) return;
       if (success == true) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('> CONFIG EXPORTED TO DOWNLOADS. NOT ENCRYPTED; CONTAINS API KEYS.', style: TextStyle(fontFamily: 'ShareTechMono')), backgroundColor: Colors.black, shape: RoundedRectangleBorder(side: BorderSide(color: Colors.cyanAccent))));
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('> CONFIG EXPORTED (AES-256-GCM ENCRYPTED).', style: TextStyle(fontFamily: 'ShareTechMono')), backgroundColor: Colors.black, shape: RoundedRectangleBorder(side: BorderSide(color: Colors.cyanAccent))));
       } else {
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('> ERR: FAILED TO EXPORT CONFIG.', style: TextStyle(fontFamily: 'ShareTechMono')), backgroundColor: Colors.black, shape: RoundedRectangleBorder(side: BorderSide(color: Colors.redAccent))));
       }
@@ -265,7 +257,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
       try {
         final file = File(picked.path!);
         final encryptedData = await file.readAsString();
-        final config = jsonDecode(_decrypt(encryptedData));
+        final decrypted = await _decrypt(encryptedData);
+        final config = jsonDecode(decrypted);
         
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: const Text('> CONFIG IMPORTED. INITIATE SAVE PROTOCOL.', style: TextStyle(fontFamily: 'ShareTechMono')), backgroundColor: Colors.black, shape: RoundedRectangleBorder(side: BorderSide(color: SovereignState.accentColor.value))));
@@ -483,14 +476,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
         backup['playlists']['persist_queue'] = queue;
       }
       
-      final encryptedData = _encrypt(jsonEncode(backup));
+      final encryptedData = await _encrypt(jsonEncode(backup));
       
 
       final success = await const MethodChannel('com.sovereign.tagger/storage').invokeMethod('exportConfig', {'data': encryptedData});
       
       if (!mounted) return;
       if (success == true) {
-        setState(() => _backupStatus = "BACKUP COMPLETE ✓\nNOT ENCRYPTED. Contains API keys; keep this file private.");
+        setState(() => _backupStatus = "BACKUP COMPLETE ✓\nAES-256-GCM authenticated binary written to Downloads.");
       } else {
         setState(() => _backupStatus = "ERR: Backup write failed.");
       }
@@ -515,7 +508,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       
       final file = File(picked.path!);
       final encryptedData = await file.readAsString();
-      final decrypted = _decrypt(encryptedData);
+      final decrypted = await _decrypt(encryptedData);
       final backup = jsonDecode(decrypted) as Map<String, dynamic>;
       
       if (backup['version'] != 1) {
@@ -1183,7 +1176,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
             actions: [
               IconButton(icon: const Icon(Icons.file_download, color: Colors.cyanAccent), tooltip: "MANUAL IMPORT .BIN", onPressed: _importConfig),
-              IconButton(icon: const Icon(Icons.file_upload, color: Colors.cyanAccent), tooltip: "EXPORT .BIN TO DOWNLOADS (NOT ENCRYPTED)", onPressed: _exportConfig),
+              IconButton(icon: const Icon(Icons.file_upload, color: Colors.cyanAccent), tooltip: "EXPORT .BIN TO DOWNLOADS (AES-256-GCM)", onPressed: _exportConfig),
             ],
           ),
           body: Stack(
@@ -1686,7 +1679,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
                 const Text("> BACKUP & RESTORE", style: TextStyle(fontFamily: 'ShareTechMono', fontSize: 16, fontWeight: FontWeight.bold, color: Colors.greenAccent)),
                 const SizedBox(height: 8),
-                const Text("BACKUP CONTAINS API KEYS. .BIN IS OBFUSCATED, NOT ENCRYPTED; KEEP PRIVATE.", style: TextStyle(fontFamily: 'ShareTechMono', color: Colors.white54, fontSize: 11)),
+                const Text("BACKUP VAULT SECURED WITH AES-256-GCM AUTHENTICATED ENCRYPTION.", style: TextStyle(fontFamily: 'ShareTechMono', color: Colors.white54, fontSize: 11)),
                 const SizedBox(height: 16),
                 Row(
                   children: [

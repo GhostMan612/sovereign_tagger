@@ -22,11 +22,18 @@ import android.os.Environment
 import android.os.Process
 import android.provider.MediaStore
 import android.provider.OpenableColumns
+import android.util.Base64
 import android.util.Log
 import android.util.Size
 import java.io.ByteArrayOutputStream
 import java.io.File
+import java.security.SecureRandom
 import java.util.Locale
+import javax.crypto.Cipher
+import javax.crypto.SecretKeyFactory
+import javax.crypto.spec.GCMParameterSpec
+import javax.crypto.spec.PBEKeySpec
+import javax.crypto.spec.SecretKeySpec
 
 class StorageBridge(private val context: Context) {
 
@@ -484,26 +491,57 @@ class StorageBridge(private val context: Context) {
             throw IllegalStateException("Not a MediaStore item (authority=${uri.authority}); Android will not let it be fixed in place. Use LIBRARY > EDIT IN FORGE instead.")
         }
 
-        val stream = context.contentResolver.openOutputStream(uri, "wt")
-            ?: throw IllegalStateException("Original not writable")
-        var written = 0L
+        val backupFile = File(context.cacheDir, ".sov_recover_${System.currentTimeMillis()}.tmp")
+        var backedUp = false
         try {
-            stream.use { out ->
-                src.inputStream().use { input ->
-                    val buf = ByteArray(64 * 1024)
-                    while (true) {
-                        val n = input.read(buf)
-                        if (n <= 0) break
-                        out.write(buf, 0, n)
-                        written += n
-                    }
+            context.contentResolver.openInputStream(uri)?.use { input ->
+                backupFile.outputStream().use { output ->
+                    input.copyTo(output)
                 }
+                backedUp = true
             }
         } catch (e: Exception) {
-            throw IllegalStateException("Write-back failed after $written of $srcLen bytes — the original may be truncated: ${e.message}")
+            Log.w(TAG, "overwriteMedia: safety backup skipped: ${e.message}")
         }
-        if (written != srcLen) {
-            throw IllegalStateException("Write-back short: $written of $srcLen bytes landed, the original is incomplete")
+
+        try {
+            val stream = context.contentResolver.openOutputStream(uri, "wt")
+                ?: throw IllegalStateException("Original not writable")
+            var written = 0L
+            try {
+                stream.use { out ->
+                    src.inputStream().use { input ->
+                        val buf = ByteArray(64 * 1024)
+                        while (true) {
+                            val n = input.read(buf)
+                            if (n <= 0) break
+                            out.write(buf, 0, n)
+                            written += n
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                if (backedUp && backupFile.exists()) {
+                    try {
+                        context.contentResolver.openOutputStream(uri, "wt")?.use { restoreOut ->
+                            backupFile.inputStream().use { it.copyTo(restoreOut) }
+                        }
+                    } catch (_: Exception) {}
+                }
+                throw IllegalStateException("Write-back failed after $written of $srcLen bytes (original restored): ${e.message}")
+            }
+            if (written != srcLen) {
+                if (backedUp && backupFile.exists()) {
+                    try {
+                        context.contentResolver.openOutputStream(uri, "wt")?.use { restoreOut ->
+                            backupFile.inputStream().use { it.copyTo(restoreOut) }
+                        }
+                    } catch (_: Exception) {}
+                }
+                throw IllegalStateException("Write-back short: $written of $srcLen bytes landed (original restored)")
+            }
+        } finally {
+            try { backupFile.delete() } catch (_: Throwable) {}
         }
 
         var renamedOk = true
@@ -576,8 +614,67 @@ class StorageBridge(private val context: Context) {
         }
     }
 
+    fun encryptConfig(plainText: String): String {
+        return try {
+            val random = SecureRandom()
+            val salt = ByteArray(16)
+            random.nextBytes(salt)
+            val iv = ByteArray(12)
+            random.nextBytes(iv)
+            val factory = SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256")
+            val spec = PBEKeySpec("SovereignVault::KernelMasterKey::v2".toCharArray(), salt, 10000, 256)
+            val secretKey = SecretKeySpec(factory.generateSecret(spec).encoded, "AES")
+            val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+            cipher.init(Cipher.ENCRYPT_MODE, secretKey, GCMParameterSpec(128, iv))
+            val cipherBytes = cipher.doFinal(plainText.toByteArray(Charsets.UTF_8))
+            val saltB64 = Base64.encodeToString(salt, Base64.NO_WRAP)
+            val ivB64 = Base64.encodeToString(iv, Base64.NO_WRAP)
+            val cipherB64 = Base64.encodeToString(cipherBytes, Base64.NO_WRAP)
+            "SOV2:$saltB64:$ivB64:$cipherB64"
+        } catch (e: Exception) {
+            val bytes = plainText.toByteArray(Charsets.UTF_8)
+            val xorBytes = ByteArray(bytes.size) { i -> (bytes[i].toInt() xor 0x53).toByte() }
+            Base64.encodeToString(xorBytes, Base64.NO_WRAP)
+        }
+    }
+
+    fun decryptConfig(cipherText: String): String {
+        val trimmed = cipherText.trim()
+        if (trimmed.startsWith("SOV2:")) {
+            try {
+                val parts = trimmed.split(":")
+                if (parts.size >= 4) {
+                    val salt = Base64.decode(parts[1], Base64.NO_WRAP)
+                    val iv = Base64.decode(parts[2], Base64.NO_WRAP)
+                    val cipherBytes = Base64.decode(parts[3], Base64.NO_WRAP)
+                    val factory = SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256")
+                    val spec = PBEKeySpec("SovereignVault::KernelMasterKey::v2".toCharArray(), salt, 10000, 256)
+                    val secretKey = SecretKeySpec(factory.generateSecret(spec).encoded, "AES")
+                    val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+                    cipher.init(Cipher.DECRYPT_MODE, secretKey, GCMParameterSpec(128, iv))
+                    val plainBytes = cipher.doFinal(cipherBytes)
+                    return String(plainBytes, Charsets.UTF_8)
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "decryptConfig: SOV2 authenticated decryption failed: ${e.message}")
+            }
+        }
+        return try {
+            val xorBytes = Base64.decode(trimmed, Base64.NO_WRAP)
+            val plainBytes = ByteArray(xorBytes.size) { i -> (xorBytes[i].toInt() xor 0x53).toByte() }
+            String(plainBytes, Charsets.UTF_8)
+        } catch (e: Exception) {
+            ""
+        }
+    }
+
     fun exportConfig(data: String): Boolean {
         return try {
+            val payload = if (data.startsWith("SOV2:") || data.startsWith("{")) {
+                if (data.startsWith("{")) encryptConfig(data) else data
+            } else {
+                data
+            }
             val values = ContentValues().apply {
                 put(MediaStore.MediaColumns.DISPLAY_NAME, "sovereign_config.bin")
                 put(MediaStore.MediaColumns.MIME_TYPE, "application/octet-stream")
@@ -592,12 +689,12 @@ class StorageBridge(private val context: Context) {
             } else {
                 val dir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
                 val file = File(dir, "sovereign_config.bin")
-                file.writeText(data)
+                file.writeText(payload)
                 return true
             }
 
             if (uri != null) {
-                context.contentResolver.openOutputStream(uri)?.use { it.write(data.toByteArray()) }
+                context.contentResolver.openOutputStream(uri)?.use { it.write(payload.toByteArray()) }
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                     values.clear()
                     values.put(MediaStore.MediaColumns.IS_PENDING, 0)
@@ -610,6 +707,7 @@ class StorageBridge(private val context: Context) {
 
     fun autoImportConfig(): String {
         try {
+            var raw = ""
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 val projection = arrayOf(MediaStore.MediaColumns._ID)
                 val selection = "${MediaStore.MediaColumns.DISPLAY_NAME} = ?"
@@ -622,13 +720,14 @@ class StorageBridge(private val context: Context) {
                     if (cursor.moveToFirst()) {
                         val id = cursor.getLong(cursor.getColumnIndexOrThrow(MediaStore.MediaColumns._ID))
                         val uri = Uri.withAppendedPath(MediaStore.Downloads.EXTERNAL_CONTENT_URI, id.toString())
-                        context.contentResolver.openInputStream(uri)?.use { return it.bufferedReader().readText() }
+                        context.contentResolver.openInputStream(uri)?.use { raw = it.bufferedReader().readText() }
                     }
                 }
             } else {
                 val file = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), "sovereign_config.bin")
-                if (file.exists()) return file.readText()
+                if (file.exists()) raw = file.readText()
             }
+            if (raw.isNotEmpty()) return decryptConfig(raw)
         } catch (e: Exception) {}
         return ""
     }

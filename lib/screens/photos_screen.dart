@@ -3,8 +3,10 @@
 // The Future Dictates the Past and the Past is Always Present.
 // ============================================================
 
+import 'dart:math' as math;
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
+import '../core/photo_editor.dart';
 import '../core/storage_client.dart';
 import 'main_shell.dart';
 import 'photo_editor_screen.dart';
@@ -374,6 +376,20 @@ class _PhotoPageState extends State<_PhotoPage> {
   final TransformationController _controller = TransformationController();
   late final Future<Uint8List?> _fullFuture = widget.loadFull();
   Offset _doubleTapPosition = Offset.zero;
+  int _orientation = 1;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadOrientation();
+  }
+
+  Future<void> _loadOrientation() async {
+    try {
+      final o = await StorageClient.photoOrientation(uri: widget.photo.uri);
+      if (mounted && o != 1) setState(() => _orientation = o);
+    } catch (_) {}
+  }
 
   @override
   void dispose() {
@@ -408,6 +424,30 @@ class _PhotoPageState extends State<_PhotoPage> {
             child: Text('COULD NOT LOAD PHOTO', style: TextStyle(fontFamily: 'ShareTechMono', color: Colors.white54)),
           );
         }
+        final geometry = PhotoEditGeometry.fromPhoto(
+          width: widget.photo.width,
+          height: widget.photo.height,
+          orientation: _orientation,
+          previewWidth: widget.photo.width,
+          previewHeight: widget.photo.height,
+        );
+        final totalQuarters = geometry.residualQuarterTurns;
+        final flipH = geometry.residualFlipH;
+        final flipV = geometry.residualFlipV;
+        final angle = totalQuarters * math.pi / 2;
+        final orientMatrix = Matrix4.identity()
+          ..scaleByDouble(flipH ? -1.0 : 1.0, flipV ? -1.0 : 1.0, 1.0, 1.0)
+          ..rotateZ(angle);
+
+        Widget imageWidget = Image.memory(bytes, fit: BoxFit.contain);
+        if (_orientation != 1) {
+          imageWidget = Transform(
+            alignment: Alignment.center,
+            transform: orientMatrix,
+            child: imageWidget,
+          );
+        }
+
         return GestureDetector(
           onDoubleTapDown: (details) => _doubleTapPosition = details.localPosition,
           onDoubleTap: _toggleZoom,
@@ -418,7 +458,7 @@ class _PhotoPageState extends State<_PhotoPage> {
             onInteractionEnd: (_) {
               widget.onZoomChanged(_controller.value.getMaxScaleOnAxis() > 1.01);
             },
-            child: Center(child: Image.memory(bytes, fit: BoxFit.contain)),
+            child: Center(child: imageWidget),
           ),
         );
       },

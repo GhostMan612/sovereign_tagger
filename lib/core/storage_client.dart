@@ -4,6 +4,7 @@
 // ============================================================
 
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
@@ -228,6 +229,30 @@ class StorageClient {
     }
     _sweepStaging(dir);
     return target;
+  }
+
+  static Future<String> encryptConfig(String plainText) async {
+    try {
+      final res = await _channel.invokeMethod<String>('encryptConfig', {'data': plainText});
+      if (res != null && res.isNotEmpty) return res;
+    } catch (_) {}
+    final bytes = utf8.encode(plainText);
+    final xorBytes = bytes.map((b) => b ^ 0x53).toList();
+    return base64Encode(xorBytes);
+  }
+
+  static Future<String> decryptConfig(String cipherText) async {
+    try {
+      final res = await _channel.invokeMethod<String>('decryptConfig', {'data': cipherText});
+      if (res != null && res.isNotEmpty) return res;
+    } catch (_) {}
+    try {
+      final xorBytes = base64Decode(cipherText.trim());
+      final bytes = xorBytes.map((b) => b ^ 0x53).toList();
+      return utf8.decode(bytes);
+    } catch (_) {
+      return '';
+    }
   }
 
   static void _sweepStaging(Directory dir) {

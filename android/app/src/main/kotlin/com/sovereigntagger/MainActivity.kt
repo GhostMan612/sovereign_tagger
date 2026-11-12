@@ -399,6 +399,14 @@ class MainActivity: AudioServiceActivity() {
                     result.success(true)
                 }
                 "sdkInt" -> result.success(Build.VERSION.SDK_INT)
+                "encryptConfig" -> {
+                    val data = call.argument<String>("data") ?: ""
+                    runAsync(result, "STORAGE_ERROR") { storageBridge.encryptConfig(data) }
+                }
+                "decryptConfig" -> {
+                    val data = call.argument<String>("data") ?: ""
+                    runAsync(result, "STORAGE_ERROR") { storageBridge.decryptConfig(data) }
+                }
                 "exportConfig" -> {
                     val data = call.argument<String>("data") ?: ""
                     runAsync(result, "STORAGE_ERROR") { storageBridge.exportConfig(data) }
