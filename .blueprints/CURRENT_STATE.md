@@ -9,6 +9,7 @@
 > - **Path Traversal Confinement**: Added `validateRecoveryFile(backupPath: String)` in `StorageBridge.kt` enforcing canonical directory containment within `context.filesDir/sov_recovery`, rejecting path traversal with `SecurityException`, and validating filename prefixes (`sov_rec_*.bak`).
 > - **Bounded PBKDF2 Iterations**: Enforced native boundary `1,000 <= iterations <= 2,000,000` in `decryptConfig`, throwing `IllegalArgumentException` on out-of-bounds or malformed rounds.
 > - **Expanded Test Suite (49 Tests)**: Added test cases in `test/backup_crypto_test.dart` for `DESTINATION_HASH_UNVERIFIED` handling, discard failure reporting, and self-test cleanup assertions.
+> - **Boot Self-Test & Hardware Verification**: Wired `runNativeSecuritySelfTest()` into `SplashScreen._bootSequence()`; verified all 9 assertions pass live on physical BLU View 5 (`7040016025040287` Android 14) in logcat.
 > - **Security Documentation Synchronized**: Updated `SECURITY.md` Section 3 with AES-256-GCM authenticated storage, KDF bounding, StrongBox/TEE Keystore mode, the migration role and plaintext caveat of `LEGACY_PHASE38_SECRET`, and the `sov_recovery` safety model.
 >
 > **Phase 38.2 deltas (Reliability & Vault Verification Closeout):**

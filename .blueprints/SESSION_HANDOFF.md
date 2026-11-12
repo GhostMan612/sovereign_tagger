@@ -21,7 +21,7 @@ Session-end law: update rows 2–4 every session (+ row 5 when a new gotcha is l
 ## Where we are
 
 **Date:** 2026-11-12
-**Phase:** Phase 38.3: Defensive Hardening & Native Test Verification COMPLETE. PR #23 review revisions applied (live destination hash verification before COMMITTED_PRE_CLEANUP, discard failure status validation, idempotent orphan meta sweep, collision-safe unique self-test files with guaranteed cleanup, and test suite expanded to 49 unit tests).
+**Phase:** Phase 38.3: Defensive Hardening & Native Test Verification COMPLETE. PR #23 review revisions applied and verified on physical hardware (live destination hash verification before COMMITTED_PRE_CLEANUP, discard failure status validation, idempotent orphan meta sweep, collision-safe unique self-test files with guaranteed cleanup, test suite expanded to 49 unit tests, and live native security self-test verified with all 9 assertions true on BLU View 5 Android 14).
 
 ## What shipped — Phase 38.3 PR #23 Review Hardening & Revisions (2026-11-12)
 
@@ -34,10 +34,15 @@ Session-end law: update rows 2–4 every session (+ row 5 when a new gotcha is l
 3. **Idempotent Discard Cleanup & Orphan Sweeping**:
    - In `StorageBridge.discardPendingOverwrite()`, logs partial deletion failures and flags orphaned `.meta` files if `.bak` was deleted.
    - In `StorageBridge.recoverPendingOverwrites()`, automatically sweeps orphaned `.meta` files whose corresponding `.bak` binary is absent, guaranteeing recovery idempotence.
-4. **Collision-Safe Native Self-Test Files**:
+4. **Collision-Safe Native Self-Test Files & Guaranteed Cleanup**:
    - In `StorageBridge.runNativeSecuritySelfTest()`, replaced fixed `sov_rec_999999.bak` / `.meta` with collision-safe unique filenames (`sov_rec_selftest_${System.currentTimeMillis()}_$randomSuffix.bak`) wrapped in guaranteed `try-finally` cleanup.
    - Surfaces `discard_cleanup_success` and `discard_atomic_success` verification assertions.
-5. **Expanded Cryptographic & Recovery Test Suite**:
+5. **Boot Self-Test Wiring & Real-Hardware Logcat Verification**:
+   - Wired `StorageClient.runNativeSecuritySelfTest()` into `SplashScreen._bootSequence()` in `lib/main.dart` to execute on boot.
+   - Installed ARM64 debug APK on physical BLU View 5 (`7040016025040287`, Android 14 / API 34).
+   - Captured real-device logcat: `SECURITY_SELF_TEST: {format_correct: true, roundtrip_passphrase: true, tamper_resistance: true, min_iterations_enforced: true, max_iterations_enforced: true, legacy_phase38_fallback: true, path_traversal_confinement: true, discard_cleanup_success: true, discard_atomic_success: true, all_passed: true}`.
+6. **Expanded Cryptographic & Recovery Test Suite**:
+   - Added unit tests in `test/backup_crypto_test.dart` for unverified destination hash handling (`DESTINATION_HASH_UNVERIFIED`), incomplete discard failure preservation, and cleanup assertions, expanding test suite to 49 unit tests.
    - Added unit tests in `test/backup_crypto_test.dart` for unverified destination hash handling (`DESTINATION_HASH_UNVERIFIED`), incomplete discard failure preservation, and cleanup assertions, expanding test suite to 49 unit tests.
 
 ## What shipped — Phase 38.3: Defensive Hardening & Native Test Verification (2026-11-12)

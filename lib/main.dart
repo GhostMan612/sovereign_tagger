@@ -109,6 +109,13 @@ class _SplashScreenState extends State<SplashScreen> {
       }
     } catch (_) {}
 
+    try {
+      final selfTest = await StorageClient.runNativeSecuritySelfTest();
+      debugPrint("SECURITY_SELF_TEST: $selfTest");
+    } catch (e) {
+      debugPrint("SECURITY_SELF_TEST_ERROR: $e");
+    }
+
     if (mounted) {
       setState(() {
         _progress = 0.60;
