@@ -60,9 +60,22 @@ class FFmpegExecutor {
           debugPrint('FFMPEG_EXECUTOR: beforeExecuteHook failed: $e');
         }
       }
+      if (job.description != null && _canceledDescriptions.remove(job.description)) {
+        if (!job.completer.isCompleted) {
+          job.completer.completeError(StateError('FFmpeg task canceled'));
+        }
+        return;
+      }
       final session = FFmpegSession.create(job.command);
       _currentSession = session;
       _currentDescription = job.description;
+      if (job.description != null && _canceledDescriptions.remove(job.description)) {
+        session.cancel();
+        if (!job.completer.isCompleted) {
+          job.completer.completeError(StateError('FFmpeg task canceled'));
+        }
+        return;
+      }
       try {
         final result = await session.executeAsync(
           statisticsCallback: job.onStatistics ??

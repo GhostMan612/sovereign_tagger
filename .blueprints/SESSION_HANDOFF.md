@@ -22,7 +22,25 @@ Session-end law: update rows 2–4 every session (+ row 5 when a new gotcha is l
 ## Where we are
 
 **Date:** 2026-11-12
-**Phase:** Phase 39 Modularization — Stage A & Stage B Fully Completed & Hardened (B.1–B.7 complete: B.5 Scoped Cancellation, B.6 Verified Import Commit & Native Readback, B.7 Monotonic Progress & Fault-Injection Tests Landed; `flutter analyze` 0 issues; `flutter test` 144/144 passed; Python doctor 2/2 passed; 0 open PRs; main clean). Stage C: Component UI Decomposition READY.
+**Phase:** Phase 39 Modularization — Stage A & Stage B 100% Fully Hardened (B.1–B.10 complete: B.8 Hook Race Closure & Disposal Queue Cancellation, B.9 Pre-Publication MediaStore SHA-256 Verification & Transactional Boundary, B.10 Real Executor Concurrency Tests; `flutter analyze` 0 issues; `flutter test` 145/145 passed; Python doctor 2/2 passed; 0 open PRs; main clean). Stage C: Component UI Decomposition READY.
+
+## What shipped — Stage B.8–B.10: Executor Hook Race Closure, Pre-Publication MediaStore SHA-256 & Concurrency Suite (2026-11-12)
+
+1. **FFmpeg Startup Cancellation Window & Lifecycle (B.8)**:
+   - In `FFmpegExecutor._drain()`, closed the startup cancellation race window by checking `_canceledDescriptions` across three distinct checkpoints: before awaiting `beforeExecuteHook`, immediately after `await hook()`, and immediately following `FFmpegSession.create()`. If cancellation is requested while `beforeExecuteHook` is in-flight, the job aborts immediately without launching the FFmpeg binary.
+   - In `TabWorkbench.dispose()`, added `_activeQueue?.cancel(); _activeQueue = null;` to ensure active batch tasks are cancelled immediately upon tab departure or widget unmount, preventing orphaned processes and background MediaStore insertions.
+
+2. **Pre-Publication MediaStore SHA-256 Verification & Rollback Logging (B.9)**:
+   - In native `StorageBridge.addToMediaStore()`, added cryptographic stream hash verification (`destSha == srcSha`) *prior* to setting `IS_PENDING = 0` for Android Q+, asserting that the destination stream bytes match the source file SHA-256 before the media becomes visible to the OS or third-party players.
+   - Added destination SHA-256 validation for legacy Android < Q prior to scanning.
+   - Replaced silent error swallowing with structured warning and error logging (`android.util.Log.w` / `Log.e`) if `contentResolver.delete(uri)` returns `<= 0` during rollback.
+   - Formalized transactional boundary: cancellation prior to `mediaStoreInjector` halts immediately and deletes staged temporary files; once MediaStore publication succeeds, the media is committed and the temporary copy is purged; if a failure occurs during native insertion, the destination entry is rolled back and the staged file is retained in cache.
+
+3. **Real Concurrency Regression Tests (B.10)**:
+   - In `test/workbench_queue_test.dart`, implemented a Completer-controlled `beforeExecuteHook` test proving that cancellation during hook execution aborts before `FFmpegSession` starts.
+   - Implemented real executor-backed test proving that cancelling a Workbench batch task leaves unrelated concurrent tasks (e.g. forensics, grabber) untouched in the queue.
+   - Implemented queue lifecycle cancellation test verifying that `WorkbenchQueue.cancel()` immediately halts the active job and skips all remaining jobs with `BatchJobStatus.skipped`.
+   - Verified 145/145 Flutter unit and widget tests passing cleanly.
 
 ## What shipped — Stage B.5–B.7: Scoped Cancellation, Verified Import Commit & Monotonic Invariants (2026-11-12)
 

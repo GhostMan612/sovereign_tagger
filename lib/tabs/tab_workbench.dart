@@ -621,7 +621,10 @@ class _TabWorkbenchState extends State<TabWorkbench> {
 
   @override
   void dispose() {
-    _ampSub?.cancel();    _waveController.dispose();
+    _activeQueue?.cancel();
+    _activeQueue = null;
+    _ampSub?.cancel();
+    _waveController.dispose();
     GhostCommandBus.pendingWorkbenchCommand.removeListener(_onGhostWorkbenchCommand);
     _recorderController.dispose();
     _startCtrl.dispose();

@@ -167,6 +167,12 @@ class StorageBridge(private val context: Context) {
                 target.delete()
                 throw java.io.IOException("ERR: MediaStore copy truncated. Expected ${file.length()} bytes, found ${target.length()} bytes.")
             }
+            val srcSha = computeSha256(file)
+            val destSha = computeSha256(target)
+            if (destSha != srcSha) {
+                target.delete()
+                throw java.io.IOException("ERR: MediaStore copy SHA-256 mismatch. Expected $srcSha, found $destSha.")
+            }
             scan(target.absolutePath)
             return mapOf("uri" to Uri.fromFile(target).toString(), "path" to target.absolutePath, "displayName" to target.name)
         }
@@ -185,28 +191,26 @@ class StorageBridge(private val context: Context) {
             if (bytesCopied != file.length()) {
                 throw java.io.IOException("ERR: MediaStore import truncated. Expected ${file.length()} bytes, wrote $bytesCopied bytes.")
             }
+            val srcSha = computeSha256(file)
+            val destSha = computeSha256(uri)
+            if (destSha != srcSha) {
+                throw java.io.IOException("ERR: MediaStore SHA-256 mismatch before publication. Expected $srcSha, got $destSha.")
+            }
             values.clear()
             values.put(MediaStore.MediaColumns.IS_PENDING, 0)
             val rowsUpdated = context.contentResolver.update(uri, values, null, null)
             if (rowsUpdated <= 0) {
                 throw java.io.IOException("ERR: MediaStore update IS_PENDING=0 failed for $uri (rows affected: $rowsUpdated)")
             }
-            val readbackStream = context.contentResolver.openInputStream(uri)
-                ?: throw java.io.IOException("ERR: MediaStore readback openInputStream failed for $uri")
-            var readbackBytes = 0L
-            readbackStream.use { stream ->
-                val buf = ByteArray(64 * 1024)
-                while (true) {
-                    val n = stream.read(buf)
-                    if (n <= 0) break
-                    readbackBytes += n
-                }
-            }
-            if (readbackBytes != file.length()) {
-                throw java.io.IOException("ERR: MediaStore readback size mismatch. Expected ${file.length()} bytes, read $readbackBytes bytes.")
-            }
         } catch (e: Exception) {
-            context.contentResolver.delete(uri, null, null)
+            try {
+                val deleted = context.contentResolver.delete(uri, null, null)
+                if (deleted <= 0) {
+                    android.util.Log.w("StorageBridge", "MediaStore rollback delete returned 0 for $uri")
+                }
+            } catch (delErr: Exception) {
+                android.util.Log.e("StorageBridge", "MediaStore rollback delete failed for $uri: $delErr")
+            }
             throw e
         }
         val info = describe(uri)

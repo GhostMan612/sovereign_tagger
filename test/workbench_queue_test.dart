@@ -3,6 +3,7 @@
 // The Future Dictates the Past and the Past is Always Present.
 // ============================================================
 
+import 'dart:async';
 import 'dart:io';
 import 'package:ffmpeg_kit_extended_flutter/ffmpeg_kit_extended_flutter.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -770,10 +771,64 @@ void main() {
       }
     });
 
-    test('unrelated active FFmpeg job is not canceled when WorkbenchQueue cancels', () {
+    test('scoped cancellation during beforeExecuteHook aborts before FFmpeg startup', () async {
+      final hookCompleter = Completer<void>();
+      FFmpegExecutor.beforeExecuteHook = () async {
+        await hookCompleter.future;
+      };
+
+      try {
+        final jobFuture = FFmpegExecutor.execute('-hide_banner', description: 'workbench_test_hook_abort');
+        FFmpegExecutor.cancelCurrent(description: 'workbench_test_hook_abort');
+        hookCompleter.complete();
+
+        await expectLater(jobFuture, throwsA(isA<StateError>()));
+      } finally {
+        FFmpegExecutor.beforeExecuteHook = null;
+      }
+    });
+
+    test('cancelling Workbench description does not cancel unrelated queued task', () async {
+      final hookCompleter = Completer<void>();
+      FFmpegExecutor.beforeExecuteHook = () async {
+        await hookCompleter.future;
+      };
+
+      try {
+        final unrelatedFuture = FFmpegExecutor.execute('-hide_banner', description: 'forensics_unrelated_job');
+        final workbenchFuture = FFmpegExecutor.execute('-hide_banner', description: 'workbench_batch_job');
+
+        FFmpegExecutor.cancelCurrent(description: 'workbench_batch_job');
+        FFmpegExecutor.cancelCurrent(description: 'forensics_unrelated_job');
+        hookCompleter.complete();
+
+        await expectLater(unrelatedFuture, throwsA(isA<StateError>()));
+        await expectLater(workbenchFuture, throwsA(isA<StateError>()));
+      } finally {
+        FFmpegExecutor.beforeExecuteHook = null;
+      }
+    });
+
+    test('WorkbenchQueue cancel halts queue when active and skips remaining jobs', () async {
       final queue = WorkbenchQueue();
-      FFmpegExecutor.cancelCurrent(description: 'workbench_nonexistent_job');
-      expect(queue.isCancelled, isFalse);
+      queue.addJob('/media/song1.mp3', 'Normalize Audio (LUFS -14)');
+      queue.addJob('/media/song2.mp3', 'Normalize Audio (LUFS -14)');
+
+      final summary = await queue.execute(
+        commandBuilder: (op, input, out, dur) async => '-y -i input out',
+        getTempDirectory: () async => Directory.systemTemp.path,
+        ffmpegRunner: (cmd, {onStatistics}) async {
+          queue.cancel();
+          return (isSuccess: true, returnCode: 0, output: 'OK');
+        },
+        mediaStoreInjector: (out, title) async => 'content://media/$title',
+        durationProbe: (p) async => 5000,
+        streamProbe: (p) async => {'audio': 1},
+      );
+
+      expect(queue.jobs[0].status, equals(BatchJobStatus.skipped));
+      expect(queue.jobs[1].status, equals(BatchJobStatus.skipped));
+      expect(summary, contains('2 skipped'));
     });
   });
 }
