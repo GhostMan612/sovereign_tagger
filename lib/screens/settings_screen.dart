@@ -206,7 +206,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     TapFeedback.machineTap();
     final pasted = _pcloudTokenCtrl.text.trim();
     if (pasted.isEmpty) {
-      setState(() => _pcloudStatus = 'PASTE THE RETURN LINK OR THE TOKEN FIRST.');
+      setState(() => _pcloudStatus = 'PASTE THE ACCESS TOKEN FIRST.');
       return;
     }
     PCloudAuthResult? auth;
@@ -1915,12 +1915,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 const SizedBox(height: 12),
                 _buildSettingsField(_pcloudCacheCtrl, 'OFFLINE CACHE SIZE (MB, DEFAULT 1024)', Colors.cyanAccent),
                 const SizedBox(height: 12),
-                _buildSettingsField(_pcloudTokenCtrl, 'PASTE RETURN LINK OR TOKEN (FALLBACK ONLY)', Colors.cyanAccent),
+                _buildSettingsField(_pcloudTokenCtrl, 'PASTE ACCESS TOKEN (MANUAL FALLBACK ONLY)', Colors.cyanAccent),
                 const SizedBox(height: 8),
                 OutlinedButton.icon(
                   onPressed: _savePastedToken,
                   icon: const Icon(Icons.paste, color: Colors.cyanAccent),
-                  label: const Text('SAVE PASTED SIGN-IN', style: TextStyle(fontFamily: 'ShareTechMono', color: Colors.cyanAccent, fontWeight: FontWeight.bold)),
+                  label: const Text('SAVE MANUAL ACCESS TOKEN', style: TextStyle(fontFamily: 'ShareTechMono', color: Colors.cyanAccent, fontWeight: FontWeight.bold)),
                   style: OutlinedButton.styleFrom(side: const BorderSide(color: Colors.cyanAccent), backgroundColor: Colors.black, padding: const EdgeInsets.symmetric(vertical: 12)),
                 ),
 
