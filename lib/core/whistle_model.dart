@@ -13,6 +13,7 @@ class WhistleModel {
   static const String fileName = 'whistle.cact';
   static const String downloadUrl = 'https://huggingface.co/Cactus-Compute/whistle/resolve/main/whistle.cact';
   static const int expectedBytes = 16919407;
+  static const int minBytes = expectedBytes;
   static const String expectedSha256 = 'b6e02f048568ac5d01a2042556c658061e699acbc0aa2a1439f52f3d461dffeb';
 
   static bool _prepareCanceled = false;
