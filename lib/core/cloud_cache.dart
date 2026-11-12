@@ -4,6 +4,7 @@
 // ============================================================
 
 import 'dart:io';
+import 'dart:math' as math;
 
 import 'cloud_settings.dart';
 import 'storage_client.dart';
@@ -38,9 +39,18 @@ class CloudCache {
   static Future<File> put(String fileId, String name, File source, {Set<String> protectedPaths = const <String>{}}) async {
     final dir = await _dir();
     final target = File('${dir.path}/${fileNameFor(fileId, name)}');
-    if (target.existsSync()) await target.delete();
-    await source.copy(target.path);
-    await _evict(dir, protectedPaths: protectedPaths);
+    final stage = File('${target.path}.${DateTime.now().microsecondsSinceEpoch}_${math.Random.secure().nextInt(1 << 32)}.part');
+    try {
+      await source.copy(stage.path);
+      final sourceLength = await source.length();
+      if (sourceLength == 0 || await stage.length() != sourceLength) {
+        throw const FileSystemException('Cloud cache replacement was incomplete');
+      }
+      await stage.rename(target.path);
+    } finally {
+      if (await stage.exists()) await stage.delete();
+    }
+    await _evict(dir, protectedPaths: {...protectedPaths, target.path});
     return target;
   }
 
