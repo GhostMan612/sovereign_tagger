@@ -3,8 +3,6 @@
 // The Future Dictates the Past and the Past is Always Present.
 // ============================================================
 
-import 'dart:async';
-
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sovereign_tagger/core/speech_fallback.dart';
 import 'package:sovereign_tagger/core/speech_to_text.dart';
