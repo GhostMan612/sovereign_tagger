@@ -79,9 +79,11 @@ class PCloudProvider implements CloudSource {
     if (token.isEmpty) return null;
     final locationId = int.tryParse(params['locationid'] ?? '') ?? 0;
     final hostname = params['hostname'] ?? '';
-    final proposedHost = hostname.isNotEmpty ? hostname : (locationId == 2 ? CloudRegion.eu.host : CloudRegion.us.host);
+    if (locationId != 1 && locationId != 2) return null;
+    if (hostname.isEmpty) return null;
     try {
-      final host = CloudRegion.fromHost(proposedHost).host;
+      final host = CloudRegion.fromHost(hostname).host;
+      if (host != (locationId == 2 ? CloudRegion.eu.host : CloudRegion.us.host)) return null;
       return PCloudAuthResult(token: token, apiHost: host, locationId: locationId);
     } on ArgumentError {
       return null;
