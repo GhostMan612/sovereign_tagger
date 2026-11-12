@@ -23,6 +23,14 @@ if (localPropertiesFile.exists()) {
 def flutterVersionCode = localProperties.getProperty("flutter.versionCode") ?: "1"
 def flutterVersionName = localProperties.getProperty("flutter.versionName") ?: "1.0"
 
+def releaseKeystorePath = System.getenv("SOVEREIGN_KEYSTORE") ?: localProperties.getProperty("sovereign.keystore")
+def releaseStorePassword = System.getenv("SOVEREIGN_STORE_PASSWORD") ?: localProperties.getProperty("sovereign.storePassword")
+def releaseKeyAlias = System.getenv("SOVEREIGN_KEY_ALIAS") ?: localProperties.getProperty("sovereign.keyAlias")
+def releaseKeyPassword = System.getenv("SOVEREIGN_KEY_PASSWORD") ?: localProperties.getProperty("sovereign.keyPassword")
+def releaseSigningReady = releaseKeystorePath != null &&
+    file(releaseKeystorePath).isFile() &&
+    [releaseStorePassword, releaseKeyAlias, releaseKeyPassword].every { it != null && !it.isEmpty() }
+
 android {
     namespace = "com.sovereigntagger"
     
@@ -75,23 +83,18 @@ android {
 
     signingConfigs {
         release {
-            def keystorePath = System.getenv("SOVEREIGN_KEYSTORE") ?: localProperties.getProperty("sovereign.keystore")
-            if (keystorePath != null && file(keystorePath).exists()) {
-                storeFile file(keystorePath)
-                storePassword System.getenv("SOVEREIGN_STORE_PASSWORD") ?: localProperties.getProperty("sovereign.storePassword") ?: ""
-                keyAlias System.getenv("SOVEREIGN_KEY_ALIAS") ?: localProperties.getProperty("sovereign.keyAlias") ?: ""
-                keyPassword System.getenv("SOVEREIGN_KEY_PASSWORD") ?: localProperties.getProperty("sovereign.keyPassword") ?: ""
+            if (releaseSigningReady) {
+                storeFile file(releaseKeystorePath)
+                storePassword releaseStorePassword
+                keyAlias releaseKeyAlias
+                keyPassword releaseKeyPassword
             }
         }
     }
 
     buildTypes {
         release {
-            if (signingConfigs.release.storeFile != null && signingConfigs.release.storeFile.exists()) {
-                signingConfig = signingConfigs.release
-            } else {
-                signingConfig = signingConfigs.debug
-            }
+            signingConfig = releaseSigningReady ? signingConfigs.release : null
             // R8 runs on release (it does NOT run on debug), so without these rules
             // `flutter build apk --release` fails on jaudiotagger's desktop-Java
             // references. See android/app/proguard-rules.pro for the full story.
@@ -116,6 +119,25 @@ android {
         variant.outputs.all { output ->
             outputFileName = "SovereignTagger.apk"
         }
+    }
+}
+
+
+gradle.taskGraph.whenReady { graph ->
+    def wantsRelease = graph.allTasks.any { task ->
+        task.project.path == ':app' &&
+            task.name.endsWith('Release') &&
+            (task.name.startsWith('assemble') ||
+             task.name.startsWith('bundle') ||
+             task.name.startsWith('package') ||
+             task.name.startsWith('validateSigning'))
+    }
+    if (wantsRelease && !releaseSigningReady) {
+        throw new GradleException(
+            "Release signing is not configured. Set SOVEREIGN_KEYSTORE, " +
+            "SOVEREIGN_STORE_PASSWORD, SOVEREIGN_KEY_ALIAS and SOVEREIGN_KEY_PASSWORD. " +
+            "Use assembleDebug for an explicitly debug-signed build."
+        )
     }
 }
 
