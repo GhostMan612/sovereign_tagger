@@ -6,14 +6,17 @@
 import 'dart:io';
 import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
+import 'model_digest.dart';
 
 class WhisperModel {
   static const String fileName = 'ggml-base.en.bin';
   static const String downloadUrl = 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin';
-  static const int minBytes = 140000000;
+  static const int expectedBytes = 147964211;
+  static const String expectedSha256 = 'a03779c86df3323075f5e796cb2ce5029f00ec8869eee3fdfb897afe36c6d002';
 
   static bool _prepareCanceled = false;
   static HttpClient? _activeClient;
+  static Future<File>? _pendingEnsure;
 
   static Future<File> file() async {
     final dir = Directory('${(await getApplicationSupportDirectory()).path}/whisper_model');
@@ -23,22 +26,33 @@ class WhisperModel {
 
   static Future<bool> isReady() async {
     final f = await file();
-    return f.existsSync() && f.lengthSync() >= minBytes;
+    return ModelDigest.matches(f, bytes: expectedBytes, sha256Hex: expectedSha256);
   }
 
-  static Future<File> ensure({void Function(String stage, double progress)? onProgress}) async {
+  static Future<File> ensure({void Function(String stage, double progress)? onProgress}) {
+    return _pendingEnsure ??= _ensureOnce(onProgress).whenComplete(() => _pendingEnsure = null);
+  }
+
+  static Future<File> _ensureOnce(void Function(String stage, double progress)? onProgress) async {
     final target = await file();
-    if (target.existsSync() && target.lengthSync() >= minBytes) return target;
+    if (await ModelDigest.matches(target, bytes: expectedBytes, sha256Hex: expectedSha256)) return target;
     _prepareCanceled = false;
 
     try {
       final data = await rootBundle.load('assets/models/$fileName');
-      if (data.lengthInBytes >= minBytes) {
-        onProgress?.call('Extracting bundled model', 0);
-        await target.writeAsBytes(data.buffer.asUint8List(data.offsetInBytes, data.lengthInBytes), flush: true);
+      if (data.lengthInBytes == expectedBytes) {
+        onProgress?.call('Verifying bundled Whisper model', 0);
+        await ModelDigest.installBytes(
+          target,
+          data.buffer.asUint8List(data.offsetInBytes, data.lengthInBytes),
+          expectedBytes: expectedBytes,
+          sha256Hex: expectedSha256,
+        );
         return target;
       }
-    } catch (_) {}
+    } on FlutterError {
+      // Most installations fetch Whisper on demand rather than bundling it.
+    }
 
     final part = File('${target.path}.part');
     final client = HttpClient()..connectionTimeout = const Duration(seconds: 20);
@@ -62,8 +76,12 @@ class WhisperModel {
       } finally {
         await sink.close();
       }
-      if (part.lengthSync() < minBytes) throw const FileSystemException('Model download incomplete');
-      await part.rename(target.path);
+      await ModelDigest.installVerifiedPart(
+        target,
+        part,
+        expectedBytes: expectedBytes,
+        sha256Hex: expectedSha256,
+      );
       _prepareCanceled = false;
       return target;
     } catch (e) {
