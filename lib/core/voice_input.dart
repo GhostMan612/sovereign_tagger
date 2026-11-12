@@ -13,6 +13,7 @@ import 'package:permission_handler/permission_handler.dart';
 
 import 'pcm_recorder.dart';
 import 'speech_to_text.dart';
+import 'speech_fallback.dart';
 
 enum VoicePhase {
   idle,
@@ -27,7 +28,9 @@ enum VoicePhase {
 }
 
 class VoiceInput extends ChangeNotifier {
-  VoiceInput({SpeechEngine? engine}) : _engine = engine ?? SpeechEngines.preferred;
+  VoiceInput({SpeechEngine? engine, SpeechEngine? fallbackEngine})
+      : _engine = engine ?? SpeechEngines.preferred,
+        _fallbackEngine = fallbackEngine ?? (engine == null ? SpeechEngines.byId('whisper') : null);
 
   static const MethodChannel _storage = MethodChannel('com.sovereign.tagger/storage');
   static const int sampleRate = 16000;
@@ -41,6 +44,9 @@ class VoiceInput extends ChangeNotifier {
   static Future<void> Function()? onRecordingStopped;
 
   SpeechEngine _engine;
+  SpeechEngine? _fallbackEngine;
+  SpeechEngine? _activeSpeechEngine;
+  String? _activeWavPath;
   VoicePhase _phase = VoicePhase.idle;
   String _status = '';
   double _progress = 0.0;
@@ -72,6 +78,7 @@ class VoiceInput extends ChangeNotifier {
     final next = SpeechEngines.byId(id);
     if (next == null || identical(next, _engine)) return;
     _engine = next;
+    _fallbackEngine = next.id == 'whistle' ? SpeechEngines.byId('whisper') : null;
     _status = '';
     _progress = 0.0;
     _safeNotify();
@@ -203,63 +210,52 @@ class VoiceInput extends ChangeNotifier {
       return null;
     }
 
-    if (!await _engine.isReady()) {
-      _phase = VoicePhase.modelLoading;
-      _status = 'MODEL LOADING...';
-      _safeNotify();
-      try {
-        await _engine.prepare();
-      } catch (e) {
-        _deleteFile(path);
-        _phase = VoicePhase.failed;
-        _status = 'MODEL LOAD FAILED: $e';
-        _safeNotify();
-        return null;
-      }
-    }
-
-    if (_cancelRequested || currentReq != _requestId) {
-      _deleteFile(path);
-      _phase = VoicePhase.canceled;
-      _status = 'CANCELED';
-      _safeNotify();
-      return null;
-    }
-
-    _phase = VoicePhase.transcribing;
-    _status = 'TRANSCRIBING...';
-    _progress = 0.5;
-    _safeNotify();
-
+    _activeWavPath = path;
     try {
-      final result = await _engine.transcribe(path);
-      _deleteFile(path);
+      _phase = VoicePhase.modelLoading;
+      _status = 'PREPARING SPEECH ENGINE...';
+      _safeNotify();
 
-      if (_cancelRequested || currentReq != _requestId) {
+      final result = await SpeechFallback.transcribe(
+        path,
+        primary: _engine,
+        secondary: _fallbackEngine,
+        cancelled: () => _cancelRequested || currentReq != _requestId || _disposed,
+        onActiveEngine: (engine) => _activeSpeechEngine = engine,
+        onStatus: (status) {
+          if (_disposed || currentReq != _requestId) return;
+          _phase = status.contains('TRANSCRIBING') ? VoicePhase.transcribing : VoicePhase.modelLoading;
+          _status = status;
+          _progress = _phase == VoicePhase.transcribing ? 0.5 : 0.1;
+          _safeNotify();
+        },
+      );
+      if (_cancelRequested || currentReq != _requestId || _disposed) {
         _phase = VoicePhase.canceled;
         _status = 'CANCELED';
         _safeNotify();
         return null;
       }
-
-      _progress = 1.0;
-
       if (result.trim().isEmpty) {
         _phase = VoicePhase.failed;
         _status = 'NO SPEECH DETECTED';
         _safeNotify();
         return null;
       }
-
       final normalized = _normalizeDomainTranscript(result.trim());
       _phase = VoicePhase.completed;
       _status = normalized;
+      _progress = 1.0;
       _transcriptController.add(normalized);
       _safeNotify();
       return normalized;
+    } on SpeechFallbackCancelled {
+      _phase = VoicePhase.canceled;
+      _status = 'CANCELED';
+      _safeNotify();
+      return null;
     } catch (e) {
-      _deleteFile(path);
-      if (_cancelRequested || currentReq != _requestId) {
+      if (_cancelRequested || currentReq != _requestId || _disposed) {
         _phase = VoicePhase.canceled;
         _status = 'CANCELED';
       } else {
@@ -268,6 +264,10 @@ class VoiceInput extends ChangeNotifier {
       }
       _safeNotify();
       return null;
+    } finally {
+      _deleteFile(path);
+      if (_activeWavPath == path) _activeWavPath = null;
+      _activeSpeechEngine = null;
     }
   }
 
@@ -313,8 +313,12 @@ class VoiceInput extends ChangeNotifier {
     }
 
     try {
-      await _engine.cancel();
+      await (_activeSpeechEngine ?? _engine).cancel();
     } catch (_) {}
+    if (_activeWavPath != null) {
+      _deleteFile(_activeWavPath!);
+      _activeWavPath = null;
+    }
 
     _phase = VoicePhase.canceled;
     _status = 'CANCELED';
@@ -369,6 +373,10 @@ class VoiceInput extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
+    _cancelRequested = true;
+    _requestId++;
+    if (_activeSpeechEngine != null) unawaited(_activeSpeechEngine!.cancel());
+    if (_activeWavPath != null) _deleteFile(_activeWavPath!);
     _timer?.cancel();
     if (_phase == VoicePhase.listening) {
       PcmRecorder.stop();
