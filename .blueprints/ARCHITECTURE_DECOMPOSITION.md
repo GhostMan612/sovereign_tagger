@@ -12,7 +12,7 @@ During the Phase 38–39 architectural audit, six modules were identified as dis
 |---|---|---|---|---|
 | **Workbench** | `lib/tabs/tab_workbench.dart` | **193 KB** | ~4,500 | 15+ DSP command builders, FFmpeg execution, waveform UI, batch queue state. |
 | **Settings** | `lib/screens/settings_screen.dart` | **109 KB** | ~2,250 | Vault recovery, OAuth forms, credentials, Python updater, diagnostic probes. |
-| **Ghost Brain** | `lib/core/ghost_brain.dart` | **98 KB** | ~2,100 | BM25 indexing, SQLite persistence, intent routing, response synthesis. |
+| **Ghost Brain** | `lib/services/ghost_brain.dart` | **98 KB** | ~2,100 | BM25 indexing, SQLite persistence, intent routing, response synthesis. |
 | **Grabber** | `lib/tabs/tab_grabber.dart` | **85 KB** | ~1,850 | Format parsing, download queue state, cookie imports, ladder retry loops. |
 | **Main Shell** | `lib/screens/main_shell.dart` | **65 KB** | ~1,200 | Mini-player transport, backdrop shader loops, tab stack lifecycle, ghost chat. |
 | **Storage Bridge** | `android/.../StorageBridge.kt` | **61 KB** | ~1,150 | MediaStore I/O, AES-GCM crypto, recovery journal, photo EXIF geometry. |
@@ -84,7 +84,7 @@ During the Phase 38–39 architectural audit, six modules were identified as dis
   2. `lib/ghost/ghost_intent_router.dart`: Rule-based and semantic intent matching (playback, tagging, query, lyrics).
   3. `lib/ghost/ghost_history_store.dart`: Serialized SQLite/JSON interaction logs and play history recording.
   4. `lib/ghost/ghost_prompt_templates.dart`: Monospace system prompts, markdown synthesis, and response formatters.
-  5. `lib/core/ghost_brain.dart` (~20 KB): High-level façade orchestrating query → retrieval → synthesis.
+  5. `lib/services/ghost_brain.dart` (~20 KB): High-level façade orchestrating query → retrieval → synthesis.
 
 ---
 
