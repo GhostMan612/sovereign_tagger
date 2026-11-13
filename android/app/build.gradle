@@ -202,12 +202,24 @@ def sovereignApkDir = rootProject.layout.buildDirectory
 
 def writeSovereignManifest = tasks.register("writeSovereignBuildManifest") {
     doLast {
+        // Development builds may be dirty; release artifacts may not — a commit
+        // SHA alone cannot identify an APK built with uncommitted changes.
+        def buildingRelease = gradle.taskGraph.allTasks.any { task ->
+            task.name.toLowerCase().contains("release")
+        }
+        if (buildingRelease && sovereignSourceDirty) {
+            throw new GradleException(
+                "Sovereign provenance: release artifacts require a clean checkout. " +
+                "Commit or stash the pending changes before building a release."
+            )
+        }
         def outDir = sovereignManifestDir.get().asFile
         outDir.mkdirs()
         def manifest = [
             schema      : 1,
             sourceSha   : sovereignSourceSha,
             sourceDirty : sovereignSourceDirty,
+            release     : buildingRelease,
             versionCode : flutterVersionCode.toInteger(),
             versionName : flutterVersionName,
             abis        : ["arm64-v8a", "x86_64"],
@@ -222,6 +234,9 @@ def writeSovereignManifest = tasks.register("writeSovereignBuildManifest") {
 
 def recordSovereignApkDigest = tasks.register("recordSovereignApkDigest") {
     doLast {
+        // Runs after packaging, so the digest describes the signed artifact that
+        // actually ships — not an intermediate. CI recomputes it from the file it
+        // uploads, which catches any post-packaging modification.
         def apks = (sovereignApkDir.listFiles() ?: []).findAll { it.name.endsWith(".apk") }
         if (apks.isEmpty()) {
             throw new GradleException(
@@ -246,8 +261,14 @@ def recordSovereignApkDigest = tasks.register("recordSovereignApkDigest") {
     }
 }
 
+// The manifest runs before the build so a dirty release checkout fails early;
+// the digest runs after packaging so it describes the shipped artifact.
+tasks.matching { it.name == "preBuild" }.configureEach { preBuildTask ->
+    preBuildTask.dependsOn writeSovereignManifest
+}
+
 tasks.matching { it.name.startsWith("assemble") }.configureEach { assembleTask ->
-    assembleTask.finalizedBy writeSovereignManifest, recordSovereignApkDigest
+    assembleTask.finalizedBy recordSovereignApkDigest
 }
 
 dependencies {
