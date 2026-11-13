@@ -4,9 +4,11 @@
 # ============================================================
 
 import yt_dlp
+import ctypes
 import json
 import os
 import re
+import shlex
 import shutil
 import urllib.request
 
@@ -67,110 +69,133 @@ def _base_opts(cookiefile=None):
     return opts
 
 
-_FFMPEGKIT = {"classes": None, "installed": False, "attempted": False, "version": ""}
+_FFMPEGKIT = {"lib": None, "version": "", "error": "", "patched": False}
+
+_FFMPEGKIT_LIB_NAMES = ("libffmpegkit.so", "ffmpegkit.so")
 
 
-def _resolve_ffmpegkit_classes():
-    if _FFMPEGKIT["classes"] is not None:
-        return _FFMPEGKIT["classes"]
-    try:
-        from com.arthenica.ffmpegkit import FFmpegKit, FFprobeKit, ReturnCode
+def _load_ffmpegkit_library():
+    """Load libffmpegkit.so and bind the FFmpegKit C API.
 
-        classes = (FFmpegKit, FFprobeKit, ReturnCode)
-    except Exception:
+    `ffmpeg_kit_extended_flutter` is an FFI package: it ships the native
+    library only and exposes no Java FFmpegKit classes, so Chaquopy reaches it
+    through ctypes rather than the JVM. The Dart side loads the same library
+    with dart:ffi and owns `ffmpeg_kit_initialize()`.
+    """
+    if _FFMPEGKIT["lib"] is not None:
+        return _FFMPEGKIT["lib"]
+    lib = None
+    last_error = ""
+    for name in _FFMPEGKIT_LIB_NAMES:
         try:
-            from java import jclass
-
-            classes = (
-                jclass("com.arthenica.ffmpegkit.FFmpegKit"),
-                jclass("com.arthenica.ffmpegkit.FFprobeKit"),
-                jclass("com.arthenica.ffmpegkit.ReturnCode"),
-            )
-        except Exception:
-            return None
-    try:
-        for cls, names in (
-            (classes[0], ("executeWithArguments",)),
-            (classes[1], ("executeWithArguments",)),
-            (classes[2], ("isSuccess", "isCancel")),
-        ):
-            for name in names:
-                if not hasattr(cls, name):
-                    return None
-    except Exception:
+            lib = ctypes.CDLL(name)
+            break
+        except OSError as exc:
+            last_error = str(exc)
+    if lib is None:
+        _FFMPEGKIT["error"] = "library not found: %s" % (last_error or "unknown")
         return None
-    _FFMPEGKIT["classes"] = classes
-    return classes
+    try:
+        lib.ffmpeg_kit_execute.argtypes = [ctypes.c_char_p]
+        lib.ffmpeg_kit_execute.restype = ctypes.c_void_p
+        lib.ffprobe_kit_execute.argtypes = [ctypes.c_char_p]
+        lib.ffprobe_kit_execute.restype = ctypes.c_void_p
+        lib.ffmpeg_kit_session_get_return_code.argtypes = [ctypes.c_void_p]
+        lib.ffmpeg_kit_session_get_return_code.restype = ctypes.c_int64
+        lib.ffmpeg_kit_session_get_output.argtypes = [ctypes.c_void_p]
+        lib.ffmpeg_kit_session_get_output.restype = ctypes.c_char_p
+        lib.ffmpeg_kit_session_get_logs_as_string.argtypes = [ctypes.c_void_p]
+        lib.ffmpeg_kit_session_get_logs_as_string.restype = ctypes.c_char_p
+        lib.ffmpeg_kit_config_get_ffmpeg_version.argtypes = []
+        lib.ffmpeg_kit_config_get_ffmpeg_version.restype = ctypes.c_char_p
+    except AttributeError as exc:
+        _FFMPEGKIT["error"] = "symbol missing: %s" % exc
+        return None
+    _FFMPEGKIT["lib"] = lib
+    try:
+        version_ptr = lib.ffmpeg_kit_config_get_ffmpeg_version()
+        if version_ptr:
+            _FFMPEGKIT["version"] = version_ptr.decode("utf-8", "replace")
+    except Exception:
+        pass
+    return lib
+
+
+def _ffmpegkit_command(argv):
+    return " ".join(shlex.quote(str(a)) for a in argv)
 
 
 def _ffmpegkit_exec(argv):
-    classes = _resolve_ffmpegkit_classes()
-    if classes is None:
-        raise OSError("FFmpegKit Java bridge unavailable")
-    FFmpegKit, FFprobeKit, ReturnCode = classes
+    lib = _load_ffmpegkit_library()
+    if lib is None:
+        raise OSError(
+            "FFmpegKit native library unavailable: %s" % _FFMPEGKIT["error"]
+        )
     prog = os.path.basename(str(argv[0]))
     args = [str(a) for a in argv[1:]]
     if prog == "ffprobe" and "-print_format" in args and "json" in args:
         args = ["-v", "quiet"] + args
+    encoded = _ffmpegkit_command(argv).encode("utf-8")
+    handle = (
+        lib.ffprobe_kit_execute(encoded)
+        if prog == "ffprobe"
+        else lib.ffmpeg_kit_execute(encoded)
+    )
+    if not handle:
+        raise OSError("FFmpegKit returned no session handle")
     try:
-        if prog == "ffprobe":
-            session = FFprobeKit.executeWithArguments(args)
-        else:
-            session = FFmpegKit.executeWithArguments(args)
-        rc_obj = session.getReturnCode()
-        if rc_obj is None:
-            return "", 1
-        if ReturnCode.isSuccess(rc_obj):
-            rc = 0
-        elif ReturnCode.isCancel(rc_obj):
-            rc = 255
-        else:
-            rc = 1
-        return session.getOutput() or "", rc
-    except OSError:
-        raise
-    except Exception as e:
-        raise OSError("FFmpegKit execution failed: %s" % e)
+        rc = int(lib.ffmpeg_kit_session_get_return_code(handle))
+        output_ptr = lib.ffmpeg_kit_session_get_output(handle)
+        output = output_ptr.decode("utf-8", "replace") if output_ptr else ""
+        return output, (0 if rc == 0 else 1)
+    finally:
+        try:
+            closer = getattr(lib, "ffmpeg_kit_close_session", None)
+            if closer is not None:
+                closer.argtypes = [ctypes.c_void_p]
+                closer.restype = None
+                closer(handle)
+        except Exception:
+            pass
 
 
 def _install_ffmpegkit_backend():
-    if _FFMPEGKIT["attempted"]:
-        return _FFMPEGKIT["installed"]
-    _FFMPEGKIT["attempted"] = True
-    try:
-        if _resolve_ffmpegkit_classes() is None:
-            return False
-        out, rc = _ffmpegkit_exec(["ffmpeg", "-version"])
-        found = re.search(r"version\s+([-0-9._a-zA-Z]+)", out or "")
-        if rc != 0 or not found:
-            return False
-        _FFMPEGKIT["version"] = found.group(1)
-        orig_run = yt_dlp.utils.Popen.run
-
-        @classmethod
-        def _patched_run(cls, *args, **kwargs):
-            cmd = args[0] if args else None
-            if isinstance(cmd, (list, tuple)) and cmd:
-                prog = os.path.basename(str(cmd[0]))
-                if prog in ("ffmpeg", "ffprobe"):
-                    text_mode = bool(
-                        kwargs.get("text")
-                        or kwargs.get("encoding")
-                        or kwargs.get("errors")
-                        or kwargs.get("universal_newlines")
-                    )
-                    out, rc = _ffmpegkit_exec([str(c) for c in cmd])
-                    if text_mode:
-                        return out, out, rc
-                    encoded = out.encode("utf-8", "replace")
-                    return encoded, encoded, rc
-            return orig_run(*args, **kwargs)
-
-        yt_dlp.utils.Popen.run = _patched_run
-        _FFMPEGKIT["installed"] = True
+    if _FFMPEGKIT["patched"]:
         return True
-    except Exception:
+    lib = _load_ffmpegkit_library()
+    if lib is None:
         return False
+    out, rc = _ffmpegkit_exec(["ffmpeg", "-version"])
+    if rc != 0 or "version" not in (out or "").lower():
+        _FFMPEGKIT["error"] = "ffmpeg -version failed (rc=%d): %s" % (
+            rc,
+            (out or "")[:200],
+        )
+        return False
+    orig_run = yt_dlp.utils.Popen.run
+
+    @classmethod
+    def _patched_run(cls, *args, **kwargs):
+        cmd = args[0] if args else None
+        if isinstance(cmd, (list, tuple)) and cmd:
+            prog = os.path.basename(str(cmd[0]))
+            if prog in ("ffmpeg", "ffprobe"):
+                text_mode = bool(
+                    kwargs.get("text")
+                    or kwargs.get("encoding")
+                    or kwargs.get("errors")
+                    or kwargs.get("universal_newlines")
+                )
+                out, rc = _ffmpegkit_exec([str(c) for c in cmd])
+                if text_mode:
+                    return out, out, rc
+                encoded = out.encode("utf-8", "replace")
+                return encoded, encoded, rc
+        return orig_run(*args, **kwargs)
+
+    yt_dlp.utils.Popen.run = _patched_run
+    _FFMPEGKIT["patched"] = True
+    return True
 
 
 def _ffmpeg_available():
@@ -185,13 +210,16 @@ def capabilities():
     except Exception:
         version = ""
     backend = _install_ffmpegkit_backend()
-    return json.dumps({
+    report = {
         "status": "success",
         "ffmpeg": _ffmpeg_available(),
         "ffmpegkit": backend,
         "ffmpegkit_version": _FFMPEGKIT["version"] if backend else "",
         "ytdlp": version,
-    })
+    }
+    if not backend and _FFMPEGKIT["error"]:
+        report["ffmpegkit_error"] = _FFMPEGKIT["error"]
+    return json.dumps(report)
 
 
 _EXTRACTOR_CACHE = None
