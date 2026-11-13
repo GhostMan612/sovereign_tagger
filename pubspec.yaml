@@ -34,6 +34,13 @@ dev_dependencies:
   flutter_lints: ^6.0.0
   flutter_launcher_icons: ^0.14.4
 
+# audio_waveforms 2.0.2 is the newest release and still applies the legacy
+# Kotlin Gradle Plugin, which blocks Built-in Kotlin. This vendored copy is the
+# same package with only its Gradle setup migrated (see third_party/README.md).
+dependency_overrides:
+  audio_waveforms:
+    path: third_party/audio_waveforms
+
 flutter:
   uses-material-design: true
   shaders:
