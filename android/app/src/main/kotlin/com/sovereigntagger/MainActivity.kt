@@ -456,6 +456,18 @@ class MainActivity: AudioServiceActivity() {
                 }
                 "getTempDirectory" -> { result.success(storageBridge.getTempDirectory()) }
                 "getAppDocDir" -> { result.success(context.filesDir.absolutePath) }
+                "getBuildProvenance" -> {
+                    result.success(
+                        mapOf(
+                            "sourceSha" to BuildConfig.SOURCE_SHA,
+                            "sourceDirty" to BuildConfig.SOURCE_DIRTY,
+                            "versionCode" to BuildConfig.VERSION_CODE,
+                            "versionName" to BuildConfig.VERSION_NAME,
+                            "buildAbis" to BuildConfig.BUILD_ABIS,
+                            "builtAtUtc" to BuildConfig.BUILD_TIME_UTC,
+                        )
+                    )
+                }
                 "openUrl" -> {
                     val url = call.argument<String>("url") ?: ""
                     try {

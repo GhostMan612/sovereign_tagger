@@ -9,6 +9,7 @@ import 'package:flutter/services.dart';
 import 'package:ffmpeg_kit_extended_flutter/ffmpeg_kit_extended_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'screens/main_shell.dart';
+import 'core/build_provenance.dart';
 import 'core/cloud_settings.dart';
 import 'core/secret_store.dart';
 import 'core/feedback_settings.dart';
@@ -99,6 +100,11 @@ class _SplashScreenState extends State<SplashScreen> {
     } catch (e) {
       debugPrint("BOOT: FFmpeg init FAILED — DSP is dead, every FFmpeg op will fail: $e");
     }
+
+    await BuildProvenance.load().then((provenance) {
+      debugPrint("BOOT: BUILD PROVENANCE: "
+          "${provenance?.identityLine ?? 'UNAVAILABLE — build is not traceable to a commit'}");
+    });
 
     await Future.delayed(const Duration(milliseconds: 500));
 

@@ -77,10 +77,35 @@ jobs:
           cat /tmp/abi-libraries.txt
           echo "SHA256: $(sha256sum "$apk")"
           du -h "$apk"
+      - name: Verify source-to-APK provenance
+        shell: bash
+        run: |
+          set -euo pipefail
+          manifest="$(find build -name build_manifest.json -path '*sovereign_provenance*' | head -1)"
+          test -n "$manifest" || { echo "ERROR: missing build manifest"; exit 1; }
+          manifest_dir="$(dirname "$manifest")"
+          head="$(git rev-parse HEAD)"
+          manifest_sha="$(python3 -c "import json;print(json.load(open('$manifest'))['sourceSha'])")"
+          apk="$(ls build/app/outputs/flutter-apk/*.apk | head -1)"
+          test -n "$apk" || { echo "ERROR: no APK produced to digest"; exit 1; }
+          digest_file="$manifest_dir/$(basename "$apk").sha256"
+          test -s "$digest_file" || { echo "ERROR: missing APK digest $digest_file"; exit 1; }
+          recorded="$(cut -d' ' -f1 "$digest_file")"
+          actual="$(sha256sum "$apk" | cut -d' ' -f1)"
+          echo "HEAD         : $head"
+          echo "manifest sha : $manifest_sha"
+          echo "apk          : $(basename "$apk")"
+          echo "recorded sha : $recorded"
+          echo "actual sha   : $actual"
+          [ "$head" = "$manifest_sha" ] || { echo "ERROR: manifest SHA does not match the checkout"; exit 1; }
+          [ "$recorded" = "$actual" ] || { echo "ERROR: recorded APK digest does not match the artifact"; exit 1; }
+          echo "Provenance verified: $(basename "$apk") is traceable to commit $head"
       - name: Upload APK for device verification
         if: success()
         uses: actions/upload-artifact@v4
         with:
           name: sovereign-tagger-${{ matrix.target }}-debug
-          path: build/app/outputs/flutter-apk/app-debug.apk
+          path: |
+            build/app/outputs/flutter-apk/*.apk
+            build/**/sovereign_provenance/
           retention-days: 7

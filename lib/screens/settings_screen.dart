@@ -7,6 +7,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
+import '../core/build_provenance.dart';
 import '../core/tap_feedback.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -69,6 +70,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   bool _dartSpider = false;
   bool _isProbing = false;
   String _probeReport = "";
+  String _provenance = "";
 
   bool _isBackingUp = false;
   bool _isRestoring = false;
@@ -86,6 +88,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
     unawaited(GhostVectorIndex.instance.loadFromDiskIfNeeded());
     _loadKeys();
     _loadPendingRecoveries();
+    unawaited(_loadProvenance());
+  }
+
+  Future<void> _loadProvenance() async {
+    final provenance = await BuildProvenance.load();
+    if (!mounted) return;
+    setState(() {
+      _provenance = provenance == null
+          ? 'UNAVAILABLE — this build is not traceable to a source commit.'
+          : provenance.identityLine;
+    });
   }
 
   Future<void> _loadKeys() async {
@@ -2076,6 +2089,36 @@ class _SettingsScreenState extends State<SettingsScreen> {
                           child: Text(_probeReport, style: const TextStyle(fontFamily: 'ShareTechMono', fontSize: 11, color: Colors.white70, height: 1.4)),
                         ),
                       ],
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Container(
+                  decoration: BoxDecoration(color: Colors.black, border: Border.all(color: themeColor.withValues(alpha: 0.5))),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      const Padding(
+                        padding: EdgeInsets.all(12.0),
+                        child: Row(
+                          children: [
+                            Icon(Icons.fingerprint, color: Colors.cyanAccent, size: 18),
+                            SizedBox(width: 8),
+                            Expanded(
+                              child: Text("BUILD PROVENANCE",
+                                  style: TextStyle(fontFamily: 'ShareTechMono', fontWeight: FontWeight.bold, color: Colors.white70)),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const Divider(color: Colors.white12, height: 1),
+                      Padding(
+                        padding: const EdgeInsets.all(12.0),
+                        child: Text(
+                          _provenance.isEmpty ? 'READING...' : _provenance,
+                          style: const TextStyle(fontFamily: 'ShareTechMono', fontSize: 11, color: Colors.white70, height: 1.4),
+                        ),
+                      ),
                     ],
                   ),
                 ),

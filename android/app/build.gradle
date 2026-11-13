@@ -30,9 +30,46 @@ def releaseSigningReady = releaseKeystorePath != null &&
     file(releaseKeystorePath).isFile() &&
     [releaseStorePassword, releaseKeyAlias, releaseKeyPassword].every { it != null && !it.isEmpty() }
 
+// --- Sovereign source-to-APK provenance -----------------------------------------
+// The source identity is resolved from the actual checkout at configuration
+// time. The build refuses to run without it, so an installed build can always
+// be traced back to the commit that produced it.
+def sovereignRepoRoot = new File(rootProject.projectDir, "..").canonicalFile
+
+def sovereignGit = { String... gitArgs ->
+    providers.exec {
+        executable "git"
+        args(["-C", sovereignRepoRoot.absolutePath] + gitArgs.toList())
+    }.standardOutput.asText.map { it.trim() }
+}
+
+def sovereignSourceSha
+try {
+    sovereignSourceSha = sovereignGit("rev-parse", "HEAD").get()
+} catch (Exception ex) {
+    throw new GradleException(
+        "Sovereign provenance: could not resolve the source commit SHA from " +
+        "${sovereignRepoRoot.absolutePath} (${ex.message}). " +
+        "Refusing to build an untraceable APK."
+    )
+}
+if (sovereignSourceSha.isEmpty()) {
+    throw new GradleException(
+        "Sovereign provenance: could not resolve the source commit SHA from " +
+        "${sovereignRepoRoot.absolutePath}. Refusing to build an untraceable APK."
+    )
+}
+def sovereignSourceDirty = !sovereignGit(
+    "status", "--porcelain", "--untracked-files=no"
+).get().isEmpty()
+def sovereignBuildAbis = "arm64-v8a,x86_64"
+def sovereignBuiltAt = new Date().format(
+    "yyyy-MM-dd'T'HH:mm:ss'Z'", TimeZone.getTimeZone("UTC")
+)
+
 android {
     namespace = "com.sovereigntagger"
-    
+
     compileSdk = 36
     ndkVersion = flutter.ndkVersion
 
@@ -41,12 +78,21 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 
+    buildFeatures {
+        buildConfig true
+    }
+
     defaultConfig {
         applicationId = "com.sovereigntagger"
         minSdk = 26
         targetSdk = flutter.targetSdkVersion
         versionCode = flutterVersionCode.toInteger()
         versionName = flutterVersionName
+
+        buildConfigField "String", "SOURCE_SHA", "\"${sovereignSourceSha}\""
+        buildConfigField "boolean", "SOURCE_DIRTY", "${sovereignSourceDirty}"
+        buildConfigField "String", "BUILD_ABIS", "\"${sovereignBuildAbis}\""
+        buildConfigField "String", "BUILD_TIME_UTC", "\"${sovereignBuiltAt}\""
 
         ndk {
             // 64-bit only drops armeabi-v7a ~30% APK bloat; minSdk 26 = 99% of active devices 64-bit. Re-add "armeabi-v7a" only if Moto G 32-bit support required.
@@ -145,6 +191,63 @@ gradle.taskGraph.whenReady { graph ->
 
 flutter {
     source = "../.."
+}
+
+// --- Sovereign provenance outputs ------------------------------------------------
+// The manifest lives outside the APK so it can carry the artifact digest, which
+// by definition cannot be embedded inside the artifact it describes.
+def sovereignManifestDir = layout.buildDirectory.dir("sovereign_provenance")
+def sovereignApkDir = rootProject.layout.buildDirectory
+    .dir("app/outputs/flutter-apk").get().asFile
+
+def writeSovereignManifest = tasks.register("writeSovereignBuildManifest") {
+    doLast {
+        def outDir = sovereignManifestDir.get().asFile
+        outDir.mkdirs()
+        def manifest = [
+            schema      : 1,
+            sourceSha   : sovereignSourceSha,
+            sourceDirty : sovereignSourceDirty,
+            versionCode : flutterVersionCode.toInteger(),
+            versionName : flutterVersionName,
+            abis        : ["arm64-v8a", "x86_64"],
+            gradle      : gradle.gradleVersion,
+            builtAtUtc : sovereignBuiltAt,
+        ]
+        new File(outDir, "build_manifest.json").text =
+            groovy.json.JsonOutput.prettyPrint(groovy.json.JsonOutput.toJson(manifest))
+        println "Sovereign provenance: source ${sovereignSourceSha} -> ${outDir}"
+    }
+}
+
+def recordSovereignApkDigest = tasks.register("recordSovereignApkDigest") {
+    doLast {
+        def apks = (sovereignApkDir.listFiles() ?: []).findAll { it.name.endsWith(".apk") }
+        if (apks.isEmpty()) {
+            throw new GradleException(
+                "Sovereign provenance: no APK found in ${sovereignApkDir} to digest."
+            )
+        }
+        def outDir = sovereignManifestDir.get().asFile
+        outDir.mkdirs()
+        apks.each { apk ->
+            def digest = java.security.MessageDigest.getInstance("SHA-256")
+            apk.withInputStream { stream ->
+                def buffer = new byte[64 * 1024]
+                int read
+                while ((read = stream.read(buffer)) > 0) {
+                    digest.update(buffer, 0, read)
+                }
+            }
+            def hex = digest.digest().collect { String.format("%02x", it) }.join()
+            new File(outDir, "${apk.name}.sha256").text = "${hex}  ${apk.name}\n"
+            println "Sovereign provenance: ${apk.name} sha256=${hex}"
+        }
+    }
+}
+
+tasks.matching { it.name.startsWith("assemble") }.configureEach { assembleTask ->
+    assembleTask.finalizedBy writeSovereignManifest, recordSovereignApkDigest
 }
 
 dependencies {
