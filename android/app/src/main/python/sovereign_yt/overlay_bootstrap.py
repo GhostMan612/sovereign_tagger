@@ -4,6 +4,7 @@
 # ============================================================
 
 import ast
+import contextlib
 import hashlib
 import importlib
 import importlib.util
@@ -17,12 +18,19 @@ import threading
 import time
 import zipfile
 
+if os.name == "nt":
+    import msvcrt
+else:
+    import fcntl
+
 SCHEMA_VERSION = 1
 _OVERLAY_SUBDIR = "sovereign_py_overlay"
 _SLOTS_SUBDIR = "slots"
 _STAGING_SUBDIR = "staging"
 _MANIFEST_FILENAME = "active.json"
 _SLOT_METADATA_FILENAME = "slot.json"
+_LOCK_FILENAME = ".overlay.lock"
+_MAX_QUARANTINED_MANIFESTS = 3
 _MAX_MANIFEST_BYTES = 512 * 1024
 _SLOT_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 _CALVER_RE = re.compile(r"^v?(\d{4})\.(\d{1,2})\.(\d{1,2})(?:\.(\d+))?(?:post(\d+))?$")
@@ -31,7 +39,91 @@ _IGNORED_CACHE_DIRS = {"__pycache__"}
 _IGNORED_CACHE_EXTS = (".pyc", ".pyo")
 
 _BOOTSTRAP_LOCK = threading.RLock()
+_FILE_PROCESS_RLOCK = threading.RLock()
+_FILE_LOCK_DEPTH = 0
 _RUNTIME_STATE = None
+
+
+def fsync_directory(dir_path):
+    try:
+        dir_fd = os.open(dir_path, os.O_RDONLY)
+        try:
+            os.fsync(dir_fd)
+        finally:
+            os.close(dir_fd)
+    except OSError:
+        pass
+
+
+def _acquire_advisory_lock(handle):
+    if os.name == "nt":
+        deadline = time.monotonic() + 30.0
+        while True:
+            try:
+                handle.seek(0)
+                msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+                return
+            except OSError:
+                if time.monotonic() >= deadline:
+                    raise TimeoutError("Timed out waiting for cross-process overlay lock.")
+                time.sleep(0.02)
+    else:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+
+
+def _release_advisory_lock(handle):
+    if os.name == "nt":
+        try:
+            handle.seek(0)
+            msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+        except OSError:
+            pass
+    else:
+        try:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        except OSError:
+            pass
+
+
+@contextlib.contextmanager
+def overlay_file_lock(overlay_root, create=True):
+    global _FILE_LOCK_DEPTH
+    root_real = os.path.realpath(os.path.abspath(overlay_root))
+    with _FILE_PROCESS_RLOCK:
+        if _FILE_LOCK_DEPTH > 0:
+            _FILE_LOCK_DEPTH += 1
+            try:
+                yield
+            finally:
+                _FILE_LOCK_DEPTH -= 1
+            return
+
+        if not create and not os.path.isdir(root_real):
+            _FILE_LOCK_DEPTH = 1
+            try:
+                yield
+            finally:
+                _FILE_LOCK_DEPTH = 0
+            return
+
+        os.makedirs(root_real, exist_ok=True)
+        lock_path = os.path.join(root_real, _LOCK_FILENAME)
+        if os.path.islink(lock_path):
+            raise ValueError("Overlay lock file must not be a symlink.")
+        handle = open(lock_path, "a+b")
+        try:
+            _acquire_advisory_lock(handle)
+            if os.fstat(handle.fileno()).st_size == 0:
+                handle.write(b"\x00")
+                handle.flush()
+            _FILE_LOCK_DEPTH = 1
+            try:
+                yield
+            finally:
+                _FILE_LOCK_DEPTH = 0
+                _release_advisory_lock(handle)
+        finally:
+            handle.close()
 
 
 def parse_calver(version_text):
@@ -319,14 +411,7 @@ def atomic_write_json(target_path, payload):
         handle.flush()
         os.fsync(handle.fileno())
     os.replace(tmp_path, target_path)
-    try:
-        dir_fd = os.open(parent, os.O_RDONLY)
-        try:
-            os.fsync(dir_fd)
-        finally:
-            os.close(dir_fd)
-    except OSError:
-        pass
+    fsync_directory(parent)
 
 
 def load_manifest(manifest_path, bundled_version=""):
@@ -339,15 +424,53 @@ def load_manifest(manifest_path, bundled_version=""):
     return sanitize_manifest(raw, bundled_version), None
 
 
+def _prune_quarantined_manifests(overlay_root, keep_count=_MAX_QUARANTINED_MANIFESTS):
+    if not os.path.isdir(overlay_root):
+        return
+    prefix = f"{_MANIFEST_FILENAME}.corrupt."
+    candidates = []
+    for name in os.listdir(overlay_root):
+        if name.startswith(prefix):
+            full = os.path.join(overlay_root, name)
+            if os.path.isfile(full) and not os.path.islink(full):
+                try:
+                    candidates.append((os.path.getmtime(full), name, full))
+                except OSError:
+                    pass
+    candidates.sort(key=lambda item: (item[0], item[1]), reverse=True)
+    for _, _, stale in candidates[keep_count:]:
+        try:
+            os.unlink(stale)
+        except OSError:
+            pass
+
+
 def _quarantine_corrupt_manifest(manifest_path):
     if not os.path.exists(manifest_path):
         return None
-    corrupt_path = f"{manifest_path}.corrupt.{int(time.time())}"
+    corrupt_path = f"{manifest_path}.corrupt.{time.time_ns()}.{os.getpid()}"
     try:
         shutil.copyfile(manifest_path, corrupt_path)
+        _prune_quarantined_manifests(os.path.dirname(os.path.abspath(manifest_path)))
     except OSError:
         corrupt_path = None
     return corrupt_path
+
+
+def _cleanup_stale_staging_in_bootstrap(staging_dir, manifest):
+    if manifest.get("transaction", {}).get("state") == "recovery_required":
+        return
+    if not os.path.isdir(staging_dir):
+        return
+    for entry in os.listdir(staging_dir):
+        full = os.path.join(staging_dir, entry)
+        try:
+            if os.path.isdir(full) and not os.path.islink(full):
+                shutil.rmtree(full, ignore_errors=True)
+            else:
+                os.unlink(full)
+        except OSError:
+            pass
 
 
 def _extract_version_from_pyc_bytes(data):
@@ -554,8 +677,8 @@ def _record_bootstrap_state(
 
 def bootstrap(overlay_root, bundled_version_hint=None):
     global _RUNTIME_STATE
-    with _BOOTSTRAP_LOCK:
-        paths = resolve_overlay_paths(overlay_root)
+    paths = resolve_overlay_paths(overlay_root)
+    with _BOOTSTRAP_LOCK, overlay_file_lock(paths["root"], create=False):
         if _RUNTIME_STATE is not None and _RUNTIME_STATE.get("overlay_root") == paths["root"]:
             return dict(_RUNTIME_STATE)
 
@@ -611,6 +734,7 @@ def bootstrap(overlay_root, bundled_version_hint=None):
 
         manifest_dirty = manifest_corrupted
         rolled_back = False
+        _cleanup_stale_staging_in_bootstrap(paths["staging"], manifest)
 
         tx = manifest["transaction"]
         pending_slot = manifest.get("pending_slot")
@@ -825,11 +949,16 @@ def bootstrap(overlay_root, bundled_version_hint=None):
 
 
 def get_runtime_status(overlay_root=None):
-    with _BOOTSTRAP_LOCK:
+    if overlay_root:
+        paths = resolve_overlay_paths(overlay_root)
+        lock_ctx = overlay_file_lock(paths["root"], create=False)
+    else:
+        paths = None
+        lock_ctx = contextlib.nullcontext()
+    with _BOOTSTRAP_LOCK, lock_ctx:
         if _RUNTIME_STATE is not None:
             state = dict(_RUNTIME_STATE)
-            if overlay_root:
-                paths = resolve_overlay_paths(overlay_root)
+            if paths is not None:
                 try:
                     manifest, _ = load_manifest(paths["manifest"], state.get("bundled_version", ""))
                     state["pending_slot"] = manifest.get("pending_slot")

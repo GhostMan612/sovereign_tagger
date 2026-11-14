@@ -3,16 +3,19 @@
 # The Future Dictates the Past and the Past is Always Present.
 # ============================================================
 
+import base64
 import hashlib
 import io
 import json
 import os
 import py_compile
+import struct
 import subprocess
 import sys
 import tarfile
 import tempfile
 import threading
+import time
 import unittest
 import zipfile
 
@@ -22,6 +25,139 @@ if PYTHON_SRC not in sys.path:
     sys.path.insert(0, PYTHON_SRC)
 
 from sovereign_yt import overlay_bootstrap, updater
+
+
+def _is_probable_prime(n):
+    if n < 2:
+        return False
+    for small in (2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37):
+        if n == small:
+            return True
+        if n % small == 0:
+            return False
+    d = n - 1
+    s = 0
+    while d % 2 == 0:
+        d //= 2
+        s += 1
+    for a in (2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47, 53):
+        x = pow(a, d, n)
+        if x == 1 or x == n - 1:
+            continue
+        for _ in range(s - 1):
+            x = (x * x) % n
+            if x == n - 1:
+                break
+        else:
+            return False
+    return True
+
+
+def _encode_mpi(val):
+    bits = val.bit_length()
+    raw = val.to_bytes((bits + 7) // 8, "big")
+    return struct.pack(">H", bits) + raw
+
+
+def _make_test_rsa_key(seed_tag=1, label="test-release-rsa"):
+    e = 65537
+    p = ((1 << 512) + 0x10001 * seed_tag) | 1
+    while not (_is_probable_prime(p) and (p - 1) % e != 0):
+        p += 2
+    q = ((1 << 512) + 0x20003 * seed_tag + 0x9999) | 1
+    while not (q != p and _is_probable_prime(q) and (q - 1) % e != 0):
+        q += 2
+    n = p * q
+    phi = (p - 1) * (q - 1)
+    d = pow(e, -1, phi)
+    pub_body = b"\x04" + struct.pack(">I", 1700000000 + seed_tag) + b"\x01" + _encode_mpi(n) + _encode_mpi(e)
+    fpr_bytes = hashlib.sha1(b"\x99" + struct.pack(">H", len(pub_body)) + pub_body).digest()
+    return {
+        "label": label,
+        "fingerprint": fpr_bytes.hex().upper(),
+        "key_id": fpr_bytes[-8:].hex().upper(),
+        "e": e,
+        "n": n,
+        "d": d,
+    }
+
+
+def _public_key_entry(full_key):
+    return {k: full_key[k] for k in ("label", "fingerprint", "key_id", "e", "n")}
+
+
+def _subpkt(sub_type, val, critical=False):
+    raw_type = sub_type | (0x80 if critical else 0)
+    return bytes([1 + len(val), raw_type]) + val
+
+
+def _sign_openpgp_v4_rsa(
+    data_bytes,
+    full_key,
+    hash_algo=10,
+    sigtype=0x00,
+    include_fpr=True,
+    include_kid=True,
+    armor=False,
+    bad_crc=False,
+    critical_unknown=False,
+    unhashed_kid_only=False,
+):
+    hashed_parts = [_subpkt(2, struct.pack(">I", 1730000000))]
+    if include_fpr and not unhashed_kid_only:
+        hashed_parts.append(_subpkt(33, b"\x04" + bytes.fromhex(full_key["fingerprint"])))
+    if include_kid and not unhashed_kid_only:
+        hashed_parts.append(_subpkt(16, bytes.fromhex(full_key["key_id"])))
+    if critical_unknown:
+        hashed_parts.append(_subpkt(99, b"\x01\x02", critical=True))
+    hashed_blob = b"".join(hashed_parts)
+    unhashed_blob = _subpkt(16, bytes.fromhex(full_key["key_id"])) if unhashed_kid_only else b""
+
+    header = bytes([4, sigtype, 1, hash_algo]) + struct.pack(">H", len(hashed_blob)) + hashed_blob
+    msg = data_bytes
+    if sigtype == 0x01:
+        msg = b"\r\n".join(data_bytes.replace(b"\r\n", b"\n").replace(b"\r", b"\n").split(b"\n"))
+
+    hash_fn, der_prefix = updater._PGP_DIGEST_INFOS[hash_algo]
+    hasher = hash_fn()
+    hasher.update(msg)
+    hasher.update(header)
+    hasher.update(b"\x04\xff" + struct.pack(">I", len(header)))
+    digest = hasher.digest()
+
+    k_bytes = (full_key["n"].bit_length() + 7) // 8
+    t_bytes = der_prefix + digest
+    em = b"\x00\x01" + (b"\xff" * (k_bytes - len(t_bytes) - 3)) + b"\x00" + t_bytes
+    sig_int = pow(int.from_bytes(em, "big"), full_key["d"], full_key["n"])
+    body = header + struct.pack(">H", len(unhashed_blob)) + unhashed_blob + digest[:2] + _encode_mpi(sig_int)
+
+    pkt_len = len(body)
+    if pkt_len < 192:
+        len_hdr = bytes([pkt_len])
+    elif pkt_len < 8384:
+        adj = pkt_len - 192
+        len_hdr = bytes([192 + (adj >> 8), adj & 0xFF])
+    else:
+        len_hdr = b"\xff" + struct.pack(">I", pkt_len)
+    pkt = b"\xc2" + len_hdr + body
+
+    if armor:
+        b64 = base64.b64encode(pkt).decode("ascii")
+        lines = [b64[i : i + 64] for i in range(0, len(b64), 64)]
+        crc = updater._crc24_openpgp(pkt) ^ (1 if bad_crc else 0)
+        crc_b64 = base64.b64encode(crc.to_bytes(3, "big")).decode("ascii")
+        armored = (
+            "-----BEGIN PGP SIGNATURE-----\n\n"
+            + "\n".join(lines)
+            + f"\n={crc_b64}\n-----END PGP SIGNATURE-----\n"
+        )
+        return armored.encode("ascii")
+    return pkt
+
+
+_TEST_PGP_KEY = _make_test_rsa_key(seed_tag=1, label="test-release-rsa")
+_OTHER_PGP_KEY = _make_test_rsa_key(seed_tag=2, label="other-release-rsa")
+_TEST_PINNED_KEYS = (_public_key_entry(_TEST_PGP_KEY),)
 
 
 def _build_synthetic_bundle_imy(dest_zip_path, version="2026.10.26", broken=False):
@@ -97,7 +233,6 @@ def _build_synthetic_tar_gz(
                 "        return False\n"
             )
         ver_code = f"__version__ = {version!r}\n_channel = 'stable'\n"
-
         _add_tar_bytes(tf, f"{prefix}yt_dlp/__init__.py", init_code.encode("utf-8"))
         _add_tar_bytes(tf, f"{prefix}yt_dlp/version.py", ver_code.encode("utf-8"))
         if include_vendor_js:
@@ -121,19 +256,48 @@ def _make_release_fetcher(
     archive_bytes,
     override_sha256=None,
     omit_sums=False,
+    omit_sig=False,
     omit_archive=False,
     archive_url="https://github.com/yt-dlp/yt-dlp/releases/download/tag/yt-dlp.tar.gz",
     sums_url="https://github.com/yt-dlp/yt-dlp/releases/download/tag/SHA2-256SUMS",
+    sig_url="https://github.com/yt-dlp/yt-dlp/releases/download/tag/SHA2-256SUMS.sig",
     draft=False,
     prerelease=False,
+    signing_key=None,
+    override_sums_bytes=None,
+    override_sig_bytes=None,
+    hash_algo=10,
+    sigtype=0x00,
+    armor=False,
+    bad_crc=False,
+    critical_unknown=False,
+    unhashed_kid_only=False,
 ):
     digest = override_sha256 or hashlib.sha256(archive_bytes).hexdigest()
-    sums_text = f"{digest}  yt-dlp.tar.gz\n".encode("utf-8")
+    default_sums = f"{digest}  yt-dlp.tar.gz\n".encode("utf-8")
+    sums_text = override_sums_bytes if override_sums_bytes is not None else default_sums
+    active_key = signing_key or _TEST_PGP_KEY
+    sig_bytes = (
+        override_sig_bytes
+        if override_sig_bytes is not None
+        else _sign_openpgp_v4_rsa(
+            default_sums,
+            active_key,
+            hash_algo=hash_algo,
+            sigtype=sigtype,
+            armor=armor,
+            bad_crc=bad_crc,
+            critical_unknown=critical_unknown,
+            unhashed_kid_only=unhashed_kid_only,
+        )
+    )
     assets = []
     if not omit_archive:
         assets.append({"name": "yt-dlp.tar.gz", "browser_download_url": archive_url})
     if not omit_sums:
         assets.append({"name": "SHA2-256SUMS", "browser_download_url": sums_url})
+    if not omit_sig:
+        assets.append({"name": "SHA2-256SUMS.sig", "browser_download_url": sig_url})
     release_doc = {
         "tag_name": tag_name,
         "draft": draft,
@@ -145,6 +309,8 @@ def _make_release_fetcher(
     def fetcher(url, _max_bytes):
         if url == updater.GITHUB_LATEST_RELEASE_URL:
             return release_bytes
+        if url == sig_url:
+            return sig_bytes
         if url == sums_url:
             return sums_text
         if url == archive_url:
@@ -227,9 +393,11 @@ class ChaquopyOverlayUpdaterTests(unittest.TestCase):
         tar_bytes = _build_synthetic_tar_gz("2026.11.14")
         digest = hashlib.sha256(tar_bytes).hexdigest()
         sums_bytes = f"{digest}  yt-dlp.tar.gz\n".encode("utf-8")
+        sig_bytes = _sign_openpgp_v4_rsa(sums_bytes, _TEST_PGP_KEY)
         archive_path = os.path.join(self.tmp_dir.name, "rel.tar.gz")
         with open(archive_path, "wb") as h:
             h.write(tar_bytes)
+        pinned = list(_TEST_PINNED_KEYS)
         code = (
             "import json\n"
             "from sovereign_yt import overlay_bootstrap, updater\n"
@@ -238,11 +406,18 @@ class ChaquopyOverlayUpdaterTests(unittest.TestCase):
             f"archive = open({archive_path!r}, 'rb').read()\n"
             "rel = json.dumps({'tag_name': '2026.11.14', 'draft': False, 'prerelease': False, 'assets': [\n"
             "  {'name': 'yt-dlp.tar.gz', 'browser_download_url': 'https://github.com/yt-dlp/yt-dlp/releases/download/2026.11.14/yt-dlp.tar.gz'},\n"
-            "  {'name': 'SHA2-256SUMS', 'browser_download_url': 'https://github.com/yt-dlp/yt-dlp/releases/download/2026.11.14/SHA2-256SUMS'}\n"
+            "  {'name': 'SHA2-256SUMS', 'browser_download_url': 'https://github.com/yt-dlp/yt-dlp/releases/download/2026.11.14/SHA2-256SUMS'},\n"
+            "  {'name': 'SHA2-256SUMS.sig', 'browser_download_url': 'https://github.com/yt-dlp/yt-dlp/releases/download/2026.11.14/SHA2-256SUMS.sig'}\n"
             "]}).encode('utf-8')\n"
             f"sums = {sums_bytes!r}\n"
-            "def f(u, _): return rel if 'releases/latest' in u else (sums if 'SHA2' in u else archive)\n"
-            f"res = json.loads(updater.execute_scorched_earth({self.overlay_root!r}, fetcher=f, bundled_version_hint='2026.10.26'))\n"
+            f"sig = {sig_bytes!r}\n"
+            f"pins = {pinned!r}\n"
+            "def f(u, _):\n"
+            "    if 'releases/latest' in u: return rel\n"
+            "    if u.endswith('.sig'): return sig\n"
+            "    if 'SHA2' in u: return sums\n"
+            "    return archive\n"
+            f"res = json.loads(updater.execute_scorched_earth({self.overlay_root!r}, fetcher=f, bundled_version_hint='2026.10.26', pinned_keys=pins))\n"
             "print(json.dumps({'res': res, 'live_ver': yt_dlp.version.__version__, 'live_file': yt_dlp.__file__}))\n"
         )
         out = json.loads(_run_isolated_child(code, self.bundle_imy))
@@ -260,9 +435,10 @@ class ChaquopyOverlayUpdaterTests(unittest.TestCase):
                 self.overlay_root,
                 fetcher=fetcher,
                 bundled_version_hint="2026.10.26",
+                pinned_keys=_TEST_PINNED_KEYS,
             )
         )
-        self.assertEqual(res["status"], "success")
+        self.assertEqual(res["status"], "success", res)
         self.assertTrue(res["restart_required"])
 
         code = (
@@ -291,7 +467,14 @@ class ChaquopyOverlayUpdaterTests(unittest.TestCase):
                 valid_tar,
                 archive_url="http://github.com/yt-dlp/yt-dlp/releases/download/tag/yt-dlp.tar.gz",
             )
-            res = json.loads(updater.execute_scorched_earth(self.overlay_root, fetcher=fetcher, bundled_version_hint="2026.10.26"))
+            res = json.loads(
+                updater.execute_scorched_earth(
+                    self.overlay_root,
+                    fetcher=fetcher,
+                    bundled_version_hint="2026.10.26",
+                    pinned_keys=_TEST_PINNED_KEYS,
+                )
+            )
             self.assertEqual(res["status"], "error")
             self.assertIn("HTTPS", res["message"])
 
@@ -301,19 +484,40 @@ class ChaquopyOverlayUpdaterTests(unittest.TestCase):
                 valid_tar,
                 archive_url="https://evil.example.net/yt-dlp.tar.gz",
             )
-            res = json.loads(updater.execute_scorched_earth(self.overlay_root, fetcher=fetcher, bundled_version_hint="2026.10.26"))
+            res = json.loads(
+                updater.execute_scorched_earth(
+                    self.overlay_root,
+                    fetcher=fetcher,
+                    bundled_version_hint="2026.10.26",
+                    pinned_keys=_TEST_PINNED_KEYS,
+                )
+            )
             self.assertEqual(res["status"], "error")
             self.assertIn("Untrusted", res["message"])
 
         with self.subTest("reject_missing_sums"):
             fetcher = _make_release_fetcher("2026.11.14", valid_tar, omit_sums=True)
-            res = json.loads(updater.execute_scorched_earth(self.overlay_root, fetcher=fetcher, bundled_version_hint="2026.10.26"))
+            res = json.loads(
+                updater.execute_scorched_earth(
+                    self.overlay_root,
+                    fetcher=fetcher,
+                    bundled_version_hint="2026.10.26",
+                    pinned_keys=_TEST_PINNED_KEYS,
+                )
+            )
             self.assertEqual(res["status"], "error")
             self.assertIn("SHA2-256SUMS", res["message"])
 
         with self.subTest("reject_bad_sha256"):
             fetcher = _make_release_fetcher("2026.11.14", valid_tar, override_sha256="0" * 64)
-            res = json.loads(updater.execute_scorched_earth(self.overlay_root, fetcher=fetcher, bundled_version_hint="2026.10.26"))
+            res = json.loads(
+                updater.execute_scorched_earth(
+                    self.overlay_root,
+                    fetcher=fetcher,
+                    bundled_version_hint="2026.10.26",
+                    pinned_keys=_TEST_PINNED_KEYS,
+                )
+            )
             self.assertEqual(res["status"], "error")
             self.assertIn("SHA-256", res["message"])
 
@@ -323,7 +527,14 @@ class ChaquopyOverlayUpdaterTests(unittest.TestCase):
 
             bad_tar = _build_synthetic_tar_gz("2026.11.14", extra_entries=[add_traversal])
             fetcher = _make_release_fetcher("2026.11.14", bad_tar)
-            res = json.loads(updater.execute_scorched_earth(self.overlay_root, fetcher=fetcher, bundled_version_hint="2026.10.26"))
+            res = json.loads(
+                updater.execute_scorched_earth(
+                    self.overlay_root,
+                    fetcher=fetcher,
+                    bundled_version_hint="2026.10.26",
+                    pinned_keys=_TEST_PINNED_KEYS,
+                )
+            )
             self.assertEqual(res["status"], "error")
 
         with self.subTest("reject_symlink"):
@@ -335,7 +546,14 @@ class ChaquopyOverlayUpdaterTests(unittest.TestCase):
 
             bad_tar = _build_synthetic_tar_gz("2026.11.14", extra_entries=[add_sym])
             fetcher = _make_release_fetcher("2026.11.14", bad_tar)
-            res = json.loads(updater.execute_scorched_earth(self.overlay_root, fetcher=fetcher, bundled_version_hint="2026.10.26"))
+            res = json.loads(
+                updater.execute_scorched_earth(
+                    self.overlay_root,
+                    fetcher=fetcher,
+                    bundled_version_hint="2026.10.26",
+                    pinned_keys=_TEST_PINNED_KEYS,
+                )
+            )
             self.assertEqual(res["status"], "error")
             self.assertIn("Symlink", res["message"])
 
@@ -348,7 +566,14 @@ class ChaquopyOverlayUpdaterTests(unittest.TestCase):
 
             bad_tar = _build_synthetic_tar_gz("2026.11.14", extra_entries=[add_hardlink])
             fetcher = _make_release_fetcher("2026.11.14", bad_tar)
-            res = json.loads(updater.execute_scorched_earth(self.overlay_root, fetcher=fetcher, bundled_version_hint="2026.10.26"))
+            res = json.loads(
+                updater.execute_scorched_earth(
+                    self.overlay_root,
+                    fetcher=fetcher,
+                    bundled_version_hint="2026.10.26",
+                    pinned_keys=_TEST_PINNED_KEYS,
+                )
+            )
             self.assertEqual(res["status"], "error")
             self.assertIn("Symlink/hardlink", res["message"])
 
@@ -356,7 +581,14 @@ class ChaquopyOverlayUpdaterTests(unittest.TestCase):
             giant = b"A" * (5 * 1024 * 1024)
             bad_tar = _build_synthetic_tar_gz("2026.11.14", extra_entries=[("yt_dlp/blob.py", giant)])
             fetcher = _make_release_fetcher("2026.11.14", bad_tar)
-            res = json.loads(updater.execute_scorched_earth(self.overlay_root, fetcher=fetcher, bundled_version_hint="2026.10.26"))
+            res = json.loads(
+                updater.execute_scorched_earth(
+                    self.overlay_root,
+                    fetcher=fetcher,
+                    bundled_version_hint="2026.10.26",
+                    pinned_keys=_TEST_PINNED_KEYS,
+                )
+            )
             self.assertEqual(res["status"], "error")
             self.assertIn("bomb", res["message"].lower())
 
@@ -366,27 +598,55 @@ class ChaquopyOverlayUpdaterTests(unittest.TestCase):
                 extra_entries=[("yt_dlp/native.bin", b"\x7fELF" + b"\x00" * 32)],
             )
             fetcher = _make_release_fetcher("2026.11.14", bad_tar)
-            res = json.loads(updater.execute_scorched_earth(self.overlay_root, fetcher=fetcher, bundled_version_hint="2026.10.26"))
+            res = json.loads(
+                updater.execute_scorched_earth(
+                    self.overlay_root,
+                    fetcher=fetcher,
+                    bundled_version_hint="2026.10.26",
+                    pinned_keys=_TEST_PINNED_KEYS,
+                )
+            )
             self.assertEqual(res["status"], "error")
 
         with self.subTest("reject_tag_version_mismatch"):
             bad_tar = _build_synthetic_tar_gz("2026.11.13")
             fetcher = _make_release_fetcher("2026.11.14", bad_tar)
-            res = json.loads(updater.execute_scorched_earth(self.overlay_root, fetcher=fetcher, bundled_version_hint="2026.10.26"))
+            res = json.loads(
+                updater.execute_scorched_earth(
+                    self.overlay_root,
+                    fetcher=fetcher,
+                    bundled_version_hint="2026.10.26",
+                    pinned_keys=_TEST_PINNED_KEYS,
+                )
+            )
             self.assertEqual(res["status"], "error")
             self.assertIn("does not match release tag", res["message"])
 
         with self.subTest("reject_calver_downgrade"):
             old_tar = _build_synthetic_tar_gz("2026.01.01")
             fetcher = _make_release_fetcher("2026.01.01", old_tar)
-            res = json.loads(updater.execute_scorched_earth(self.overlay_root, fetcher=fetcher, bundled_version_hint="2026.10.26"))
+            res = json.loads(
+                updater.execute_scorched_earth(
+                    self.overlay_root,
+                    fetcher=fetcher,
+                    bundled_version_hint="2026.10.26",
+                    pinned_keys=_TEST_PINNED_KEYS,
+                )
+            )
             self.assertEqual(res["status"], "error")
             self.assertIn("downgrade", res["message"].lower())
 
         with self.subTest("reject_requires_python_incompatible"):
             fut_tar = _build_synthetic_tar_gz("2026.11.14", requires_python=">=9.99")
             fetcher = _make_release_fetcher("2026.11.14", fut_tar)
-            res = json.loads(updater.execute_scorched_earth(self.overlay_root, fetcher=fetcher, bundled_version_hint="2026.10.26"))
+            res = json.loads(
+                updater.execute_scorched_earth(
+                    self.overlay_root,
+                    fetcher=fetcher,
+                    bundled_version_hint="2026.10.26",
+                    pinned_keys=_TEST_PINNED_KEYS,
+                )
+            )
             self.assertEqual(res["status"], "error")
             self.assertIn("requires Python", res["message"])
 
@@ -418,7 +678,14 @@ class ChaquopyOverlayUpdaterTests(unittest.TestCase):
 
         tar_v1 = _build_synthetic_tar_gz("2026.11.14")
         fetcher = _make_release_fetcher("2026.11.14", tar_v1)
-        res = json.loads(updater.execute_scorched_earth(self.overlay_root, fetcher=fetcher, bundled_version_hint="2026.10.26"))
+        res = json.loads(
+            updater.execute_scorched_earth(
+                self.overlay_root,
+                fetcher=fetcher,
+                bundled_version_hint="2026.10.26",
+                pinned_keys=_TEST_PINNED_KEYS,
+            )
+        )
         self.assertEqual(res["status"], "success")
         self.assertFalse(os.path.exists(stale_stage))
 
@@ -449,6 +716,7 @@ class ChaquopyOverlayUpdaterTests(unittest.TestCase):
                 self.overlay_root,
                 fetcher=_make_release_fetcher("2026.11.01", tar_v1),
                 bundled_version_hint="2026.10.26",
+                pinned_keys=_TEST_PINNED_KEYS,
             )
         )
         self.assertEqual(res1["status"], "success")
@@ -463,6 +731,7 @@ class ChaquopyOverlayUpdaterTests(unittest.TestCase):
                 self.overlay_root,
                 fetcher=_make_release_fetcher("2026.12.01", tar_v2_broken),
                 bundled_version_hint="2026.10.26",
+                pinned_keys=_TEST_PINNED_KEYS,
             )
         )
         self.assertEqual(res2["status"], "success")
@@ -488,6 +757,7 @@ class ChaquopyOverlayUpdaterTests(unittest.TestCase):
                 self.overlay_root,
                 fetcher=_make_release_fetcher("2026.11.14", tar_broken),
                 bundled_version_hint="2026.10.26",
+                pinned_keys=_TEST_PINNED_KEYS,
             )
         )
         self.assertEqual(res["status"], "success")
@@ -518,6 +788,7 @@ class ChaquopyOverlayUpdaterTests(unittest.TestCase):
                 fetcher=fetcher,
                 bundled_version_hint="2026.10.26",
                 commit_hook=fail_commit,
+                pinned_keys=_TEST_PINNED_KEYS,
             )
         )
         self.assertEqual(err["status"], "error")
@@ -528,6 +799,7 @@ class ChaquopyOverlayUpdaterTests(unittest.TestCase):
                 self.overlay_root,
                 fetcher=fetcher,
                 bundled_version_hint="2026.10.26",
+                pinned_keys=_TEST_PINNED_KEYS,
             )
         )
         self.assertEqual(ok["status"], "success")
@@ -544,6 +816,7 @@ class ChaquopyOverlayUpdaterTests(unittest.TestCase):
                 self.overlay_root,
                 fetcher=fetcher,
                 bundled_version_hint="2026.10.26",
+                pinned_keys=_TEST_PINNED_KEYS,
             )
             results.append(json.loads(raw))
 
@@ -567,6 +840,7 @@ class ChaquopyOverlayUpdaterTests(unittest.TestCase):
                     self.overlay_root,
                     fetcher=_make_release_fetcher(ver, tar_bytes),
                     bundled_version_hint="2026.10.26",
+                    pinned_keys=_TEST_PINNED_KEYS,
                 )
             )
             self.assertEqual(res["status"], "success")
@@ -599,6 +873,7 @@ class ChaquopyOverlayUpdaterTests(unittest.TestCase):
             self.overlay_root,
             fetcher=_make_release_fetcher("2026.11.14", tar_v1),
             bundled_version_hint="2026.10.26",
+            pinned_keys=_TEST_PINNED_KEYS,
         )
         code = (
             "import json\n"
@@ -634,6 +909,226 @@ class ChaquopyOverlayUpdaterTests(unittest.TestCase):
             handler.redirect_request(req, None, 302, "Found", {}, "https://untrusted.example.org/payload.tar.gz")
         with self.assertRaises(updater.UpdaterSecurityError):
             handler.redirect_request(req, None, 302, "Found", {}, "http://github.com/yt-dlp/yt-dlp/releases/latest")
+
+    def test_16_openpgp_signature_security_and_variants(self):
+        valid_tar = _build_synthetic_tar_gz("2026.11.14")
+        digest = hashlib.sha256(valid_tar).hexdigest()
+        sums_lf = f"{digest}  yt-dlp.tar.gz\n".encode("utf-8")
+        sums_crlf = f"{digest}  yt-dlp.tar.gz\r\n".encode("utf-8")
+
+        with self.subTest("reject_missing_sig_asset"):
+            fetcher = _make_release_fetcher("2026.11.14", valid_tar, omit_sig=True)
+            res = json.loads(
+                updater.execute_scorched_earth(
+                    self.overlay_root,
+                    fetcher=fetcher,
+                    bundled_version_hint="2026.10.26",
+                    pinned_keys=_TEST_PINNED_KEYS,
+                )
+            )
+            self.assertEqual(res["status"], "error")
+            self.assertIn("SHA2-256SUMS.sig", res["message"])
+
+        with self.subTest("reject_synthetic_key_under_production_pin"):
+            fetcher = _make_release_fetcher("2026.11.14", valid_tar)
+            res = json.loads(
+                updater.execute_scorched_earth(
+                    self.overlay_root,
+                    fetcher=fetcher,
+                    bundled_version_hint="2026.10.26",
+                )
+            )
+            self.assertEqual(res["status"], "error")
+            self.assertIn("issuer", res["message"].lower())
+
+        with self.subTest("reject_wrong_signing_key"):
+            fetcher = _make_release_fetcher("2026.11.14", valid_tar, signing_key=_OTHER_PGP_KEY)
+            res = json.loads(
+                updater.execute_scorched_earth(
+                    self.overlay_root,
+                    fetcher=fetcher,
+                    bundled_version_hint="2026.10.26",
+                    pinned_keys=_TEST_PINNED_KEYS,
+                )
+            )
+            self.assertEqual(res["status"], "error")
+
+        with self.subTest("reject_tampered_sums_against_valid_sig"):
+            tampered_sums = sums_lf.replace(b"yt-dlp.tar.gz", b"yt-evil.tar.gz")
+            fetcher = _make_release_fetcher("2026.11.14", valid_tar, override_sums_bytes=tampered_sums)
+            res = json.loads(
+                updater.execute_scorched_earth(
+                    self.overlay_root,
+                    fetcher=fetcher,
+                    bundled_version_hint="2026.10.26",
+                    pinned_keys=_TEST_PINNED_KEYS,
+                )
+            )
+            self.assertEqual(res["status"], "error")
+
+        with self.subTest("reject_bit_flipped_sig"):
+            raw_sig = bytearray(_sign_openpgp_v4_rsa(sums_lf, _TEST_PGP_KEY))
+            raw_sig[-10] ^= 0x55
+            fetcher = _make_release_fetcher("2026.11.14", valid_tar, override_sig_bytes=bytes(raw_sig))
+            res = json.loads(
+                updater.execute_scorched_earth(
+                    self.overlay_root,
+                    fetcher=fetcher,
+                    bundled_version_hint="2026.10.26",
+                    pinned_keys=_TEST_PINNED_KEYS,
+                )
+            )
+            self.assertEqual(res["status"], "error")
+
+        with self.subTest("reject_unknown_critical_subpacket"):
+            fetcher = _make_release_fetcher("2026.11.14", valid_tar, critical_unknown=True)
+            res = json.loads(
+                updater.execute_scorched_earth(
+                    self.overlay_root,
+                    fetcher=fetcher,
+                    bundled_version_hint="2026.10.26",
+                    pinned_keys=_TEST_PINNED_KEYS,
+                )
+            )
+            self.assertEqual(res["status"], "error")
+            self.assertIn("critical", res["message"].lower())
+
+        with self.subTest("reject_armored_bad_crc24"):
+            fetcher = _make_release_fetcher("2026.11.14", valid_tar, armor=True, bad_crc=True)
+            res = json.loads(
+                updater.execute_scorched_earth(
+                    self.overlay_root,
+                    fetcher=fetcher,
+                    bundled_version_hint="2026.10.26",
+                    pinned_keys=_TEST_PINNED_KEYS,
+                )
+            )
+            self.assertEqual(res["status"], "error")
+            self.assertIn("CRC24", res["message"])
+
+        with self.subTest("accept_sha256_armored_canonical_text_and_kid_fallback"):
+            matched_sha256 = updater.verify_openpgp_rsa_detached(
+                sums_lf,
+                _sign_openpgp_v4_rsa(sums_lf, _TEST_PGP_KEY, hash_algo=8),
+                pinned_keys=_TEST_PINNED_KEYS,
+            )
+            self.assertEqual(matched_sha256["fingerprint"], _TEST_PGP_KEY["fingerprint"])
+
+            matched_text = updater.verify_openpgp_rsa_detached(
+                sums_lf,
+                _sign_openpgp_v4_rsa(sums_crlf, _TEST_PGP_KEY, sigtype=0x01),
+                pinned_keys=_TEST_PINNED_KEYS,
+            )
+            self.assertEqual(matched_text["fingerprint"], _TEST_PGP_KEY["fingerprint"])
+
+            matched_kid = updater.verify_openpgp_rsa_detached(
+                sums_lf,
+                _sign_openpgp_v4_rsa(sums_lf, _TEST_PGP_KEY, unhashed_kid_only=True),
+                pinned_keys=_TEST_PINNED_KEYS,
+            )
+            self.assertEqual(matched_kid["key_id"], _TEST_PGP_KEY["key_id"])
+
+            ok_dir = os.path.join(self.tmp_dir.name, "overlay_armored")
+            fetcher = _make_release_fetcher("2026.11.14", valid_tar, hash_algo=8, armor=True)
+            res = json.loads(
+                updater.execute_scorched_earth(
+                    ok_dir,
+                    fetcher=fetcher,
+                    bundled_version_hint="2026.10.26",
+                    pinned_keys=_TEST_PINNED_KEYS,
+                )
+            )
+            self.assertEqual(res["status"], "success", res)
+            self.assertTrue(res["restart_required"])
+
+    def test_17_cross_process_overlay_lock_and_readonly_no_mkdir(self):
+        missing_root = os.path.join(self.tmp_dir.name, "never_created_overlay")
+        st = overlay_bootstrap.get_runtime_status(missing_root)
+        self.assertFalse(st["initialized"])
+        self.assertFalse(os.path.exists(missing_root))
+
+        status_res = json.loads(updater.get_status(missing_root, bundled_version_hint="2026.10.26"))
+        self.assertEqual(status_res["status"], "success")
+        self.assertFalse(os.path.exists(missing_root))
+
+        with overlay_bootstrap.overlay_file_lock(self.overlay_root, create=True):
+            self.assertEqual(overlay_bootstrap._FILE_LOCK_DEPTH, 1)
+            with overlay_bootstrap.overlay_file_lock(self.overlay_root, create=True):
+                self.assertEqual(overlay_bootstrap._FILE_LOCK_DEPTH, 2)
+            self.assertEqual(overlay_bootstrap._FILE_LOCK_DEPTH, 1)
+        self.assertEqual(overlay_bootstrap._FILE_LOCK_DEPTH, 0)
+
+        child_code = (
+            "import sys, time\n"
+            f"sys.path.insert(0, {PYTHON_SRC!r})\n"
+            "from sovereign_yt import overlay_bootstrap\n"
+            f"with overlay_bootstrap.overlay_file_lock({self.overlay_root!r}, create=True):\n"
+            "    sys.stdout.write('LOCKED\\n')\n"
+            "    sys.stdout.flush()\n"
+            "    time.sleep(0.55)\n"
+        )
+        proc = subprocess.Popen(
+            [sys.executable, "-c", child_code],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        try:
+            ready_line = proc.stdout.readline().strip()
+            self.assertEqual(ready_line, "LOCKED")
+            t0 = time.monotonic()
+            with overlay_bootstrap.overlay_file_lock(self.overlay_root, create=True):
+                elapsed = time.monotonic() - t0
+            self.assertGreaterEqual(elapsed, 0.35)
+        finally:
+            _, stderr = proc.communicate(timeout=15)
+        self.assertEqual(proc.returncode, 0, stderr)
+
+    def test_18_quarantine_manifest_cap_and_bootstrap_staging_prune(self):
+        os.makedirs(self.overlay_root, exist_ok=True)
+        manifest_path = os.path.join(self.overlay_root, "active.json")
+        for _ in range(5):
+            with open(manifest_path, "w", encoding="utf-8") as h:
+                h.write("{corrupt")
+            time.sleep(0.02)
+            code = (
+                "import json\n"
+                "from sovereign_yt import overlay_bootstrap\n"
+                f"print(json.dumps(overlay_bootstrap.bootstrap({self.overlay_root!r}, '2026.10.26')))\n"
+            )
+            boot = json.loads(_run_isolated_child(code, self.bundle_imy))
+            self.assertEqual(boot["active_source"], "bundled")
+
+        corrupt_files = [f for f in os.listdir(self.overlay_root) if f.startswith("active.json.corrupt.")]
+        self.assertLessEqual(len(corrupt_files), overlay_bootstrap._MAX_QUARANTINED_MANIFESTS)
+        self.assertGreaterEqual(len(corrupt_files), 1)
+
+        orphan_stage = os.path.join(self.overlay_root, "staging", "orphan-tx")
+        os.makedirs(orphan_stage, exist_ok=True)
+        with open(os.path.join(orphan_stage, "leftover.bin"), "wb") as h:
+            h.write(b"stale")
+
+        _run_isolated_child(
+            f"from sovereign_yt import overlay_bootstrap; overlay_bootstrap.bootstrap({self.overlay_root!r}, '2026.10.26')",
+            self.bundle_imy,
+        )
+        self.assertFalse(os.path.exists(orphan_stage))
+
+        recovery_manifest = overlay_bootstrap.default_manifest("2026.10.26")
+        recovery_manifest["recovery_required"] = True
+        recovery_manifest["transaction"]["state"] = "recovery_required"
+        overlay_bootstrap.atomic_write_json(manifest_path, recovery_manifest)
+
+        recovery_stage = os.path.join(self.overlay_root, "staging", "recovery-evidence")
+        os.makedirs(recovery_stage, exist_ok=True)
+        with open(os.path.join(recovery_stage, "part.bin"), "wb") as h:
+            h.write(b"keep")
+
+        _run_isolated_child(
+            f"from sovereign_yt import overlay_bootstrap; overlay_bootstrap.bootstrap({self.overlay_root!r}, '2026.10.26')",
+            self.bundle_imy,
+        )
+        self.assertTrue(os.path.exists(os.path.join(recovery_stage, "part.bin")))
 
 
 if __name__ == "__main__":

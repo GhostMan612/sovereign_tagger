@@ -8,9 +8,104 @@ import io
 import json
 import os
 import shutil
+import struct
 import tarfile
 
 from sovereign_yt import overlay_bootstrap, updater
+
+
+def _is_probable_prime(n):
+    if n < 2:
+        return False
+    for small in (2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37):
+        if n == small:
+            return True
+        if n % small == 0:
+            return False
+    d = n - 1
+    s = 0
+    while d % 2 == 0:
+        d //= 2
+        s += 1
+    for a in (2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47, 53):
+        x = pow(a, d, n)
+        if x == 1 or x == n - 1:
+            continue
+        for _ in range(s - 1):
+            x = (x * x) % n
+            if x == n - 1:
+                break
+        else:
+            return False
+    return True
+
+
+def _encode_mpi(val):
+    bits = val.bit_length()
+    raw = val.to_bytes((bits + 7) // 8, "big")
+    return struct.pack(">H", bits) + raw
+
+
+def _make_fixture_rsa_key(seed_tag=9, label="acceptance-fixture-rsa"):
+    e = 65537
+    p = ((1 << 512) + 0x10001 * seed_tag) | 1
+    while not (_is_probable_prime(p) and (p - 1) % e != 0):
+        p += 2
+    q = ((1 << 512) + 0x20003 * seed_tag + 0x9999) | 1
+    while not (q != p and _is_probable_prime(q) and (q - 1) % e != 0):
+        q += 2
+    n = p * q
+    phi = (p - 1) * (q - 1)
+    d = pow(e, -1, phi)
+    pub_body = b"\x04" + struct.pack(">I", 1700000000 + seed_tag) + b"\x01" + _encode_mpi(n) + _encode_mpi(e)
+    fpr_bytes = hashlib.sha1(b"\x99" + struct.pack(">H", len(pub_body)) + pub_body).digest()
+    return {
+        "label": label,
+        "fingerprint": fpr_bytes.hex().upper(),
+        "key_id": fpr_bytes[-8:].hex().upper(),
+        "e": e,
+        "n": n,
+        "d": d,
+    }
+
+
+def _subpkt(sub_type, val):
+    return bytes([1 + len(val), sub_type]) + val
+
+
+def _sign_openpgp_v4_rsa(data_bytes, full_key):
+    hashed_blob = b"".join(
+        [
+            _subpkt(2, struct.pack(">I", 1730000000)),
+            _subpkt(33, b"\x04" + bytes.fromhex(full_key["fingerprint"])),
+            _subpkt(16, bytes.fromhex(full_key["key_id"])),
+        ]
+    )
+    header = bytes([4, 0x00, 1, 10]) + struct.pack(">H", len(hashed_blob)) + hashed_blob
+    hash_fn, der_prefix = updater._PGP_DIGEST_INFOS[10]
+    hasher = hash_fn()
+    hasher.update(data_bytes)
+    hasher.update(header)
+    hasher.update(b"\x04\xff" + struct.pack(">I", len(header)))
+    digest = hasher.digest()
+    k_bytes = (full_key["n"].bit_length() + 7) // 8
+    t_bytes = der_prefix + digest
+    em = b"\x00\x01" + (b"\xff" * (k_bytes - len(t_bytes) - 3)) + b"\x00" + t_bytes
+    sig_int = pow(int.from_bytes(em, "big"), full_key["d"], full_key["n"])
+    body = header + struct.pack(">H", 0) + digest[:2] + _encode_mpi(sig_int)
+    pkt_len = len(body)
+    if pkt_len < 192:
+        len_hdr = bytes([pkt_len])
+    elif pkt_len < 8384:
+        adj = pkt_len - 192
+        len_hdr = bytes([192 + (adj >> 8), adj & 0xFF])
+    else:
+        len_hdr = b"\xff" + struct.pack(">I", pkt_len)
+    return b"\xc2" + len_hdr + body
+
+
+_FIXTURE_PGP_KEY = _make_fixture_rsa_key()
+_FIXTURE_PINNED_KEYS = ({k: _FIXTURE_PGP_KEY[k] for k in ("label", "fingerprint", "key_id", "e", "n")},)
 
 
 def _add_tar_bytes(tf, arcname, raw_bytes):
@@ -60,6 +155,7 @@ def stage_synthetic_release(overlay_root, version, bundled_version_hint, broken_
     digest = hashlib.sha256(tar_bytes).hexdigest()
     archive_url = f"https://github.com/yt-dlp/yt-dlp/releases/download/{version}/yt-dlp.tar.gz"
     sums_url = f"https://github.com/yt-dlp/yt-dlp/releases/download/{version}/SHA2-256SUMS"
+    sig_url = f"https://github.com/yt-dlp/yt-dlp/releases/download/{version}/SHA2-256SUMS.sig"
     release_doc = json.dumps(
         {
             "tag_name": version,
@@ -68,14 +164,18 @@ def stage_synthetic_release(overlay_root, version, bundled_version_hint, broken_
             "assets": [
                 {"name": "yt-dlp.tar.gz", "browser_download_url": archive_url},
                 {"name": "SHA2-256SUMS", "browser_download_url": sums_url},
+                {"name": "SHA2-256SUMS.sig", "browser_download_url": sig_url},
             ],
         }
     ).encode("utf-8")
     sums_bytes = f"{digest}  yt-dlp.tar.gz\n".encode("utf-8")
+    sig_bytes = _sign_openpgp_v4_rsa(sums_bytes, _FIXTURE_PGP_KEY)
 
     def fetcher(url, _max_bytes):
         if url == updater.GITHUB_LATEST_RELEASE_URL:
             return release_doc
+        if url == sig_url:
+            return sig_bytes
         if url == sums_url:
             return sums_bytes
         if url == archive_url:
@@ -86,7 +186,26 @@ def stage_synthetic_release(overlay_root, version, bundled_version_hint, broken_
         overlay_root=overlay_root,
         fetcher=fetcher,
         bundled_version_hint=bundled_version_hint,
+        pinned_keys=_FIXTURE_PINNED_KEYS,
     )
+
+
+def stage_live_github_release(overlay_root):
+    saved_state = overlay_bootstrap._RUNTIME_STATE
+    try:
+        overlay_bootstrap._RUNTIME_STATE = {
+            "initialized": True,
+            "overlay_root": os.path.realpath(os.path.abspath(overlay_root)),
+            "bundled_version": "2026.01.01",
+            "active_source": "bundled",
+            "active_version": "2026.01.01",
+        }
+        return updater.execute_scorched_earth(
+            overlay_root=overlay_root,
+            bundled_version_hint="2026.01.01",
+        )
+    finally:
+        overlay_bootstrap._RUNTIME_STATE = saved_state
 
 
 def execute_full_stack_check(overlay_root, bundled_version_hint):

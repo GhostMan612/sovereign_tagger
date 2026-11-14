@@ -66,7 +66,11 @@ class UpdaterAcceptanceTest {
             ?: device.findObject(By.descContains(textSubstring))
     }
 
-    private fun waitForSettingsScrollAndFind(device: UiDevice, textSubstring: String): UiObject2 {
+    private fun waitForSettingsScrollAndFind(
+        device: UiDevice,
+        textSubstring: String,
+        timeoutMs: Long = 8000L,
+    ): UiObject2 {
         val start = System.currentTimeMillis()
         while (System.currentTimeMillis() - start < 4000) {
             findByTextOrDesc(device, textSubstring)?.let { return it }
@@ -85,7 +89,7 @@ class UpdaterAcceptanceTest {
                 findByTextOrDesc(device, textSubstring)?.let { return it }
             }
         }
-        val deadline = System.currentTimeMillis() + 8000
+        val deadline = System.currentTimeMillis() + timeoutMs
         while (System.currentTimeMillis() < deadline) {
             findByTextOrDesc(device, textSubstring)?.let { return it }
             Thread.sleep(250)
@@ -217,6 +221,69 @@ class UpdaterAcceptanceTest {
             val device = UiDevice.getInstance(InstrumentationRegistry.getInstrumentation())
             waitForSettingsScrollAndFind(device, "BUNDLED YT-DLP: $bundledVersion")
             waitForSettingsScrollAndFind(device, "ACTIVE YT-DLP: $bundledVersion (BUNDLED)")
+        }
+    }
+
+    @Test
+    fun phase5_liveGitHubAuthenticityAndOverlayStage() {
+        val ctx = targetContext()
+        PythonRuntime.overlayRootDir(ctx).deleteRecursively()
+
+        val py = PythonRuntime.ensureInitialized(ctx)
+        val fixture = installFixtureModule(py)
+        val overlayRoot = overlayRootPath()
+
+        CoreUpdaterBridge.configureForInstrumentation(
+            callback = { _, _, fullStack ->
+                if (fullStack) {
+                    fixture.callAttr("execute_full_stack_check", overlayRoot, bundledVersion).toString()
+                } else {
+                    fixture.callAttr("stage_live_github_release", overlayRoot).toString()
+                }
+            }
+        )
+
+        ActivityScenario.launch(MainActivity::class.java).use {
+            val device = UiDevice.getInstance(InstrumentationRegistry.getInstrumentation())
+            waitForSettingsScrollAndFind(device, "BUNDLED YT-DLP: $bundledVersion")
+            waitForSettingsScrollAndFind(device, "ACTIVE YT-DLP: $bundledVersion (BUNDLED)")
+            val btn = waitForSettingsScrollAndFind(device, "CHECK FOR YT-DLP UPDATE")
+            btn.click()
+
+            waitForSettingsScrollAndFind(device, "PENDING OVERLAY:", timeoutMs = 90000L)
+            waitForSettingsScrollAndFind(device, "ACTIVE YT-DLP: $bundledVersion (BUNDLED)")
+        }
+
+        val postStageInfo = JSONObject(fixture.callAttr("inspect_live_ytdlp", overlayRoot).toString())
+        assertEquals(bundledVersion, postStageInfo.getString("version"))
+        assertFalse(postStageInfo.getBoolean("inside_overlay_slots"))
+        val rtState = postStageInfo.getJSONObject("runtime_state")
+        assertTrue(rtState.getBoolean("restart_required"))
+        assertTrue(rtState.optString("pending_version", "").isNotBlank())
+    }
+
+    @Test
+    fun phase6_liveGitHubOverlayActivatesAfterRestart() {
+        val ctx = targetContext()
+        val py = PythonRuntime.ensureInitialized(ctx)
+        val fixture = installFixtureModule(py)
+        val overlayRoot = overlayRootPath()
+
+        val liveInfo = JSONObject(fixture.callAttr("inspect_live_ytdlp", overlayRoot).toString())
+        val liveVer = liveInfo.getString("version")
+        assertTrue(liveVer.isNotBlank())
+        assertTrue(liveInfo.getBoolean("inside_overlay_slots"))
+        assertTrue(liveInfo.getString("file").contains("sovereign_py_overlay"))
+        val rtState = liveInfo.getJSONObject("runtime_state")
+        assertEquals("overlay", rtState.getString("active_source"))
+        assertEquals(liveVer, rtState.getString("active_version"))
+        assertFalse(rtState.getBoolean("restart_required"))
+        assertFalse(rtState.getBoolean("rolled_back"))
+
+        ActivityScenario.launch(MainActivity::class.java).use {
+            val device = UiDevice.getInstance(InstrumentationRegistry.getInstrumentation())
+            waitForSettingsScrollAndFind(device, "BUNDLED YT-DLP: $bundledVersion")
+            waitForSettingsScrollAndFind(device, "ACTIVE YT-DLP: $liveVer (OVERLAY)")
         }
     }
 }
