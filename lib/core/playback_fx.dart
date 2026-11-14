@@ -9,24 +9,21 @@ import 'package:flutter/services.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'eq_mapper.dart';
+import 'eq15_contract.dart';
 
 class PlaybackFx {
-  static final AndroidEqualizer equalizer = AndroidEqualizer();
-  static final AndroidLoudnessEnhancer loudness = AndroidLoudnessEnhancer();
-
   static final ValueNotifier<List<double>> eqGains = ValueNotifier<List<double>>(List<double>.filled(15, 0.0));
   static final ValueNotifier<bool> eqEnabled = ValueNotifier<bool>(false);
   static final ValueNotifier<List<double>> deviceBands = ValueNotifier<List<double>>(const []);
+  static final ValueNotifier<String> eqBackend = ValueNotifier<String>('pending');
   static final ValueNotifier<String> replayGainMode = ValueNotifier<String>('track');
   static final ValueNotifier<double> replayGainPreamp = ValueNotifier<double>(0.0);
   static final ValueNotifier<double> fadeSeconds = ValueNotifier<double>(0.0);
 
   static const MethodChannel _fxChannel = MethodChannel('com.sovereign.tagger/audio_fx');
-  static double _minDb = -15.0;
-  static double _maxDb = 15.0;
   static int _attachedSessionId = 0;
+  static String _attachedBackend = 'pending';
   static AudioPlayer? _player;
-  static AndroidEqualizerParameters? _params;
   static double _rgVolume = 1.0;
   static double _rgBoostDb = 0.0;
   static double _fadeFactor = 1.0;
@@ -42,8 +39,8 @@ class PlaybackFx {
     try {
       final prefs = await SharedPreferences.getInstance();
       final gains = List<double>.generate(15, (i) => prefs.getDouble('eq15_band_$i') ?? 0.0);
-      eqGains.value = gains;
-      eqEnabled.value = prefs.getBool('eq_enabled') ?? gains.any((g) => g != 0);
+      eqGains.value = Eq15Contract.validateGains(gains);
+      eqEnabled.value = prefs.getBool('eq_enabled') ?? eqGains.value.any((g) => g != 0);
       replayGainMode.value = prefs.getString('rg_mode') ?? 'track';
       replayGainPreamp.value = prefs.getDouble('rg_preamp') ?? 0.0;
       fadeSeconds.value = prefs.getDouble('crossfade_duration') ?? 0.0;
@@ -62,86 +59,109 @@ class PlaybackFx {
     });
     player.androidAudioSessionIdStream.listen((sid) {
       if (sid != null && sid > 0 && sid != _attachedSessionId) {
-        unawaited(_attachNativeSession(sid));
+        unawaited(attachSession(sid));
       }
     });
     final initialSid = player.androidAudioSessionId;
     if (initialSid != null && initialSid > 0) {
-      unawaited(_attachNativeSession(initialSid));
+      unawaited(attachSession(initialSid));
     }
   }
 
-  static Future<void> _attachNativeSession(int sessionId) async {
+  static Future<void> attachSession(int sessionId) async {
     try {
-      final res = await _fxChannel.invokeMethod<Map<Object?, Object?>>('attachSession', {'sessionId': sessionId});
-      if (res == null) return;
+      final raw = await _fxChannel.invokeMethod<Map<Object?, Object?>>(
+        'attachSession', {'sessionId': sessionId},
+      );
+      final capability = Eq15Contract.parseCapabilities(raw);
       _attachedSessionId = sessionId;
-      final rawBands = (res['bands'] as List?) ?? const [];
-      deviceBands.value = rawBands.map((e) => (e as num).toDouble()).toList();
-      _minDb = (res['minDb'] as num?)?.toDouble() ?? -15.0;
-      _maxDb = (res['maxDb'] as num?)?.toDouble() ?? 15.0;
-      debugPrint('SOVEREIGN FX: attached audioSessionId=$sessionId (${deviceBands.value.length} bands)');
-      if (_params != null) unawaited(_activateEq());
-      await applyEq();
+      _attachedBackend = capability.backend;
+      eqBackend.value = capability.backend;
+      deviceBands.value = capability.bandsHz;
+      debugPrint('SOVEREIGN FX: session=$sessionId backend=${capability.backend} bands=${capability.bandsHz.length}');
+      if (capability.available) await applyEq();
       await _applyBoost();
     } catch (e) {
-      debugPrint('SOVEREIGN FX: attachSession UNAVAILABLE ($e)');
+      _attachedBackend = 'unavailable';
+      eqBackend.value = 'unavailable';
+      deviceBands.value = const [];
+      debugPrint('SOVEREIGN FX: attachSession unavailable ($e); playback continues dry');
     }
   }
 
-  static Future<void> _activateEq() async {
+  static Future<bool> applyEq({List<double>? gains}) async {
     try {
-      _params = await equalizer.parameters;
-      deviceBands.value = _params!.bands.map((b) => b.centerFrequency).toList();
-      debugPrint('SOVEREIGN FX: device EQ has ${_params!.bands.length} bands');
-      if (_params != null) unawaited(_activateEq());
-      await applyEq();
-    } catch (e) {
-      debugPrint('SOVEREIGN FX: device EQ UNAVAILABLE ($e) - EQ stays off, playback must not be muted');
-    }
-  }
-
-  static Future<void> applyEq() async {
-    try {
+      final snapshot = Eq15Contract.validateGains(gains ?? eqGains.value);
       if (_attachedSessionId <= 0) {
         final sid = _player?.androidAudioSessionId;
         if (sid != null && sid > 0) {
-          await _attachNativeSession(sid);
-          return;
+          await attachSession(sid);
+          if (gains == null) {
+            return _attachedBackend == 'dynamics15' || _attachedBackend == 'legacy';
+          }
         }
       }
-      final bands = deviceBands.value;
-      final nativeMapped = (eqEnabled.value && bands.isNotEmpty)
-          ? EqMapper.mapToDevice(eqGains.value, bands, _minDb, _maxDb)
-          : const <double>[];
-      await _fxChannel.invokeMethod('applyEq', {
+      if (_attachedBackend == 'unavailable' || _attachedBackend == 'pending') return false;
+      final applied = await _fxChannel.invokeMethod<bool>('applyEq', {
         'enabled': eqEnabled.value,
-        'gainsDb': nativeMapped,
+        'gainsDb': snapshot,
       });
-      if (_params == null) return;
-      await equalizer.setEnabled(eqEnabled.value);
-      final params = _params;
-      if (params == null || !eqEnabled.value) return;
-      final minDb = params.minDecibels;
-      final maxDb = params.maxDecibels;
-      final mapped = EqMapper.mapToDevice(eqGains.value, params.bands.map((b) => b.centerFrequency).toList(), minDb, maxDb);
-      for (var i = 0; i < params.bands.length; i++) {
-        await params.bands[i].setGain(mapped[i]);
+      if (applied != true) {
+        eqBackend.value = 'error';
+        debugPrint('SOVEREIGN FX: native EQ rejected update');
+        return false;
       }
+      eqBackend.value = _attachedBackend;
+      return true;
     } catch (e) {
-      debugPrint('SOVEREIGN FX: applyEq FAILED ($e)');
+      eqBackend.value = 'error';
+      debugPrint('SOVEREIGN FX: applyEq FAILED ($e); playback remains available');
+      return false;
     }
   }
 
-  static Future<void> setEqGains(List<double> gains, {bool persist = false}) async {
-    eqGains.value = List<double>.from(gains);
-    await applyEq();
+  static Future<EqReadback> readEq() async {
+    try {
+      final raw = await _fxChannel.invokeMethod<Map<Object?, Object?>>('readEq');
+      return Eq15Contract.parseReadback(raw);
+    } catch (e) {
+      debugPrint('SOVEREIGN FX: readEq FAILED ($e)');
+      return const EqReadback('unavailable', false, []);
+    }
+  }
+
+  static Future<bool> setEqGains(List<double> gains, {bool persist = false}) async {
+    final snapshot = Eq15Contract.validateGains(gains);
+    eqGains.value = snapshot;
+    final applied = await applyEq(gains: snapshot);
     if (persist) {
       final prefs = await SharedPreferences.getInstance();
-      for (var i = 0; i < 15; i++) {
-        await prefs.setDouble('eq15_band_$i', gains[i]);
+      final previous = List<double?>.generate(15, (i) => prefs.getDouble('eq15_band_$i'));
+      try {
+        for (var i = 0; i < 15; i++) {
+          if (!await prefs.setDouble('eq15_band_$i', snapshot[i])) {
+            throw StateError('Preference write rejected for EQ band $i');
+          }
+        }
+      } catch (error) {
+        var restored = true;
+        for (var i = 0; i < 15; i++) {
+          try {
+            final value = previous[i];
+            final ok = value == null
+                ? await prefs.remove('eq15_band_$i')
+                : await prefs.setDouble('eq15_band_$i', value);
+            if (!ok) restored = false;
+          } catch (_) {
+            restored = false;
+          }
+        }
+        throw StateError(restored
+            ? 'EQ preference write failed; previous preset restored. Retry Save. ($error)'
+            : 'EQ preference write failed; restoring previous preferences also failed. Retry Save. ($error)');
       }
     }
+    return applied;
   }
 
   static Future<void> setEqEnabled(bool enabled) async {
@@ -201,13 +221,6 @@ class PlaybackFx {
           'enabled': _rgBoostDb > 0.05,
           'boostDb': _rgBoostDb,
         });
-      }
-      if (_params == null) return;
-      if (_rgBoostDb > 0.05) {
-        await loudness.setTargetGain(_rgBoostDb);
-        await loudness.setEnabled(true);
-      } else {
-        await loudness.setEnabled(false);
       }
     } catch (e) {
       debugPrint('SOVEREIGN FX: replaygain boost FAILED ($e)');
