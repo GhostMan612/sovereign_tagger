@@ -154,7 +154,7 @@ class _EqPresetsScreenState extends State<EqPresetsScreen> {
                         children: [
                           Icon(Icons.tune, color: Colors.purpleAccent, size: 18),
                           SizedBox(width: 8),
-                          Expanded(child: Text("AUTOEQ RACK — ±12dB, Q=1.2", style: TextStyle(fontFamily: 'ShareTechMono', fontWeight: FontWeight.bold, color: Colors.purpleAccent))),
+                          Expanded(child: Text("15-BAND PLAYBACK DSP — ±12dB", style: TextStyle(fontFamily: 'ShareTechMono', fontWeight: FontWeight.bold, color: Colors.purpleAccent))),
                         ],
                       ),
                     ),
@@ -163,13 +163,16 @@ class _EqPresetsScreenState extends State<EqPresetsScreen> {
                       builder: (context, enabled, _) => SwitchListTile(
                         dense: true,
                         title: Text(enabled ? "EQ ACTIVE ON PLAYBACK" : "EQ BYPASSED", style: TextStyle(fontFamily: 'ShareTechMono', fontWeight: FontWeight.bold, color: enabled ? Colors.purpleAccent : Colors.white54)),
-                        subtitle: ValueListenableBuilder<List<double>>(
-                          valueListenable: PlaybackFx.deviceBands,
-                          builder: (context, bands, _) => Text(
-                            bands.isEmpty
-                                ? "Device EQ attaches when playback starts."
-                                : "Curve mapped onto this phone's ${bands.length}-band EQ (${bands.map((f) => f >= 1000 ? '${(f / 1000).toStringAsFixed(1)}k' : f.round().toString()).join(' / ')} Hz).",
-                            style: const TextStyle(fontFamily: 'ShareTechMono', fontSize: 10, color: Colors.white38),
+                        subtitle: ValueListenableBuilder<String>(
+                          valueListenable: PlaybackFx.eqBackend,
+                          builder: (context, backend, _) => Text(
+                            switch (backend) {
+                              'dynamics15' => 'INDEPENDENT 15-BAND DSP ATTACHED — EACH BAND IS APPLIED DIRECTLY.',
+                              'legacy' => 'COMPATIBILITY MODE — 15 SLIDERS MAPPED TO THE PHONE\'S FIXED-BAND EQ.',
+                              'unavailable' => 'EQ ENGINE UNAVAILABLE — AUDIO PLAYS WITHOUT EQ.',
+                              _ => 'EQ ENGINE ATTACHES WHEN PLAYBACK STARTS.',
+                            },
+                            style: const TextStyle(fontFamily: 'ShareTechMono', fontSize: 10, color: Colors.white54),
                           ),
                         ),
                         activeThumbColor: Colors.purpleAccent,
