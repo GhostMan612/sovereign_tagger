@@ -21,6 +21,7 @@ if (localPropertiesFile.exists()) {
 
 def flutterVersionCode = localProperties.getProperty("flutter.versionCode") ?: "1"
 def flutterVersionName = localProperties.getProperty("flutter.versionName") ?: "1.0"
+def updaterAcceptanceTest = project.findProperty("updaterAcceptanceTest") == "true"
 
 def releaseKeystorePath = System.getenv("SOVEREIGN_KEYSTORE") ?: localProperties.getProperty("sovereign.keystore")
 def releaseStorePassword = System.getenv("SOVEREIGN_STORE_PASSWORD") ?: localProperties.getProperty("sovereign.storePassword")
@@ -88,6 +89,7 @@ android {
         targetSdk = flutter.targetSdkVersion
         versionCode = flutterVersionCode.toInteger()
         versionName = flutterVersionName
+        testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
 
         buildConfigField "String", "SOURCE_SHA", "\"${sovereignSourceSha}\""
         buildConfigField "boolean", "SOURCE_DIRTY", "${sovereignSourceDirty}"
@@ -134,6 +136,14 @@ android {
     }
 
     buildTypes {
+        if (updaterAcceptanceTest) {
+            create("updaterAcceptance") {
+                initWith debug
+                debuggable true
+                applicationIdSuffix ".updateracceptance"
+                matchingFallbacks = ["debug"]
+            }
+        }
         release {
             signingConfig = releaseSigningReady ? signingConfigs.release : null
             // R8 runs on release (it does NOT run on debug), so without these rules
@@ -153,6 +163,30 @@ android {
             // shrinking off is negligible here (the APK is ~487MB, dominated by
             // FFmpeg + Python + the 141MB Whisper model, not by resources).
             shrinkResources false
+        }
+    }
+
+    if (updaterAcceptanceTest) {
+        project.configurations.matching { it.name.startsWith("updaterAcceptance") }.configureEach {
+            resolutionStrategy.eachDependency { details ->
+                if (details.requested.group == "io.flutter" && details.requested.name.endsWith("_release")) {
+                    def debugArtifact = details.requested.name.replaceFirst(/_release$/, "_debug")
+                    details.useTarget("${details.requested.group}:${debugArtifact}:${details.requested.version}")
+                    details.because("updaterAcceptance packages debuggable JIT assets and requires debug Flutter engine")
+                }
+            }
+        }
+    }
+
+    testBuildType(updaterAcceptanceTest ? "updaterAcceptance" : "debug")
+
+    sourceSets {
+        debug.kotlin.srcDir "src/production/kotlin"
+        release.kotlin.srcDir "src/production/kotlin"
+        maybeCreate("profile").kotlin.srcDir "src/production/kotlin"
+        if (updaterAcceptanceTest) {
+            androidTest.kotlin.srcDir "src/androidTestUpdaterAcceptance/kotlin"
+            androidTest.assets.srcDir "src/androidTestUpdaterAcceptance/assets"
         }
     }
 
@@ -276,4 +310,8 @@ dependencies {
     implementation 'net.jthink:jaudiotagger:3.0.1'
     implementation 'com.google.ai.edge.litert:litert:1.4.0'
     testImplementation 'junit:junit:4.13.2'
+    androidTestImplementation 'androidx.test:runner:1.6.2'
+    androidTestImplementation 'androidx.test:core:1.6.1'
+    androidTestImplementation 'androidx.test.ext:junit:1.2.1'
+    androidTestImplementation 'androidx.test.uiautomator:uiautomator:2.3.0'
 }

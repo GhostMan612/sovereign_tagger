@@ -1,7 +1,12 @@
 # ROADMAP.md — Sovereign Tagger v2 \"Industrial Grade\"
 > Status legend: [ ] pending · [~] in progress · [x] done (gate passed) · [-] skipped/parked
 
-## PR #86 — Independent 15-band DSP review readiness [~] (2026-11-14)
+## PR #87 — Transactional updater rollback & isolated device acceptance [x] (post-gating CI & device verified, 2026-11-14)
+
+- [x] Preserve backup, staging, and journal when rollback restore/verification fails in `updater.py`, surface `recovery_required` through `execute_full_scorched_earth()` and `SettingsScreen` (`updateCore` + `updateFullStack`), gate `updaterAcceptance` behind `-PupdaterAcceptanceTest=true` (`80d8546`), and pass host gates (`37/37` Python tests w/ `24` updater tests, `15/15` updater stress runs, `flutter analyze`, `213/213` Flutter tests w/ `7` Settings tests, `flutter build apk --debug --target-platform android-arm64`, `:app:testDebugUnitTest`).
+- [x] Execute clean-provenance post-`80d8546` (`bed4c75a392a09875cf86ecf8be2d94b005d63b8`, `source_dirty: false`, APK SHA-256 `cc0bf571...`) isolated Moto G (`ZT4222BMWN`) UIAutomator acceptance (`failure` -> `am force-stop` -> `restart`, `all`, unconfigured fail-closed bridge, `com.sovereigntagger` unchanged) and record evidence & fixture/pip/release limitations in `docs/transactional-updater-acceptance.md`. (Push & GitHub Actions CI checks linked on PR #87; PR remains open/unmerged pending operator decision.)
+
+## PR #86 — Independent 15-band DSP review readiness [x] (merged at `f48b865`, 2026-11-14)
 
 - [x] Recheck GitHub head `825978e027263b138613bc4dadd97452b1fafaec`: Dart run `43577428020` and Android native run `43577428018` passed, including ARM64/x64 debug builds and JVM EQ tests.
 - [x] Reconcile PR description with committed Moto G acceptance and local-debug APK provenance, including live-slider Save/Discard re-smoke at source commit `152a5e5`.
