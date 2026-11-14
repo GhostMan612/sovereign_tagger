@@ -14,6 +14,7 @@ class FFmpegExecutor {
   static bool get isBusy => _busy;
   static FFmpegSession? _currentSession;
   static String? _currentDescription;
+  static String? _preparingDescription;
   static final Set<String> _canceledDescriptions = <String>{};
   static Future<void> Function()? beforeExecuteHook;
 
@@ -32,6 +33,12 @@ class FFmpegExecutor {
 
   static void cancelCurrent({String? description}) {
     if (description != null) {
+      final inQueue = _queue.any((job) => job.description == description);
+      if (description != _preparingDescription &&
+          description != _currentDescription &&
+          !inQueue) {
+        return;
+      }
       _canceledDescriptions.add(description);
       if (_currentDescription == description) {
         _currentSession?.cancel();
@@ -45,6 +52,7 @@ class FFmpegExecutor {
     if (_busy || _queue.isEmpty) return;
     _busy = true;
     final job = _queue.removeFirst();
+    _preparingDescription = job.description;
     try {
       if (job.description != null && _canceledDescriptions.remove(job.description)) {
         if (!job.completer.isCompleted) {
@@ -62,10 +70,11 @@ class FFmpegExecutor {
       }
       if (job.description != null && _canceledDescriptions.remove(job.description)) {
         if (!job.completer.isCompleted) {
-          job.completer.completeError(StateError('FFmpeg task canceled'));
+          job.completer.completeError(StateError('FFmpeg task canceled before session creation'));
         }
         return;
       }
+      _preparingDescription = null;
       final session = FFmpegSession.create(job.command);
       _currentSession = session;
       _currentDescription = job.description;
@@ -101,6 +110,8 @@ class FFmpegExecutor {
     } catch (e) {
       if (!job.completer.isCompleted) job.completer.completeError(e);
     } finally {
+      if (_preparingDescription == job.description) _preparingDescription = null;
+      if (job.description != null) _canceledDescriptions.remove(job.description);
       _busy = false;
       if (_queue.isNotEmpty) unawaited(_drain());
     }

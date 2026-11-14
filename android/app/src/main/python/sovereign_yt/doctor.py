@@ -52,7 +52,7 @@ PATCH_REGISTRY = {
         "signature": ["ExtractorError", "Unsupported URL", "Unable to extract", "yt-dlp.*outdated"],
         "field": "yt-dlp version",
         "current": ["yt-dlp 2026.10.26 (build-time pin, see docs/python-pins.md)"],
-        "hotfix": ["execute_scorched_earth() from updater.py – wipes yt_dlp folder + pulls latest tarball from GitHub"],
+        "hotfix": ["execute_scorched_earth() from updater.py - transactional yt-dlp replace (staged, verified, atomic swap, rollback on failure)"],
         "file": "updater.py",
         "lines": "execute_scorched_earth()"
     },

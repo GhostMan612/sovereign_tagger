@@ -10,6 +10,7 @@ import 'package:ffmpeg_kit_extended_flutter/ffmpeg_kit_extended_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'screens/main_shell.dart';
 import 'core/cloud_settings.dart';
+import 'core/secret_store.dart';
 import 'core/feedback_settings.dart';
 import 'core/sfx.dart';
 import 'core/storage_client.dart';
@@ -142,10 +143,10 @@ class _SplashScreenState extends State<SplashScreen> {
           }
 
           final prefs = await SharedPreferences.getInstance();
-          if (config["genius_key"] != null) await prefs.setString('genius_key', config["genius_key"]);
+          if (config["genius_key"] != null) await SecretStore.write(prefs, 'genius_key', config["genius_key"].toString());
           if (config["acr_host"] != null) await prefs.setString('acr_host', config["acr_host"]);
-          if (config["acr_key"] != null) await prefs.setString('acr_key', config["acr_key"]);
-          if (config["acr_secret"] != null) await prefs.setString('acr_secret', config["acr_secret"]);
+          if (config["acr_key"] != null) await SecretStore.write(prefs, 'acr_key', config["acr_key"].toString());
+          if (config["acr_secret"] != null) await SecretStore.write(prefs, 'acr_secret', config["acr_secret"].toString());
         }
       }
     } catch (e) {

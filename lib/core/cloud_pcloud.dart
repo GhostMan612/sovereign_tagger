@@ -170,6 +170,24 @@ class PCloudProvider implements CloudSource {
     return entries;
   }
 
+  static Uri requireSecureDownloadUri(Uri uri) {
+    final host = uri.host.toLowerCase();
+    if (uri.scheme.toLowerCase() != 'https' ||
+        host.isEmpty ||
+        host == 'localhost' ||
+        host.endsWith('.localhost') ||
+        host.endsWith('.local') ||
+        uri.userInfo.isNotEmpty ||
+        uri.port != 443) {
+      throw const PCloudException('PCLOUD DOWNLOAD REDIRECT WAS NOT A SAFE HTTPS URL.');
+    }
+    final address = InternetAddress.tryParse(host);
+    if (address != null && (address.isLoopback || address.isLinkLocal)) {
+      throw const PCloudException('PCLOUD DOWNLOAD REDIRECT TARGETED A LOCAL NETWORK ADDRESS.');
+    }
+    return uri;
+  }
+
   @override
   Future<Uri?> resolveStreamUri(String fileId) async {
     try {
@@ -178,9 +196,21 @@ class PCloudProvider implements CloudSource {
       final path = decoded['path']?.toString() ?? '';
       if (hosts is! List || hosts.isEmpty || path.isEmpty) return null;
       final host = hosts.first.toString();
-      if (host.isEmpty) return null;
-      return Uri.parse('https://$host$path');
+      if (host.isEmpty || !path.startsWith('/')) return null;
+      final hostUri = Uri.tryParse('https://$host');
+      final filePath = Uri.tryParse(path);
+      if (hostUri == null ||
+          filePath == null ||
+          hostUri.path.isNotEmpty ||
+          hostUri.hasQuery ||
+          filePath.hasScheme ||
+          filePath.hasAuthority) {
+        return null;
+      }
+      return requireSecureDownloadUri(hostUri.resolveUri(filePath));
     } on PCloudException {
+      return null;
+    } on FormatException {
       return null;
     }
   }
@@ -201,7 +231,7 @@ class PCloudProvider implements CloudSource {
     if (part.existsSync()) await part.delete();
     final client = HttpClient()..connectionTimeout = const Duration(seconds: 30);
     try {
-      var current = streamUri;
+      var current = requireSecureDownloadUri(streamUri);
       HttpClientResponse? response;
       for (var hop = 0; hop < 10; hop++) {
         if (isCancelled != null && isCancelled()) {
@@ -218,7 +248,7 @@ class PCloudProvider implements CloudSource {
           if (location == null || location.isEmpty) {
             throw const PCloudException('PCLOUD SENT A DOWNLOAD LINK THAT GOES NOWHERE.');
           }
-          current = current.resolve(location);
+          current = requireSecureDownloadUri(current.resolve(location));
           continue;
         }
         response = resp;

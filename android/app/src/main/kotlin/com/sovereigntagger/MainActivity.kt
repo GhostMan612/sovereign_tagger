@@ -146,6 +146,26 @@ class MainActivity: AudioServiceActivity() {
         super.configureFlutterEngine(flutterEngine)
         val messenger = flutterEngine.dartExecutor.binaryMessenger
 
+        val credentialVault = CredentialVault(applicationContext)
+        MethodChannel(messenger, "com.sovereign.tagger/secrets").setMethodCallHandler { call, result ->
+            val name = call.argument<String>("name") ?: ""
+            when (call.method) {
+                "get" -> runAsync(result, "CREDENTIAL_VAULT") { credentialVault.read(name) }
+                "put" -> {
+                    val value = call.argument<String>("value") ?: ""
+                    runAsync(result, "CREDENTIAL_VAULT") {
+                        credentialVault.write(name, value)
+                        true
+                    }
+                }
+                "delete" -> runAsync(result, "CREDENTIAL_VAULT") {
+                    credentialVault.delete(name)
+                    true
+                }
+                else -> result.notImplemented()
+            }
+        }
+
         EventChannel(messenger, EVENT_CHANNEL).setStreamHandler(
             object : EventChannel.StreamHandler {
                 override fun onListen(arguments: Any?, events: EventChannel.EventSink?) { eventSink = events }

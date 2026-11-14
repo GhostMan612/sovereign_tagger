@@ -26,7 +26,10 @@ The Future Dictates the Past and the Past is Always Present.
         android:name="${applicationName}"
         android:label="Sovereign Tagger"
         android:icon="@mipmap/ic_launcher"
-        android:requestLegacyExternalStorage="true">
+        android:requestLegacyExternalStorage="true"
+        android:allowBackup="false"
+        android:fullBackupContent="@xml/sovereign_backup_rules"
+        android:dataExtractionRules="@xml/sovereign_data_extraction_rules">
 
         <activity
             android:name="com.sovereigntagger.MainActivity"

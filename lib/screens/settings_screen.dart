@@ -10,6 +10,7 @@ import 'package:flutter/material.dart';
 import '../core/tap_feedback.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import '../core/secret_store.dart';
 import '../core/cloud_pcloud.dart';
 import '../core/cloud_settings.dart';
 import '../core/cloud_source.dart';
@@ -90,13 +91,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Future<void> _loadKeys() async {
     final prefs = await SharedPreferences.getInstance();
     await CloudSettings.load(prefs);
+    final geniusKey = await SecretStore.read(prefs, 'genius_key');
+    final acrKey = await SecretStore.read(prefs, 'acr_key');
+    final acrSecret = await SecretStore.read(prefs, 'acr_secret');
+    final hfToken = await SecretStore.read(prefs, 'hf_token');
     if (!mounted) return;
     setState(() {
-      _geniusKeyCtrl.text = prefs.getString('genius_key') ?? "";
+      _geniusKeyCtrl.text = geniusKey;
       _acrHostCtrl.text = prefs.getString('acr_host') ?? "";
-      _acrKeyCtrl.text = prefs.getString('acr_key') ?? "";
-      _acrSecretCtrl.text = prefs.getString('acr_secret') ?? "";
-      _hfTokenCtrl.text = prefs.getString('hf_token') ?? "";
+      _acrKeyCtrl.text = acrKey;
+      _acrSecretCtrl.text = acrSecret;
+      _hfTokenCtrl.text = hfToken;
       _dartSpider = prefs.getBool('dart_spider') ?? false;
       _pcloudClientIdCtrl.text = CloudSettings.clientId;
       _pcloudRootCtrl.text = CloudSettings.rootFolderPath;
@@ -113,17 +118,26 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Future<void> _saveKeys() async {
     TapFeedback.machineTap();
     setState(() => _isSaving = true);
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString('genius_key', _geniusKeyCtrl.text.trim());
-    await prefs.setString('acr_host', _acrHostCtrl.text.trim());
-    await prefs.setString('acr_key', _acrKeyCtrl.text.trim());
-    await prefs.setString('acr_secret', _acrSecretCtrl.text.trim());
-    await prefs.setString('hf_token', _hfTokenCtrl.text.trim());
-    await _savePcloudSettings();
-
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: const Text('> KEYS SECURELY WRITTEN TO KERNEL PREFS.', style: TextStyle(fontFamily: 'ShareTechMono')), backgroundColor: Colors.black, shape: RoundedRectangleBorder(side: BorderSide(color: SovereignState.accentColor.value))));
-    setState(() => _isSaving = false);
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await SecretStore.write(prefs, 'genius_key', _geniusKeyCtrl.text.trim());
+      await prefs.setString('acr_host', _acrHostCtrl.text.trim());
+      await SecretStore.write(prefs, 'acr_key', _acrKeyCtrl.text.trim());
+      await SecretStore.write(prefs, 'acr_secret', _acrSecretCtrl.text.trim());
+      await SecretStore.write(prefs, 'hf_token', _hfTokenCtrl.text.trim());
+      await _savePcloudSettings();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('CREDENTIALS SAVED IN ANDROID KEYSTORE VAULT.')),
+      );
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('CREDENTIAL VAULT ERROR — VERIFY WHICH CREDENTIALS WERE SAVED.')),
+      );
+    } finally {
+      if (mounted) setState(() => _isSaving = false);
+    }
   }
 
   Future<void> _savePcloudSettings() async {
@@ -410,7 +424,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     TapFeedback.machineTap();
     setState(() {
       _isUpdating = true;
-      _updateStatus = "Initiating Scorched Earth Protocol...";
+      _updateStatus = "Initiating transactional yt-dlp update...";
     });
     try {
       final result = await const MethodChannel('com.sovereign.tagger/ytdlp').invokeMethod('updateCore');
@@ -442,6 +456,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
       if (!mounted) return;
       if (data['status'] == 'success') {
         setState(() => _fullStackStatus = data['message'].toString());
+      } else if (data['status'] == 'partial') {
+        final stack = data['python_stack'];
+        final detail = (stack is Map && stack['message'] != null)
+            ? stack['message'].toString()
+            : 'helper packages failed';
+        setState(() => _fullStackStatus = 'PARTIAL: yt-dlp updated; $detail');
       } else {
         setState(() => _fullStackStatus = "ERR: Full Stack Failed: ${data['message']}");
       }
@@ -529,11 +549,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         'version': 1,
         'timestamp': DateTime.now().toIso8601String(),
         'settings': {
-          'genius_key': prefs.getString('genius_key') ?? "",
           'acr_host': prefs.getString('acr_host') ?? "",
-          'acr_key': prefs.getString('acr_key') ?? "",
-          'acr_secret': prefs.getString('acr_secret') ?? "",
-          'hf_token': prefs.getString('hf_token') ?? "",
           'crossfade_duration': prefs.getDouble('crossfade_duration') ?? 0.0,
           'gapless_enabled': prefs.getBool('gapless_enabled') ?? true,
           'accent_color': prefs.getInt('accent_color') ?? 0xFFFF003C,
@@ -630,12 +646,18 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
       final settings = backup['settings'] as Map<String, dynamic>?;
       if (settings != null) {
-        await prefs.setString('genius_key', settings['genius_key'] ?? "");
+        if (settings['genius_key'] != null) {
+          await SecretStore.write(prefs, 'genius_key', settings['genius_key'].toString());
+        }
         await prefs.setString('acr_host', settings['acr_host'] ?? "");
-        await prefs.setString('acr_key', settings['acr_key'] ?? "");
-        await prefs.setString('acr_secret', settings['acr_secret'] ?? "");
+        if (settings['acr_key'] != null) {
+          await SecretStore.write(prefs, 'acr_key', settings['acr_key'].toString());
+        }
+        if (settings['acr_secret'] != null) {
+          await SecretStore.write(prefs, 'acr_secret', settings['acr_secret'].toString());
+        }
         if (settings['hf_token'] != null) {
-          await prefs.setString('hf_token', settings['hf_token'].toString());
+          await SecretStore.write(prefs, 'hf_token', settings['hf_token'].toString());
         }
         await prefs.setDouble('crossfade_duration', settings['crossfade_duration'] ?? 0.0);
         await prefs.setBool('gapless_enabled', settings['gapless_enabled'] ?? true);
@@ -1120,7 +1142,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     TapFeedback.machineTap();
     final token = _hfTokenCtrl.text.trim();
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setString('hf_token', token);
+    await SecretStore.write(prefs, 'hf_token', token);
     if (!mounted) return;
     final ok = ModelLifecycle.instance.state.value.filesReady
         ? !(await ModelLifecycle.instance.verifyLiveInference()).startsWith('ERR')
@@ -1576,8 +1598,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   Widget _buildSettingsField(TextEditingController controller, String label, Color accentColor) {
+    final sensitive = identical(controller, _geniusKeyCtrl) ||
+        identical(controller, _acrKeyCtrl) ||
+        identical(controller, _acrSecretCtrl) ||
+        identical(controller, _hfTokenCtrl);
     return TextField(
-      controller: controller, 
+      controller: controller,
+      obscureText: sensitive,
+      enableSuggestions: !sensitive,
+      autocorrect: !sensitive, 
       style: TextStyle(fontFamily: 'ShareTechMono', color: accentColor),
       decoration: InputDecoration(
         labelText: label,
@@ -1942,7 +1971,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 
                 const Text("> CORE ENGINE MAINTENANCE", style: TextStyle(fontFamily: 'ShareTechMono', fontSize: 16, fontWeight: FontWeight.bold, color: Colors.orangeAccent)),
                 const SizedBox(height: 8),
-                const Text("YT-DLP BREAKS WHEN APIS CHANGE. AGGRESSIVELY WIPE AND PULL THE LATEST MASTER BUILD DIRECTLY FROM GITHUB.", style: TextStyle(fontFamily: 'ShareTechMono', color: Colors.white54, fontSize: 11)),
+                const Text("YT-DLP IS REPLACED TRANSACTIONALLY: THE NEW PACKAGE IS STAGED, STRUCTURALLY VERIFIED AND BYTE-COMPILED, THEN SWAPPED IN WITH A ROLLBACK BACKUP. IF ANYTHING FAILS, THE LIVE PACKAGE IS RESTORED.", style: TextStyle(fontFamily: 'ShareTechMono', color: Colors.white54, fontSize: 11)),
                 const SizedBox(height: 16),
                 OutlinedButton.icon(
                   onPressed: _isUpdating ? null : _updateYtDlp,

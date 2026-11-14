@@ -8,6 +8,7 @@ import 'dart:io';
 import 'package:ffmpeg_kit_extended_flutter/ffmpeg_kit_extended_flutter.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sovereign_tagger/core/ffmpeg_executor.dart';
+import 'package:sovereign_tagger/workbench/pending_import_store.dart';
 import 'package:sovereign_tagger/workbench/workbench_models.dart';
 import 'package:sovereign_tagger/workbench/workbench_queue.dart';
 
@@ -363,6 +364,7 @@ void main() {
 
     test('media store injection failure preserves cache output and reports cache only', () async {
       final queue = WorkbenchQueue();
+      final recoveryRoot = await Directory.systemTemp.createTemp('workbench_pending_case_');
       queue.addJob('/media/track.wav', 'Convert Format');
 
       final summary = await queue.execute(
@@ -371,6 +373,7 @@ void main() {
           return '-y -i input.wav out.wav';
         },
         getTempDirectory: () async => Directory.systemTemp.path,
+        getRecoveryDirectory: () async => recoveryRoot.path,
         ffmpegRunner: (cmd, {onStatistics}) async => (isSuccess: true, returnCode: 0, output: ''),
         mediaStoreInjector: (out, title) async {
           throw Exception('PlatformException: MediaStore failed');
@@ -379,11 +382,92 @@ void main() {
         streamProbe: (p) async => {'audio': 1},
       );
 
-      expect(queue.jobs[0].status, equals(BatchJobStatus.completed));
+      expect(queue.jobs[0].status, equals(BatchJobStatus.pendingImport));
       expect(queue.jobs[0].outputUri, isNotNull);
       expect(File(queue.jobs[0].outputUri!).existsSync(), isTrue);
-      expect(summary, contains('CACHE ONLY'));
-      try { File(queue.jobs[0].outputUri!).deleteSync(); } catch (_) {}
+      expect(summary, contains('PENDING IMPORT'));
+      await recoveryRoot.delete(recursive: true);
+    });
+
+    test('cancelled batch retains durable pending imports for recovery', () async {
+      final queue = WorkbenchQueue();
+      final recoveryRoot =
+          await Directory.systemTemp.createTemp('workbench_pending_cancel_');
+      queue.addJob('/media/track.wav', 'Convert Format');
+      queue.addJob('/media/song.flac', 'Normalize Audio (LUFS -14)');
+      var renders = 0;
+
+      final summary = await queue.execute(
+        commandBuilder: (op, input, out, dur) async {
+          File(out).writeAsStringSync('mock audio');
+          return '-y -i input out';
+        },
+        getTempDirectory: () async => Directory.systemTemp.path,
+        getRecoveryDirectory: () async => recoveryRoot.path,
+        ffmpegRunner: (cmd, {onStatistics}) async {
+          renders++;
+          // Disposal path: cancel the owned batch while the second render runs.
+          if (renders == 2) queue.cancel();
+          return (isSuccess: true, returnCode: 0, output: '');
+        },
+        mediaStoreInjector: (out, title) async {
+          throw Exception('PlatformException: MediaStore failed');
+        },
+        durationProbe: (p) async => 1000,
+        streamProbe: (p) async => {'audio': 1},
+      );
+
+      // The failed import from the first job stays recoverable after cancel.
+      expect(queue.jobs[0].status, equals(BatchJobStatus.pendingImport));
+      expect(queue.jobs[0].outputUri, isNotNull);
+      expect(File(queue.jobs[0].outputUri!).existsSync(), isTrue);
+      // The second job is skipped, never published to the library.
+      expect(queue.jobs[1].status, equals(BatchJobStatus.skipped));
+      expect(summary, contains('1 pending library import'));
+      expect(summary, contains('1 skipped'));
+
+      final pending =
+          await PendingImportStore(Directory(recoveryRoot.path)).list();
+      expect(pending, hasLength(1));
+      expect(pending.single.available, isTrue);
+      expect(pending.single.title, contains('track'));
+      await recoveryRoot.delete(recursive: true);
+    });
+
+    test('cancel during a failed import still preserves the rendered media', () async {
+      final queue = WorkbenchQueue();
+      final recoveryRoot =
+          await Directory.systemTemp.createTemp('workbench_pending_cancel_import_');
+      queue.addJob('/media/track.wav', 'Convert Format');
+
+      final summary = await queue.execute(
+        commandBuilder: (op, input, out, dur) async {
+          File(out).writeAsStringSync('mock audio');
+          return '-y -i input out';
+        },
+        getTempDirectory: () async => Directory.systemTemp.path,
+        getRecoveryDirectory: () async => recoveryRoot.path,
+        ffmpegRunner: (cmd, {onStatistics}) async =>
+            (isSuccess: true, returnCode: 0, output: ''),
+        mediaStoreInjector: (out, title) async {
+          queue.cancel();
+          throw Exception('PlatformException: MediaStore failed');
+        },
+        durationProbe: (p) async => 1000,
+        streamProbe: (p) async => {'audio': 1},
+      );
+
+      expect(queue.jobs[0].status, equals(BatchJobStatus.pendingImport));
+      expect(queue.jobs[0].outputUri, isNotNull);
+      expect(File(queue.jobs[0].outputUri!).existsSync(), isTrue);
+      expect(summary, contains('1 pending library import'));
+      expect(summary, isNot(contains('skipped')));
+
+      final pending =
+          await PendingImportStore(Directory(recoveryRoot.path)).list();
+      expect(pending, hasLength(1));
+      expect(pending.single.available, isTrue);
+      await recoveryRoot.delete(recursive: true);
     });
 
     test('overall progress is calculated monotonically across batch items', () {
@@ -433,7 +517,7 @@ void main() {
       expect(injectedTitles.length, equals(2));
       expect(injectedTitles[0], equals('song1_mod'));
       expect(injectedTitles[1], equals('song2_mod'));
-      expect(summary, contains('Batch Done: 2/2 OK'));
+      expect(summary, contains('Batch Done: 2/2 SAVED'));
     });
 
     test('ffmpeg filter failure records failure and continues remaining jobs', () async {
@@ -458,7 +542,7 @@ void main() {
       expect(queue.jobs[0].status, equals(BatchJobStatus.failed));
       expect(queue.jobs[0].errorMessage, contains("FILTER 'afftdn' UNAVAILABLE"));
       expect(queue.jobs[1].status, equals(BatchJobStatus.completed));
-      expect(summary, contains('1/2 OK'));
+      expect(summary, contains('1/2 SAVED'));
       expect(summary, contains('1 failed'));
     });
 
@@ -500,7 +584,7 @@ void main() {
 
       expect(queue.jobs[0].status, equals(BatchJobStatus.completed));
       expect(queue.jobs[0].isSuccess, isTrue);
-      expect(summary, contains('1/1 OK'));
+      expect(summary, contains('1/1 SAVED'));
     });
 
     test('scoped cancellation sets current job description and cancels matching session only', () async {
@@ -558,7 +642,7 @@ void main() {
       expect(runnerCalled, isFalse);
       expect(queue.jobs[0].status, equals(BatchJobStatus.skipped));
       expect(queue.jobs[1].status, equals(BatchJobStatus.skipped));
-      expect(summary, contains('0/2 OK (2 skipped)'));
+      expect(summary, contains('0/2 SAVED (2 skipped)'));
     });
 
     test('cancellation at commandBuilder skips job and cleans up staged file', () async {
@@ -630,6 +714,7 @@ void main() {
 
     test('mediaStoreInjector returning null marks job completed as CACHE ONLY and preserves staged output on disk', () async {
       final queue = WorkbenchQueue();
+      final recoveryRoot = await Directory.systemTemp.createTemp('workbench_pending_case_');
       queue.addJob('/media/song.mp3', 'Normalize Audio (LUFS -14)');
 
       String? stagedPath;
@@ -640,6 +725,7 @@ void main() {
           return '-y -i input out';
         },
         getTempDirectory: () async => Directory.systemTemp.path,
+        getRecoveryDirectory: () async => recoveryRoot.path,
         ffmpegRunner: (cmd, {onStatistics}) async {
           File(stagedPath!).writeAsStringSync('valid audio data');
           return (isSuccess: true, returnCode: 0, output: 'OK');
@@ -649,15 +735,16 @@ void main() {
         streamProbe: (p) async => {'audio': 1},
       );
 
-      expect(queue.jobs[0].status, equals(BatchJobStatus.completed));
-      expect(queue.jobs[0].outputUri, equals(stagedPath));
-      expect(File(stagedPath!).existsSync(), isTrue);
-      expect(summary, contains('CACHE ONLY'));
-      try { File(stagedPath!).deleteSync(); } catch (_) {}
+      expect(queue.jobs[0].status, equals(BatchJobStatus.pendingImport));
+      expect(queue.jobs[0].outputUri, isNot(equals(stagedPath)));
+      expect(File(stagedPath!).existsSync(), isFalse);
+      expect(summary, contains('PENDING IMPORT'));
+      await recoveryRoot.delete(recursive: true);
     });
 
     test('mediaStoreInjector returning empty or whitespace string preserves staged output on disk', () async {
       final queue = WorkbenchQueue();
+      final recoveryRoot = await Directory.systemTemp.createTemp('workbench_pending_case_');
       queue.addJob('/media/song.mp3', 'Normalize Audio (LUFS -14)');
 
       String? stagedPath;
@@ -668,6 +755,7 @@ void main() {
           return '-y -i input out';
         },
         getTempDirectory: () async => Directory.systemTemp.path,
+        getRecoveryDirectory: () async => recoveryRoot.path,
         ffmpegRunner: (cmd, {onStatistics}) async {
           File(stagedPath!).writeAsStringSync('valid audio data');
           return (isSuccess: true, returnCode: 0, output: 'OK');
@@ -677,11 +765,11 @@ void main() {
         streamProbe: (p) async => {'audio': 1},
       );
 
-      expect(queue.jobs[0].status, equals(BatchJobStatus.completed));
-      expect(queue.jobs[0].outputUri, equals(stagedPath));
-      expect(File(stagedPath!).existsSync(), isTrue);
-      expect(summary, contains('CACHE ONLY'));
-      try { File(stagedPath!).deleteSync(); } catch (_) {}
+      expect(queue.jobs[0].status, equals(BatchJobStatus.pendingImport));
+      expect(queue.jobs[0].outputUri, isNot(equals(stagedPath)));
+      expect(File(stagedPath!).existsSync(), isFalse);
+      expect(summary, contains('PENDING IMPORT'));
+      await recoveryRoot.delete(recursive: true);
     });
 
     test('mediaStoreInjector returning valid URI deletes staged output and records content URI', () async {
