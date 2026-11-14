@@ -49,3 +49,52 @@ without EQ; the application must never mute playback just because DSP failed.
 
 CI compiles both supported ABIs and exercises JVM cutoff/interpolation tests,
 but does not substitute for these device-level measurements.
+
+## Recorded device verification (Moto G — Android 16 / API 36)
+
+### Build provenance & unit gate
+
+- **Commit (`feat/p1-independent-15-band-dsp`):** `765c64d85702de85c5a48bf8c1647fda381b99cb` (`sourceDirty: false`, `versionName: 1.0.0`, `versionCode: 1`, `abis: ["arm64-v8a", "x86_64"]`, `gradle: 9.3.1`, `builtAtUtc: 2026-11-14T07:28:12Z`)
+- **APK tested (`build/app/outputs/flutter-apk/app-debug.apk`):** SHA-256 `746d3c09d749c7478abfecb4dad37eb4c2e7935786ddfe4bd9e72831608bcbdc`
+- **Target handset:** Moto G (`ZT4222BMWN`, `model: moto g - 2025`, Android `16` / API `36`, `arm64-v8a`)
+- **Kotlin JVM tests (`:app:testDebugUnitTest`):** `SovereignEqBandsTest` 5/5 passed (0 skipped, 0 failures), including `stereoReadbackRequiresBothChannelsEnabledAndMatching`.
+
+### Startup & backend attachment (`logcat`)
+
+Every launch logged matching build provenance and attached `dynamics15` with zero duplicate `Equalizer` effect:
+
+- `BOOT: BUILD PROVENANCE: sha=765c64d85702de85c5a48bf8c1647fda381b99cb version=1.0.0(1) abis=arm64-v8a,x86_64 built=2026-11-14T07:28:12Z`
+- `SovereignEq15: Attached independent 15-band DSP to session 4281`
+- `MainActivity: SOVEREIGN EQ BACKEND: dynamics15 bands=15`
+- `flutter: SOVEREIGN FX: session=4281 backend=dynamics15 bands=15`
+
+### Stereo readback & AudioFlinger HAL signal sweep
+
+Tested with synthetic 30-second 48 kHz 16-bit stereo PCM WAV tones (`eq_test_25hz.wav`, `eq_test_1khz.wav`, `eq_test_16khz.wav`) at `-18 dBFS` with `rg_mode=off`, `rg_preamp=0.0`, and `crossfade=0.0`, polling `SovereignEq15` two-channel readback (`channelsMatch=true` across every case) and `dumpsys media.audio_flinger` (`AudioOut_15`):
+
+| Case | Target Band | ch0 / ch1 Readback (`channelsMatch`) | AudioFlinger `Dynamics Processing` State (`Session State Reg Int Ena Susp`) | `Frames written` Delta (~2 s) | Track `PortVol` | HAL 50 ms Power Mean |
+|---|---|---|---|---|---|---|
+| `flat_25hz` | 25 Hz (`0`: `0.0 dB`) | `[0.0 x 15]` (`true`) | `04281 003 y n y n` (`EffectHal::threadLoop n=131`) | `+102,400` (`66922496 -> 67024896`) | `-40 dB` | `-67.55 dB` |
+| `25hz_plus12` | 25 Hz (`0`: `+12.0 dB`) | `[12.0, 0.0 x 14]` (`true`) | `04289 003 y n y n` (`EffectHal::threadLoop n=125`) | `+100,352` (`67254272 -> 67354624`) | `-40 dB` | `-61.49 dB` (`+6.06 dB` vs flat) |
+| `25hz_minus12` | 25 Hz (`0`: `-12.0 dB`) | `[-12.0, 0.0 x 14]` (`true`) | `04297 003 y n y n` (`EffectHal::threadLoop n=135`) | `+100,352` (`67608576 -> 67708928`) | `-40 dB` | `-71.16 dB` (`-3.61 dB` vs flat) |
+| `flat_1khz` | 1 kHz (`8`: `0.0 dB`) | `[0.0 x 15]` (`true`) | `04305 003 y n y n` (`EffectHal::threadLoop n=122`) | `+102,400` (`67940352 -> 68042752`) | `-40 dB` | `-55.10 dB` |
+| `1khz_plus12` | 1 kHz (`8`: `+12.0 dB`) | `[..., 12.0@8, ...]` (`true`) | `04313 003 y n y n` (`EffectHal::threadLoop n=132`) | `+100,352` (`68288512 -> 68388864`) | `-40 dB` | `-48.56 dB` (`+6.54 dB` vs flat) |
+| `1khz_minus12` | 1 kHz (`8`: `-12.0 dB`) | `[..., -12.0@8, ...]` (`true`) | `04321 003 y n y n` (`EffectHal::threadLoop n=130`) | `+102,400` (`68636672 -> 68739072`) | `-47 dB` | `-67.20 dB` (`-6.59 dB` vs bypassed at `-47 dB`) |
+| `flat_16khz` | 16 kHz (`14`: `0.0 dB`) | `[0.0 x 15]` (`true`) | `04329 003 y n y n` (`EffectHal::threadLoop n=123`) | `+102,400` (`68964352 -> 69066752`) | `-47 dB` | `-53.60 dB` |
+| `16khz_plus12` | 16 kHz (`14`: `+12.0 dB`) | `[0.0 x 14, 12.0]` (`true`) | `04337 003 y n y n` (`EffectHal::threadLoop n=119`) | `+102,400` (`69283840 -> 69386240`) | `-47 dB` | `-43.90 dB` (`+9.70 dB` vs flat) |
+| `16khz_minus12` | 16 kHz (`14`: `-12.0 dB`) | `[0.0 x 14, -12.0]` (`true`) | `04345 003 y n y n` (`EffectHal::threadLoop n=137`) | `+108,544` (`69634048 -> 69742592`) | `-47 dB` | `-62.30 dB` (`-8.70 dB` vs flat) |
+| `bypassed_1khz` | `eq_enabled=false` (`8`: `+12.0 dB`) | `[..., 12.0@8, ...]` `enabled=false` (`true`) | `04353 000 y n n n` (`Enabled=n`) | `+102,400` (`69998592 -> 70100992`) | `-47 dB` | `-60.61 dB` (no `+12 dB` boost, unmuted) |
+
+No `Equalizer` effect was ever registered alongside `Dynamics Processing` (`Loudness Enhancer` stayed disabled in state `000`, `Music Listener` was session-attached, and Moto G global `DAP` ran on session `0`). The OS stepped track `PortVol` from `-40 dB` to `-47 dB` before `1khz_minus12`; comparisons above group cases by matching `PortVol`.
+
+### Persistence, transport, background & teardown checks (`ZT4222BMWN`)
+
+- **Restart persistence:** Seeded custom stereo curve `[6.0, 0.0, ..., -9.0@8, ..., 12.0@14]`, force-stopped, and relaunched without rewriting preferences (`PID 9120`, session `4369`); `SovereignEq15` read back identical gains on both channels (`channelsMatch=true`, `enabled=true`) and resumed playback at `5000 ms`.
+- **Seek / track changes & background playback:** Dispatched `fast-forward`/`rewind`/`next` across `eq_test_25hz` → `eq_test_1khz` → `eq_test_16khz`; `Dynamics Processing` stayed active (`04369 003 y n y n`) with no duplicate `Equalizer`. Backgrounded via `KEYCODE_HOME`; session remained `PlaybackState.PLAYING(3)` and `Frames written` advanced `71145472 -> 71247872` (`+102,400`).
+- **Teardown & device cleanup:** After `am force-stop com.sovereigntagger`, `dumpsys media.audio_flinger` contained zero lingering `Dynamics Processing` or `com.sovereigntagger` references. Original `FlutterSharedPreferences.xml` (`3054` bytes) was restored byte-for-byte and temporary cache WAVs were deleted.
+
+### Remaining gaps not verified in this sweep
+
+- **Build variant:** Tested a local provenance debug APK (`app-debug.apk`) built from `765c64d`, not the release CI artifact.
+- **Acoustic / external loopback & routing:** Gain deltas were observed via Android's internal AudioFlinger `Hal stream dump: Signal power history (resolution: 50.0 ms)` (post-mixer, with system `DAP` active on session `0`) rather than an external speaker/microphone or wired/Bluetooth loopback analyzer; wired/Bluetooth route switching and interactive EQ preset/slider UI drags were not exercised in this automated ADB sweep.
+- **API 26–27 `legacy` & `unavailable`/`error` paths:** No physical Android 8.x (API 26–27) handset was tested (`ZT4222BMWN` runs Android 16 / API 36); those fallback and `PlaybackFx` `'error'` recovery paths are covered by unit/contract tests only.
