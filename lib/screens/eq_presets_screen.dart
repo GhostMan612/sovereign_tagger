@@ -3,6 +3,8 @@
 // The Future Dictates the Past and the Past is Always Present.
 // ============================================================
 
+import 'dart:async';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import '../core/playback_fx.dart';
 import '../widgets/cyber_backdrop.dart';
@@ -15,6 +17,14 @@ class EqPresetsScreen extends StatefulWidget {
   State<EqPresetsScreen> createState() => _EqPresetsScreenState();
 }
 
+class _EqUpdate {
+  final List<double> gains;
+  final bool persist;
+  final Completer<bool> completion;
+
+  _EqUpdate(this.gains, this.persist, this.completion);
+}
+
 class _EqPresetsScreenState extends State<EqPresetsScreen> {
   final List<double> _eqBands15 = List.filled(15, 0.0);
   static const List<int> _freqs = [25, 40, 63, 100, 160, 250, 400, 630, 1000, 1600, 2500, 4000, 6300, 10000, 16000];
@@ -22,6 +32,11 @@ class _EqPresetsScreenState extends State<EqPresetsScreen> {
   static const double _railHeight = 260.0;
 
   bool _dirty = false;
+  bool _discarding = false;
+  bool _discardDialogOpen = false;
+  Future<void>? _liveTask;
+  final List<_EqUpdate> _pendingUpdates = [];
+  int _pendingSaves = 0;
   List<double> _saved = List.filled(15, 0.0);
 
   static const Map<String, List<double>> _presets = {
@@ -58,34 +73,89 @@ class _EqPresetsScreenState extends State<EqPresetsScreen> {
     });
   }
 
-  void _live() {
-    PlaybackFx.setEqGains(_eqBands15);
+  Future<bool> _live({bool persist = false}) {
+    final completion = _pendingUpdates.isNotEmpty && !_pendingUpdates.last.persist
+        ? _pendingUpdates.removeLast().completion
+        : Completer<bool>();
+    final update = _EqUpdate(
+      List<double>.unmodifiable(_eqBands15),
+      persist,
+      completion,
+    );
+    _pendingUpdates.add(update);
+    if (persist) _pendingSaves++;
+    _liveTask ??= _drainLive();
+    return completion.future;
+  }
+
+  Future<void> _drainLive() async {
+    try {
+      while (_pendingUpdates.isNotEmpty) {
+        final update = _pendingUpdates.removeAt(0);
+        try {
+          final applied = await PlaybackFx.setEqGains(update.gains, persist: update.persist);
+          if (update.persist) {
+            _saved = update.gains;
+            if (mounted) {
+              setState(() => _dirty = !listEquals(_eqBands15, _saved));
+            }
+          }
+          update.completion.complete(applied);
+        } catch (error, stack) {
+          if (update.persist && mounted) {
+            setState(() => _dirty = true);
+          }
+          update.completion.completeError(error, stack);
+        } finally {
+          if (update.persist) _pendingSaves--;
+        }
+      }
+    } finally {
+      _liveTask = null;
+    }
   }
 
   void _applyPreset(List<double> values) {
+    if (_discarding) return;
     setState(() {
       for (int i = 0; i < 15; i++) {
         _eqBands15[i] = values[i];
       }
-      _dirty = true;
+      _dirty = !listEquals(_eqBands15, _saved);
     });
     if (!PlaybackFx.eqEnabled.value) PlaybackFx.setEqEnabled(true);
     _live();
   }
 
   Future<void> _savePreset() async {
-    await PlaybackFx.setEqGains(_eqBands15, persist: true);
-    _saved = List<double>.from(_eqBands15);
-    if (!mounted) return;
-    setState(() => _dirty = false);
-    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-      content: Text('> 15-BAND EQ PRESET SAVED TO KERNEL.', style: TextStyle(fontFamily: 'ShareTechMono')),
-      backgroundColor: Colors.black,
-      shape: RoundedRectangleBorder(side: BorderSide(color: Colors.purpleAccent)),
-    ));
+    if (_discarding) return;
+    try {
+      final applied = await _live(persist: true);
+      if (!mounted) return;
+      _showStatus(applied
+          ? '> 15-BAND EQ PRESET SAVED TO KERNEL.'
+          : '> PRESET SAVED. LIVE EQ UPDATE FAILED OR UNAVAILABLE.');
+    } catch (error) {
+      if (!mounted) return;
+      _showStatus('> PRESET SAVE FAILED. $error', error: true);
+    }
+  }
+
+  void _showStatus(String message, {bool error = false}) {
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(
+        content: Text(message, style: const TextStyle(fontFamily: 'ShareTechMono')),
+        backgroundColor: Colors.black,
+        shape: RoundedRectangleBorder(side: BorderSide(
+          color: error ? Colors.redAccent : Colors.purpleAccent,
+        )),
+      ));
   }
 
   Future<void> _confirmDiscard() async {
+    if (_discarding || _discardDialogOpen) return;
+    _discardDialogOpen = true;
     final discard = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -99,18 +169,32 @@ class _EqPresetsScreenState extends State<EqPresetsScreen> {
         ],
       ),
     );
+    _discardDialogOpen = false;
     if (discard == true && mounted) {
-      await PlaybackFx.setEqGains(_saved);
-      if (mounted) Navigator.pop(context);
+      setState(() => _discarding = true);
+      if (_pendingSaves > 0) {
+        await _liveTask;
+        if (!mounted) return;
+      }
+      for (int i = 0; i < 15; i++) {
+        _eqBands15[i] = _saved[i];
+      }
+      final applied = await _live();
+      if (!mounted) return;
+      setState(() => _dirty = false);
+      if (!applied) {
+        _showStatus('> UNSAVED EDITS DISCARDED. LIVE EQ UPDATE FAILED OR UNAVAILABLE.', error: true);
+      }
+      Navigator.pop(context);
     }
   }
 
   @override
   Widget build(BuildContext context) {
     return PopScope(
-      canPop: !_dirty,
+      canPop: !_dirty && _pendingSaves == 0 && !_discarding,
       onPopInvokedWithResult: (didPop, _) {
-        if (!didPop && _dirty) _confirmDiscard();
+        if (!didPop && (_dirty || _pendingSaves > 0)) _confirmDiscard();
       },
       child: Scaffold(
         backgroundColor: Colors.black,
@@ -154,27 +238,34 @@ class _EqPresetsScreenState extends State<EqPresetsScreen> {
                         children: [
                           Icon(Icons.tune, color: Colors.purpleAccent, size: 18),
                           SizedBox(width: 8),
-                          Expanded(child: Text("AUTOEQ RACK — ±12dB, Q=1.2", style: TextStyle(fontFamily: 'ShareTechMono', fontWeight: FontWeight.bold, color: Colors.purpleAccent))),
+                          Expanded(child: Text("15-BAND PLAYBACK DSP — ±12dB", style: TextStyle(fontFamily: 'ShareTechMono', fontWeight: FontWeight.bold, color: Colors.purpleAccent))),
                         ],
                       ),
                     ),
                     ValueListenableBuilder<bool>(
                       valueListenable: PlaybackFx.eqEnabled,
-                      builder: (context, enabled, _) => SwitchListTile(
-                        dense: true,
-                        title: Text(enabled ? "EQ ACTIVE ON PLAYBACK" : "EQ BYPASSED", style: TextStyle(fontFamily: 'ShareTechMono', fontWeight: FontWeight.bold, color: enabled ? Colors.purpleAccent : Colors.white54)),
-                        subtitle: ValueListenableBuilder<List<double>>(
-                          valueListenable: PlaybackFx.deviceBands,
-                          builder: (context, bands, _) => Text(
-                            bands.isEmpty
-                                ? "Device EQ attaches when playback starts."
-                                : "Curve mapped onto this phone's ${bands.length}-band EQ (${bands.map((f) => f >= 1000 ? '${(f / 1000).toStringAsFixed(1)}k' : f.round().toString()).join(' / ')} Hz).",
-                            style: const TextStyle(fontFamily: 'ShareTechMono', fontSize: 10, color: Colors.white38),
+                      builder: (context, enabled, _) => Material(
+                        type: MaterialType.transparency,
+                        child: SwitchListTile(
+                          dense: true,
+                          title: Text(enabled ? "EQ SWITCH ON" : "EQ BYPASSED", style: TextStyle(fontFamily: 'ShareTechMono', fontWeight: FontWeight.bold, color: enabled ? Colors.purpleAccent : Colors.white54)),
+                          subtitle: ValueListenableBuilder<String>(
+                            valueListenable: PlaybackFx.eqBackend,
+                            builder: (context, backend, _) => Text(
+                              switch (backend) {
+                                'dynamics15' => 'INDEPENDENT 15-BAND DSP ATTACHED — EACH BAND IS APPLIED DIRECTLY.',
+                                'legacy' => 'COMPATIBILITY MODE — 15 SLIDERS MAPPED TO THE PHONE\'S FIXED-BAND EQ.',
+                                'error' => 'EQ UPDATE FAILED — EFFECT BYPASSED; PLAYBACK CONTINUES DRY.',
+                                'unavailable' => 'EQ ENGINE UNAVAILABLE — AUDIO PLAYS WITHOUT EQ.',
+                                _ => 'EQ ENGINE ATTACHES WHEN PLAYBACK STARTS.',
+                              },
+                              style: const TextStyle(fontFamily: 'ShareTechMono', fontSize: 10, color: Colors.white54),
+                            ),
                           ),
+                          activeThumbColor: Colors.purpleAccent,
+                          value: enabled,
+                          onChanged: (v) => PlaybackFx.setEqEnabled(v),
                         ),
-                        activeThumbColor: Colors.purpleAccent,
-                        value: enabled,
-                        onChanged: (v) => PlaybackFx.setEqEnabled(v),
                       ),
                     ),
                     SizedBox(
@@ -190,7 +281,7 @@ class _EqPresetsScreenState extends State<EqPresetsScreen> {
                                 label: Text(e.key, style: const TextStyle(fontFamily: 'ShareTechMono', fontSize: 11, color: Colors.white)),
                                 backgroundColor: Colors.black,
                                 side: const BorderSide(color: Colors.purpleAccent),
-                                onPressed: () => _applyPreset(e.value),
+                                onPressed: _discarding ? null : () => _applyPreset(e.value),
                               ),
                             ),
                         ],
@@ -212,14 +303,14 @@ class _EqPresetsScreenState extends State<EqPresetsScreen> {
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
                   OutlinedButton.icon(
-                    onPressed: _dirty ? _savePreset : null,
+                    onPressed: _dirty && !_discarding ? _savePreset : null,
                     icon: const Icon(Icons.save, color: Colors.purpleAccent, size: 18),
                     label: const Text("SAVE PRESET", style: TextStyle(fontFamily: 'ShareTechMono', fontSize: 13, color: Colors.purpleAccent, fontWeight: FontWeight.bold)),
                     style: OutlinedButton.styleFrom(side: const BorderSide(color: Colors.purpleAccent), padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12)),
                   ),
                   const SizedBox(width: 12),
                   OutlinedButton.icon(
-                    onPressed: () => _applyPreset(_presets['FLAT']!),
+                    onPressed: _discarding ? null : () => _applyPreset(_presets['FLAT']!),
                     icon: const Icon(Icons.restart_alt, color: Colors.redAccent, size: 18),
                     label: const Text("FLAT", style: TextStyle(fontFamily: 'ShareTechMono', fontSize: 13, color: Colors.redAccent, fontWeight: FontWeight.bold)),
                     style: OutlinedButton.styleFrom(side: const BorderSide(color: Colors.redAccent), padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12)),
@@ -266,8 +357,12 @@ class _EqPresetsScreenState extends State<EqPresetsScreen> {
                 ),
                 child: Slider(
                   value: _eqBands15[i], min: -12, max: 12, divisions: 24,
-                  onChanged: (val) => setState(() { _eqBands15[i] = val; _dirty = true; }),
-                  onChangeEnd: (_) => _live(),
+                  onChanged: _discarding ? null : (val) {
+                    final changed = _eqBands15[i] != val;
+                    setState(() { _eqBands15[i] = val; _dirty = !listEquals(_eqBands15, _saved); });
+                    if (changed) _live();
+                  },
+                  onChangeEnd: _discarding ? null : (_) => _live(),
                 ),
               ),
             ),

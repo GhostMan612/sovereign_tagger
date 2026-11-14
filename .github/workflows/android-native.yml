@@ -51,6 +51,8 @@ jobs:
         run: flutter pub get
       - name: Compile Kotlin, C++, Chaquopy and Flutter into debug APK
         run: flutter build apk --debug --no-pub --target-platform ${{ matrix.target }}
+      - name: Android JVM EQ regression tests
+        run: (cd android && ./gradlew :app:testDebugUnitTest --no-daemon)
       - name: Verify unsigned release fails closed
         shell: bash
         run: |

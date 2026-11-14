@@ -1,6 +1,16 @@
 # ROADMAP.md — Sovereign Tagger v2 \"Industrial Grade\"
 > Status legend: [ ] pending · [~] in progress · [x] done (gate passed) · [-] skipped/parked
 
+## PR #86 — Independent 15-band DSP review readiness [~] (2026-11-14)
+
+- [x] Recheck GitHub head `825978e027263b138613bc4dadd97452b1fafaec`: Dart run `43577428020` and Android native run `43577428018` passed, including ARM64/x64 debug builds and JVM EQ tests.
+- [x] Reconcile PR description with committed Moto G acceptance and local-debug APK provenance, including live-slider Save/Discard re-smoke at source commit `152a5e5`.
+- [x] Move PR #86 from Draft to Ready for review; PR remains open and unmerged. Remote `main` verified unchanged at `b8d5c29`.
+- [ ] Decide merge acceptance of remaining external acoustic/loopback, wired/Bluetooth routing, release-build and physical API 26–27 coverage limits.
+- [x] Atomic Save amendment: recovered immutable FIFO snapshots and added checked preference writes, rollback/retry feedback, distinct native status, accurate dirty state, guarded navigation, pending-Save Discard and disposal coverage. Genesis/comment/mojibake checks and strict analysis passed; **206/206 Flutter tests** and **5/5 executed JVM tests** passed with zero skips, including 12 added Save regressions.
+- Exact amendment commit, push and new-head Dart/Android CI evidence are recorded in PR #86's description. Merge acceptance remains a separate operator decision.
+- PR #87 transactional updater acceptance remains separate. No new device smoke is claimed for the amendment.
+
 ## Phase 0 — Blueprint scaffold [x]
 - [x] RULES.md adapted from Sovereign Nodes template (5 read-only paths)
 - [x] SESSION_HANDOFF / CURRENT_STATE / ROADMAP / BLUEPRINTS / ARCHITECTURE created
