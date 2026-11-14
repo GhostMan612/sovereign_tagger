@@ -5,284 +5,226 @@
 
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:sovereign_tagger/core/feedback_settings.dart';
-import 'package:sovereign_tagger/core/model_lifecycle.dart';
 import 'package:sovereign_tagger/screens/settings_screen.dart';
-
-class _UpdaterSettingsHarness {
-  static const updater = MethodChannel('com.sovereign.tagger/ytdlp');
-  static const storage = MethodChannel('com.sovereign.tagger/storage');
-  static const secrets = MethodChannel('com.sovereign.tagger/secrets');
-  static const paths = MethodChannel('plugins.flutter.io/path_provider');
-  static const embeddings = MethodChannel('com.sovereign.tagger/embeddings');
-  static const sfx = MethodChannel('com.sovereign.tagger/sfx');
-
-  final calls = <MethodCall>[];
-  final secretReads = <String>[];
-  final storageCalls = <String>[];
-  final queued = <Completer<String>>[];
-  final allResponses = <Completer<String>>[];
-  final bool oldBackdrop = FeedbackSettings.backdrop.value;
-  final bool oldSound = FeedbackSettings.sound.value;
-  final bool oldHaptics = FeedbackSettings.haptics.value;
-  late final Directory fixtureBase;
-  late final Directory fixture;
-  var activeRequests = 0;
-
-  Completer<String> queueResponse() {
-    final response = Completer<String>();
-    queued.add(response);
-    allResponses.add(response);
-    return response;
-  }
-
-  void install() {
-    fixtureBase = Directory('${Directory.current.path}/build/pr87_settings_tests')
-      ..createSync(recursive: true);
-    fixture = fixtureBase.createTempSync('case_');
-    SharedPreferences.setMockInitialValues(<String, Object>{});
-    FeedbackSettings.backdrop.value = false;
-    FeedbackSettings.sound.value = false;
-    FeedbackSettings.haptics.value = false;
-    final messenger = TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
-    messenger.setMockMethodCallHandler(paths, (call) async {
-      if (call.method.startsWith('get')) return fixture.path;
-      throw StateError('Unexpected path method ${call.method}');
-    });
-    messenger.setMockMethodCallHandler(secrets, (call) async {
-      if (call.method != 'get') throw StateError('Credential mutation is forbidden in this fixture');
-      secretReads.add((call.arguments as Map<Object?, Object?>)['name'] as String);
-      return null;
-    });
-    messenger.setMockMethodCallHandler(storage, (call) async {
-      storageCalls.add(call.method);
-      return switch (call.method) {
-        'recoverPendingOverwrites' => <Object?>[],
-        'getTempDirectory' => fixture.path,
-        'sdkInt' => 36,
-        'getBuildProvenance' => <String, Object>{
-          'sourceSha': '0000000000000000000000000000000000000000',
-          'sourceDirty': false,
-          'versionCode': 1,
-          'versionName': 'fixture',
-          'buildAbis': 'fixture',
-          'builtAtUtc': '2026-11-14T00:00:00Z',
-        },
-        _ => throw StateError('Unexpected storage method ${call.method}'),
-      };
-    });
-    messenger.setMockMethodCallHandler(embeddings, (call) async {
-      if (call.method == 'status') {
-        return <String, Object>{
-          'loaded': false,
-          'filesReady': false,
-          'availRamMb': 4096,
-          'totalRamMb': 6144,
-          'lowMemory': false,
-        };
-      }
-      if (call.method == 'isAvailable') return false;
-      throw StateError('Unexpected embedding method ${call.method}');
-    });
-    messenger.setMockMethodCallHandler(sfx, (_) async => true);
-    messenger.setMockMethodCallHandler(updater, (call) async {
-      if (call.method != 'updateCore' && call.method != 'updateFullStack') {
-        throw StateError('Unexpected updater method ${call.method}');
-      }
-      calls.add(call);
-      if (queued.isEmpty) throw StateError('No controlled updater response queued');
-      final response = queued.removeAt(0);
-      activeRequests++;
-      try {
-        return await response.future;
-      } finally {
-        activeRequests--;
-      }
-    });
-  }
-
-  Future<void> dispose(WidgetTester tester) async {
-    for (final response in allResponses) {
-      if (!response.isCompleted) {
-        response.complete(jsonEncode({'status': 'error', 'message': 'fixture cleanup'}));
-      }
-    }
-    await tester.pumpWidget(const SizedBox.shrink());
-    await _until(tester, () => activeRequests == 0);
-    for (var i = 0; i < 20; i++) {
-      await tester.pump();
-    }
-    final messenger = TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
-    for (final channel in [updater, storage, secrets, paths, embeddings, sfx]) {
-      messenger.setMockMethodCallHandler(channel, null);
-    }
-    FeedbackSettings.backdrop.value = oldBackdrop;
-    FeedbackSettings.sound.value = oldSound;
-    FeedbackSettings.haptics.value = oldHaptics;
-    final base = fixtureBase.resolveSymbolicLinksSync();
-    final path = fixture.resolveSymbolicLinksSync();
-    if (!path.startsWith('$base${Platform.pathSeparator}')) {
-      throw StateError('Fixture escaped its workspace directory');
-    }
-    fixture.deleteSync(recursive: true);
-  }
-}
-
-Future<void> _until(WidgetTester tester, bool Function() done) async {
-  for (var i = 0; i < 200 && !done(); i++) {
-    await tester.pump();
-  }
-  expect(done(), isTrue, reason: 'Controlled updater checkpoint was not reached');
-  await tester.pump();
-}
-
-Finder _button(String method, {bool pending = false}) => find.widgetWithText(
-  OutlinedButton,
-  method == 'updateCore'
-      ? (pending ? 'UPDATING CORE ENGINE...' : 'CHECK FOR YT-DLP UPDATE')
-      : 'FULL STACK REFRESH (YT-DLP + DEPS)',
-);
-
-bool _enabled(WidgetTester tester, String method, {bool pending = false}) =>
-    tester.widget<OutlinedButton>(_button(method, pending: pending)).onPressed != null;
-
-Future<void> _open(WidgetTester tester, _UpdaterSettingsHarness harness) async {
-  await tester.pumpWidget(const MaterialApp(home: SettingsScreen()));
-  await _until(tester, () => harness.secretReads.contains('hf_token')
-      && harness.storageCalls.contains('recoverPendingOverwrites')
-      && harness.storageCalls.contains('getBuildProvenance')
-      && ModelLifecycle.instance.state.value.statusText.startsWith('FALLBACK'));
-}
-
-Future<void> _tapUpdate(WidgetTester tester, String method) async {
-  await tester.ensureVisible(_button(method));
-  await tester.tap(_button(method));
-  await tester.pump();
-}
-
-Map<String, Object?> _recoveryRequired(String method) {
-  final core = <String, Object?>{
-    'status': 'error',
-    'message': 'fixture rollback blocked',
-    'recovery_required': true,
-  };
-  return method == 'updateCore' ? core : <String, Object?>{
-    ...core,
-    'core': core,
-    'python_stack': null,
-  };
-}
-
-Map<String, Object?> _success(String method) {
-  final core = <String, Object?>{'status': 'success', 'message': 'fixture core committed'};
-  return method == 'updateCore' ? core : <String, Object?>{
-    'status': 'success',
-    'core': core,
-    'python_stack': <String, Object>{'status': 'success'},
-  };
-}
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  for (final method in ['updateCore', 'updateFullStack']) {
-    testWidgets('$method reports recovery required, disables pending controls and permits retry', (tester) async {
-      final harness = _UpdaterSettingsHarness()..install();
-      try {
-        await _open(tester, harness);
-        final failed = harness.queueResponse();
-        await _tapUpdate(tester, method);
-        await _until(tester, () => harness.calls.length == 1);
-        expect(harness.calls.single.method, method);
-        expect(harness.calls.single.arguments, isNull);
-        expect(_enabled(tester, 'updateCore', pending: true), isFalse);
-        expect(_enabled(tester, 'updateFullStack'), isFalse);
-        expect(find.textContaining('RECOVERY REQUIRED:'), findsNothing);
+  const channel = MethodChannel('com.sovereign.tagger/ytdlp');
 
-        failed.complete(jsonEncode(_recoveryRequired(method)));
-        await _until(tester, () => find.textContaining('RECOVERY REQUIRED: fixture rollback blocked').evaluate().isNotEmpty);
-        expect(find.textContaining('Backup retained; retry after resolving the storage fault.'), findsOneWidget);
-        expect(_enabled(tester, 'updateCore'), isTrue);
-        expect(_enabled(tester, 'updateFullStack'), isTrue);
+  setUp(() {
+    SharedPreferences.setMockInitialValues(<String, Object>{});
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, null);
+  });
 
-        final retry = harness.queueResponse();
-        await _tapUpdate(tester, method);
-        await _until(tester, () => harness.calls.length == 2);
-        expect(harness.calls.last.method, method);
-        retry.complete(jsonEncode(_success(method)));
-        await _until(tester, () => find.textContaining('fixture core committed').evaluate().isNotEmpty);
-        expect(find.textContaining('RECOVERY REQUIRED:'), findsNothing);
-        expect(find.text('> null'), findsNothing);
-        expect(_enabled(tester, 'updateCore'), isTrue);
-        expect(_enabled(tester, 'updateFullStack'), isTrue);
-        expect(tester.takeException(), isNull);
-      } finally {
-        await harness.dispose(tester);
-      }
-    });
+  tearDown(() {
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, null);
+  });
 
-    testWidgets('$method reports ordinary update error without claiming recovery evidence', (tester) async {
-      final harness = _UpdaterSettingsHarness()..install();
-      try {
-        await _open(tester, harness);
-        final response = harness.queueResponse();
-        await _tapUpdate(tester, method);
-        await _until(tester, () => harness.calls.length == 1);
-        response.complete(jsonEncode({'status': 'error', 'message': 'fixture download rejected'}));
-        await _until(tester, () => find.textContaining('fixture download rejected').evaluate().isNotEmpty);
-        expect(find.textContaining(method == 'updateCore' ? 'ERR: Update Failed:' : 'ERR: Full Stack Failed:'), findsOneWidget);
-        expect(find.textContaining('RECOVERY REQUIRED:'), findsNothing);
-        expect(_enabled(tester, 'updateCore'), isTrue);
-        expect(_enabled(tester, 'updateFullStack'), isTrue);
-        expect(tester.takeException(), isNull);
-      } finally {
-        await harness.dispose(tester);
-      }
-    });
-
-    testWidgets('$method pending completion after disposal does not update UI', (tester) async {
-      final harness = _UpdaterSettingsHarness()..install();
-      try {
-        await _open(tester, harness);
-        final response = harness.queueResponse();
-        await _tapUpdate(tester, method);
-        await _until(tester, () => harness.calls.length == 1);
-        await tester.pumpWidget(const SizedBox.shrink());
-        response.complete(jsonEncode(_recoveryRequired(method)));
-        await _until(tester, () => harness.activeRequests == 0);
-        expect(find.byType(SettingsScreen), findsNothing);
-        expect(find.textContaining('RECOVERY REQUIRED:'), findsNothing);
-        expect(tester.takeException(), isNull);
-      } finally {
-        await harness.dispose(tester);
-      }
-    });
+  Future<void> pumpSettingsToUpdater(WidgetTester tester) async {
+    await tester.pumpWidget(const MaterialApp(home: SettingsScreen()));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+    await tester.scrollUntilVisible(
+      find.text('CHECK FOR YT-DLP UPDATE'),
+      300,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.pump(const Duration(milliseconds: 100));
   }
 
-  testWidgets('full stack partial response retains the helper-package failure detail', (tester) async {
-    final harness = _UpdaterSettingsHarness()..install();
-    try {
-      await _open(tester, harness);
-      final response = harness.queueResponse();
-      await _tapUpdate(tester, 'updateFullStack');
-      await _until(tester, () => harness.calls.length == 1);
-      response.complete(jsonEncode({
-        'status': 'partial',
-        'core': {'status': 'success', 'message': 'fixture core committed'},
-        'python_stack': {'status': 'error', 'message': 'fixture helper rollback attempted'},
-      }));
-      await _until(tester, () => find.textContaining('PARTIAL: yt-dlp updated; fixture helper rollback attempted').evaluate().isNotEmpty);
-      expect(find.textContaining('RECOVERY REQUIRED:'), findsNothing);
-      expect(_enabled(tester, 'updateCore'), isTrue);
-      expect(_enabled(tester, 'updateFullStack'), isTrue);
-      expect(tester.takeException(), isNull);
-    } finally {
-      await harness.dispose(tester);
-    }
+  testWidgets('Settings displays overlay status and APK-managed dependency copy without runtime pip trigger', (tester) async {
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, (call) async {
+      if (call.method == 'getUpdaterStatus') {
+        return jsonEncode(<String, dynamic>{
+          'status': 'success',
+          'bundled_version': '2026.10.26',
+          'active_version': '2026.11.14',
+          'active_source': 'overlay',
+          'pending_version': null,
+          'restart_required': false,
+          'recovery_required': false,
+        });
+      }
+      return null;
+    });
+
+    await pumpSettingsToUpdater(tester);
+
+    expect(find.text('BUNDLED YT-DLP: 2026.10.26'), findsOneWidget);
+    expect(find.text('ACTIVE YT-DLP: 2026.11.14 (OVERLAY)'), findsOneWidget);
+    expect(find.text('CHECK FOR YT-DLP UPDATE'), findsOneWidget);
+    expect(find.textContaining('MUTAGEN AND LYRICSGENIUS ARE UPGRADED WITH A NEW APK'), findsOneWidget);
+    expect(find.text('FULL STACK REFRESH (YT-DLP + DEPS)'), findsNothing);
+  });
+
+  testWidgets('CHECK FOR YT-DLP UPDATE transitions to RESTART REQUIRED when update staged', (tester) async {
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, (call) async {
+      if (call.method == 'getUpdaterStatus') {
+        return jsonEncode(<String, dynamic>{
+          'status': 'success',
+          'bundled_version': '2026.10.26',
+          'active_version': '2026.10.26',
+          'active_source': 'bundled',
+          'restart_required': false,
+          'recovery_required': false,
+        });
+      }
+      if (call.method == 'updateCore') {
+        return jsonEncode(<String, dynamic>{
+          'status': 'success',
+          'bundled_version': '2026.10.26',
+          'active_version': '2026.10.26',
+          'active_source': 'bundled',
+          'pending_version': '2026.11.14',
+          'restart_required': true,
+          'recovery_required': false,
+          'message': 'yt-dlp 2026.11.14 verified and staged. Restart Sovereign Tagger to activate.',
+        });
+      }
+      return null;
+    });
+
+    await pumpSettingsToUpdater(tester);
+    await tester.ensureVisible(find.text('CHECK FOR YT-DLP UPDATE'));
+    await tester.tap(find.text('CHECK FOR YT-DLP UPDATE'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+
+    expect(find.text('PENDING OVERLAY: 2026.11.14 — RESTART REQUIRED TO ACTIVATE'), findsOneWidget);
+    expect(find.textContaining('Restart Sovereign Tagger to activate'), findsWidgets);
+  });
+
+  testWidgets('Settings shows initial pending restart banner from active.json state', (tester) async {
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, (call) async {
+      if (call.method == 'getUpdaterStatus') {
+        return jsonEncode(<String, dynamic>{
+          'status': 'success',
+          'bundled_version': '2026.10.26',
+          'active_version': '2026.10.26',
+          'active_source': 'bundled',
+          'pending_version': '2026.12.01',
+          'restart_required': true,
+          'recovery_required': false,
+        });
+      }
+      return null;
+    });
+
+    await pumpSettingsToUpdater(tester);
+
+    expect(find.text('ACTIVE YT-DLP: 2026.10.26 (BUNDLED)'), findsOneWidget);
+    expect(find.text('PENDING OVERLAY: 2026.12.01 — RESTART REQUIRED TO ACTIVATE'), findsOneWidget);
+    expect(find.textContaining('RESTART REQUIRED TO ACTIVATE YT-DLP 2026.12.01'), findsOneWidget);
+  });
+
+  testWidgets('Settings renders ROLLBACK NOTICE after startup automatic fallback', (tester) async {
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, (call) async {
+      if (call.method == 'getUpdaterStatus') {
+        return jsonEncode(<String, dynamic>{
+          'status': 'success',
+          'bundled_version': '2026.10.26',
+          'active_version': '2026.10.26',
+          'active_source': 'bundled',
+          'restart_required': false,
+          'recovery_required': false,
+          'rolled_back': true,
+          'rolled_back_from': '2026.12.01',
+          'last_error': 'Pending overlay failed smoke check',
+        });
+      }
+      return null;
+    });
+
+    await pumpSettingsToUpdater(tester);
+
+    expect(find.text('ROLLBACK NOTICE: REVERTED FROM 2026.12.01'), findsOneWidget);
+    expect(find.textContaining('ROLLED BACK FROM 2026.12.01'), findsOneWidget);
+  });
+
+  testWidgets('CHECK FOR YT-DLP UPDATE surfaces error and RECOVERY REQUIRED states', (tester) async {
+    var callCount = 0;
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, (call) async {
+      if (call.method == 'getUpdaterStatus') {
+        return jsonEncode(<String, dynamic>{
+          'status': 'success',
+          'bundled_version': '2026.10.26',
+          'active_version': '2026.10.26',
+          'active_source': 'bundled',
+        });
+      }
+      if (call.method == 'updateCore') {
+        callCount += 1;
+        if (callCount == 1) {
+          return jsonEncode(<String, dynamic>{
+            'status': 'error',
+            'recovery_required': false,
+            'message': 'Archive SHA-256 verification failed',
+          });
+        }
+        return jsonEncode(<String, dynamic>{
+          'status': 'error',
+          'recovery_required': true,
+          'message': 'Disk write fault during manifest commit',
+        });
+      }
+      return null;
+    });
+
+    await pumpSettingsToUpdater(tester);
+    await tester.ensureVisible(find.text('CHECK FOR YT-DLP UPDATE'));
+    await tester.tap(find.text('CHECK FOR YT-DLP UPDATE'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+
+    expect(find.textContaining('ERR: Update Failed: Archive SHA-256 verification failed'), findsOneWidget);
+
+    await tester.tap(find.text('CHECK FOR YT-DLP UPDATE'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+
+    expect(find.text('STATE: RECOVERY REQUIRED'), findsOneWidget);
+    expect(find.textContaining('RECOVERY REQUIRED: Disk write fault'), findsOneWidget);
+  });
+
+  testWidgets('CHECK FOR YT-DLP UPDATE handles disposal safely while pending', (tester) async {
+    final completer = Completer<String>();
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, (call) async {
+      if (call.method == 'getUpdaterStatus') {
+        return jsonEncode(<String, dynamic>{
+          'status': 'success',
+          'bundled_version': '2026.10.26',
+          'active_version': '2026.10.26',
+          'active_source': 'bundled',
+        });
+      }
+      if (call.method == 'updateCore') {
+        return completer.future;
+      }
+      return null;
+    });
+
+    await pumpSettingsToUpdater(tester);
+    await tester.ensureVisible(find.text('CHECK FOR YT-DLP UPDATE'));
+    await tester.tap(find.text('CHECK FOR YT-DLP UPDATE'));
+    await tester.pump();
+    expect(find.text('UPDATING CORE ENGINE...'), findsOneWidget);
+
+    await tester.pumpWidget(const MaterialApp(home: SizedBox.shrink()));
+    completer.complete(jsonEncode(<String, dynamic>{'status': 'success', 'message': 'late'}));
+    await tester.pump();
   });
 }

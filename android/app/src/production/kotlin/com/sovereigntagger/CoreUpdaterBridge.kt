@@ -5,10 +5,34 @@
 
 package com.sovereigntagger
 
+import android.content.Context
 import com.chaquo.python.PyObject
 
 object CoreUpdaterBridge {
-    fun execute(module: PyObject, fullStack: Boolean): String = module.callAttr(
-        if (fullStack) "execute_full_scorched_earth" else "execute_scorched_earth"
-    ).toString()
+    fun execute(context: Context, module: PyObject, fullStack: Boolean): String {
+        val overlayRoot = PythonRuntime.overlayRootPath(context)
+        return if (fullStack) {
+            module.callAttr(
+                "execute_full_scorched_earth",
+                overlayRoot,
+                BuildConfig.YTDLP_BUNDLED_VERSION,
+            ).toString()
+        } else {
+            module.callAttr(
+                "execute_scorched_earth",
+                overlayRoot,
+                null,
+                BuildConfig.YTDLP_BUNDLED_VERSION,
+            ).toString()
+        }
+    }
+
+    fun status(context: Context, module: PyObject): String {
+        val overlayRoot = PythonRuntime.overlayRootPath(context)
+        return module.callAttr(
+            "get_status",
+            overlayRoot,
+            BuildConfig.YTDLP_BUNDLED_VERSION,
+        ).toString()
+    }
 }

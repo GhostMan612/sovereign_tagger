@@ -451,7 +451,7 @@ class GhostBrain {
       ['After a download']),
     _KbEntry('grabfail', 'Downloads failing', 'fail failing error broken youtube not working update yt-dlp python grab crash stuck 403 sign in',
       [
-        "When YouTube changes things, open SETTINGS -> FULL STACK REFRESH (YT-DLP + DEPS). That updates the downloader engine in place.",
+        "When YouTube changes things, open SETTINGS -> CHECK FOR YT-DLP UPDATE and restart Sovereign Tagger to activate the overlay update. Mutagen and lyricsgenius update with a new APK.",
         "Still stuck? ON-BOARD PYTHON DOCTOR in Settings checks the engine. Silent Facebook videos self-heal by pulling a separate audio stream.",
       ],
       ['Open settings']),

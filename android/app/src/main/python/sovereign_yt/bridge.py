@@ -210,12 +210,22 @@ def capabilities():
     except Exception:
         version = ""
     backend = _install_ffmpegkit_backend()
+    overlay_state = {}
+    try:
+        from sovereign_yt import overlay_bootstrap
+        overlay_state = overlay_bootstrap.get_runtime_status()
+    except Exception:
+        overlay_state = {}
     report = {
         "status": "success",
         "ffmpeg": _ffmpeg_available(),
         "ffmpegkit": backend,
         "ffmpegkit_version": _FFMPEGKIT["version"] if backend else "",
         "ytdlp": version,
+        "ytdlp_source": overlay_state.get("active_source", "bundled"),
+        "ytdlp_bundled": overlay_state.get("bundled_version", version),
+        "ytdlp_pending": overlay_state.get("pending_version") or "",
+        "ytdlp_restart_required": bool(overlay_state.get("restart_required", False)),
     }
     if not backend and _FFMPEGKIT["error"]:
         report["ffmpegkit_error"] = _FFMPEGKIT["error"]

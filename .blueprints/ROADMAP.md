@@ -1,6 +1,14 @@
 # ROADMAP.md — Sovereign Tagger v2 \"Industrial Grade\"
 > Status legend: [ ] pending · [~] in progress · [x] done (gate passed) · [-] skipped/parked
 
+## Chaquopy-Aware Overlay `yt-dlp` Updater (`fix/p0-chaquopy-overlay-updater`, PR #01) [x] (2026-11-14)
+
+- [x] Replace Chaquopy-incompatible `AssetFinder` `yt-dlp` patching with immutable-APK + writable `<filesDir>/sovereign_py_overlay/` (`slots/`, `staging/`, `active.json`), `PythonRuntime.ensureInitialized()` startup bootstrap prior to consumer `yt_dlp` imports, and Gradle-derived `BuildConfig.YTDLP_BUNDLED_VERSION`.
+- [x] Harden GitHub release verification (`HTTPS` + trusted GitHub hosts across redirects, mandatory `SHA2-256SUMS`, archive/member/ratio/traversal/symlink/hardlink/binary limits, `requires-python`, tag-to-version match, CalVer downgrade rejection), restart-only activation (`pending_activation`), premature-import guard, and automatic rollback to prior slot / bundled `.imy`.
+- [x] Apply Option B for `mutagen`/`lyricsgenius`: retire runtime `pip` UI button in `SettingsScreen`, return non-mutating `requires_apk_update` from `updateFullStack`, and surface bundled/active/source/pending/restart/rollback/recovery telemetry via `getUpdaterStatus`.
+- [x] Verify all host gates (`28` Python tests, `flutter analyze --no-pub --no-fatal-infos`, `212` Flutter tests, `:app:testDebugUnitTest`, ARM64 & x64 debug APKs, unsigned release signing guard) and 4-phase Moto G (`ZT4222BMWN`, `com.sovereigntagger.updateracceptance`) multi-process restart/rollback hardware acceptance with `com.sovereigntagger` untouched (`docs/chaquopy-overlay-updater.md`).
+- [ ] Deferred separate PRs: Backup/export `Downloads/sovereign_config.bin` collision isolation; On-Board Python Doctor redesign; local build cache & CI workspace hygiene.
+
 ## PR #87 — Transactional updater rollback & isolated device acceptance [x] (merged at `894e4b3` + post-merge `main` audit passed, 2026-11-14)
 
 - [x] Preserve backup, staging, and journal when rollback restore/verification fails in `updater.py`, surface `recovery_required` through `execute_full_scorched_earth()` and `SettingsScreen` (`updateCore` + `updateFullStack`), gate `updaterAcceptance` behind `-PupdaterAcceptanceTest=true` (`80d8546`), and pass host gates (`37/37` Python tests w/ `24` updater tests, `15/15` updater stress runs, `flutter analyze`, `213/213` Flutter tests w/ `7` Settings tests, `flutter build apk --debug --target-platform android-arm64`, `:app:testDebugUnitTest`).

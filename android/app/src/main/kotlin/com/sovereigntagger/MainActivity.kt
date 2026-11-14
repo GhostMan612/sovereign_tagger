@@ -23,7 +23,6 @@ import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.EventChannel
 import io.flutter.plugin.common.MethodChannel
 import com.chaquo.python.Python
-import com.chaquo.python.android.AndroidPlatform
 
 class MainActivity: AudioServiceActivity() {
     override fun getRenderMode(): RenderMode = RenderMode.texture
@@ -71,8 +70,7 @@ class MainActivity: AudioServiceActivity() {
     private var recoverableDeleting = false
 
     private val pythonEngine: Python by lazy {
-        if (!Python.isStarted()) Python.start(AndroidPlatform(this))
-        Python.getInstance()
+        PythonRuntime.ensureInitialized(this)
     }
 
     private val ytBridgeModule by lazy { pythonEngine.getModule("sovereign_yt.bridge") }
@@ -241,8 +239,9 @@ class MainActivity: AudioServiceActivity() {
                     val outPath = call.argument<String>("outPath") ?: ""
                     runAsync(result, "THUMB_ERROR") { ytBridgeModule.callAttr("fetch_thumbnail", url, outPath).toString() }
                 }
-                "updateCore" -> runAsync(result, "UPDATE_ERROR") { CoreUpdaterBridge.execute(ytUpdaterModule, false) }
-                "updateFullStack" -> runAsync(result, "UPDATE_ERROR") { CoreUpdaterBridge.execute(ytUpdaterModule, true) }
+                "updateCore" -> runAsync(result, "UPDATE_ERROR") { CoreUpdaterBridge.execute(this, ytUpdaterModule, false) }
+                "updateFullStack" -> runAsync(result, "UPDATE_ERROR") { CoreUpdaterBridge.execute(this, ytUpdaterModule, true) }
+                "getUpdaterStatus" -> runAsync(result, "UPDATE_ERROR") { CoreUpdaterBridge.status(this, ytUpdaterModule) }
                 "runDoctor" -> {
                     val errorLog = call.argument<String>("errorLog") ?: ""
                     runAsync(result, "DOCTOR_ERROR") { doctorPythonModule.callAttr("diagnose", errorLog).toString() }

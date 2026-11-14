@@ -66,7 +66,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
   String _updateStatus = "Core Engine Is Ready.";
   bool _isDoctorRunning = false;
   String _doctorReport = "";
-  String _fullStackStatus = "Idle.";
+  String _bundledYtDlpVersion = "";
+  String _activeYtDlpVersion = "";
+  String _activeYtDlpSource = "";
+  String _pendingYtDlpVersion = "";
+  bool _restartRequiredForUpdate = false;
+  bool _recoveryRequiredForUpdate = false;
+  String _rolledBackFromVersion = "";
+  String _overlayLastError = "";
   bool _dartSpider = false;
   bool _isProbing = false;
   String _probeReport = "";
@@ -89,6 +96,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _loadKeys();
     _loadPendingRecoveries();
     unawaited(_loadProvenance());
+    unawaited(_loadUpdaterStatus());
   }
 
   Future<void> _loadProvenance() async {
@@ -433,60 +441,81 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
   }
 
+  void _applyUpdaterPayload(Map<String, dynamic> data, {bool fromUpdateAction = false}) {
+    _bundledYtDlpVersion = (data['bundled_version'] ?? '').toString();
+    _activeYtDlpVersion = (data['active_version'] ?? '').toString();
+    _activeYtDlpSource = (data['active_source'] ?? '').toString();
+    _pendingYtDlpVersion = (data['pending_version'] ?? '').toString();
+    _restartRequiredForUpdate = data['restart_required'] == true;
+    _recoveryRequiredForUpdate = data['recovery_required'] == true;
+    _rolledBackFromVersion = (data['rolled_back_from'] ?? '').toString();
+    _overlayLastError = (data['last_error'] ?? '').toString();
+
+    if (fromUpdateAction) return;
+
+    if (_recoveryRequiredForUpdate) {
+      final errDetail = _overlayLastError.isNotEmpty
+          ? _overlayLastError
+          : 'Overlay recovery required';
+      _updateStatus =
+          "RECOVERY REQUIRED: $errDetail. Backup retained; retry after resolving the storage fault.";
+    } else if (_rolledBackFromVersion.isNotEmpty) {
+      final errDetail = _overlayLastError.isNotEmpty
+          ? _overlayLastError
+          : 'Restored prior runtime';
+      _updateStatus = "ROLLED BACK FROM $_rolledBackFromVersion: $errDetail";
+    } else if (_restartRequiredForUpdate && _pendingYtDlpVersion.isNotEmpty) {
+      _updateStatus =
+          "RESTART REQUIRED TO ACTIVATE YT-DLP $_pendingYtDlpVersion.";
+    } else if (_activeYtDlpVersion.isNotEmpty) {
+      final srcLabel = _activeYtDlpSource.isEmpty
+          ? 'UNKNOWN'
+          : _activeYtDlpSource.toUpperCase();
+      _updateStatus = "Core Engine Ready ($srcLabel $_activeYtDlpVersion).";
+    }
+  }
+
+  Future<void> _loadUpdaterStatus() async {
+    try {
+      final result = await const MethodChannel('com.sovereign.tagger/ytdlp')
+          .invokeMethod('getUpdaterStatus');
+      if (!mounted || result == null) return;
+      final decoded = jsonDecode(result.toString());
+      if (decoded is! Map<String, dynamic>) return;
+      setState(() {
+        _applyUpdaterPayload(decoded);
+      });
+    } catch (_) {}
+  }
+
   Future<void> _updateYtDlp() async {
     TapFeedback.machineTap();
     setState(() {
       _isUpdating = true;
-      _updateStatus = "Initiating transactional yt-dlp update...";
+      _updateStatus = "Initiating transactional yt-dlp overlay update...";
     });
     try {
       final result = await const MethodChannel('com.sovereign.tagger/ytdlp').invokeMethod('updateCore');
       if (!mounted) return;
-      final data = jsonDecode(result.toString());
-      if (data['status'] == 'success') {
-        setState(() => _updateStatus = data['message'].toString());
-      } else if (data['recovery_required'] == true) {
-        setState(() => _updateStatus = "RECOVERY REQUIRED: ${data['message']}. Backup retained; retry after resolving the storage fault.");
-      } else {
-        setState(() => _updateStatus = "ERR: Update Failed: ${data['message'].toString()}");
+      final decoded = jsonDecode(result.toString());
+      if (decoded is! Map<String, dynamic>) {
+        setState(() => _updateStatus = "ERR: Invalid updater response.");
+        return;
       }
+      setState(() {
+        _applyUpdaterPayload(decoded, fromUpdateAction: true);
+        if (decoded['status'] == 'success') {
+          _updateStatus = (decoded['message'] ?? 'Update staged.').toString();
+        } else if (decoded['recovery_required'] == true) {
+          _updateStatus =
+              "RECOVERY REQUIRED: ${decoded['message']}. Backup retained; retry after resolving the storage fault.";
+        } else {
+          _updateStatus = "ERR: Update Failed: ${decoded['message'].toString()}";
+        }
+      });
     } catch (e) {
       if (!mounted) return;
       setState(() => _updateStatus = "ERR: Update Fault: $e");
-    } finally {
-      if (mounted) setState(() => _isUpdating = false);
-    }
-  }
-
-  Future<void> _updateFullStack() async {
-    TapFeedback.machineTap();
-    setState(() {
-      _isUpdating = true;
-      _fullStackStatus = "Full Stack Refresh: yt-dlp + mutagen/lyricsgenius...";
-    });
-    try {
-      final result = await const MethodChannel('com.sovereign.tagger/ytdlp').invokeMethod('updateFullStack');
-      if (!mounted) return;
-      final data = jsonDecode(result.toString());
-      if (!mounted) return;
-      if (data['status'] == 'success') {
-        final core = data['core'];
-        final message = data['message'] ?? (core is Map ? core['message'] : null);
-        setState(() => _fullStackStatus = "Full stack refresh complete. ${message ?? ''}");
-      } else if (data['recovery_required'] == true) {
-        setState(() => _fullStackStatus = "RECOVERY REQUIRED: ${data['message']}. Backup retained; retry after resolving the storage fault.");
-      } else if (data['status'] == 'partial') {
-        final stack = data['python_stack'];
-        final detail = (stack is Map && stack['message'] != null)
-            ? stack['message'].toString()
-            : 'helper packages failed';
-        setState(() => _fullStackStatus = 'PARTIAL: yt-dlp updated; $detail');
-      } else {
-        setState(() => _fullStackStatus = "ERR: Full Stack Failed: ${data['message']}");
-      }
-    } catch (e) {
-      if (!mounted) return;
-      setState(() => _fullStackStatus = "ERR: Full Stack Fault: $e");
     } finally {
       if (mounted) setState(() => _isUpdating = false);
     }
@@ -1993,27 +2022,62 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 
                 const Text("> CORE ENGINE MAINTENANCE", style: TextStyle(fontFamily: 'ShareTechMono', fontSize: 16, fontWeight: FontWeight.bold, color: Colors.orangeAccent)),
                 const SizedBox(height: 8),
-                const Text("YT-DLP IS STAGED AND VERIFIED BEFORE REPLACEMENT. FAILED UPDATES ATTEMPT RECOVERY; IF RECOVERY FAILS, THE BACKUP AND TRANSACTION RECORD ARE RETAINED FOR RETRY.", style: TextStyle(fontFamily: 'ShareTechMono', color: Colors.white54, fontSize: 11)),
-                const SizedBox(height: 16),
+                const Text("YT-DLP UPDATES STAGE INTO A VERIFIED WRITABLE OVERLAY AND ACTIVATE ON THE NEXT APP RESTART. FAILED ACTIVATIONS ROLL BACK AUTOMATICALLY.", style: TextStyle(fontFamily: 'ShareTechMono', color: Colors.white54, fontSize: 11)),
+                const SizedBox(height: 12),
+                Container(
+                  padding: const EdgeInsets.all(12.0),
+                  decoration: BoxDecoration(color: Colors.black, border: Border.all(color: Colors.orangeAccent.withValues(alpha: 0.45))),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        "BUNDLED YT-DLP: ${_bundledYtDlpVersion.isEmpty ? 'UNKNOWN' : _bundledYtDlpVersion}",
+                        style: const TextStyle(fontFamily: 'ShareTechMono', fontSize: 11, color: Colors.white70),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        "ACTIVE YT-DLP: ${_activeYtDlpVersion.isEmpty ? 'UNKNOWN' : _activeYtDlpVersion} (${_activeYtDlpSource.isEmpty ? 'UNKNOWN' : _activeYtDlpSource.toUpperCase()})",
+                        style: const TextStyle(fontFamily: 'ShareTechMono', fontSize: 11, color: Colors.cyanAccent),
+                      ),
+                      if (_restartRequiredForUpdate && _pendingYtDlpVersion.isNotEmpty) ...[
+                        const SizedBox(height: 4),
+                        Text(
+                          "PENDING OVERLAY: $_pendingYtDlpVersion — RESTART REQUIRED TO ACTIVATE",
+                          style: const TextStyle(fontFamily: 'ShareTechMono', fontSize: 11, color: Colors.amberAccent, fontWeight: FontWeight.bold),
+                        ),
+                      ],
+                      if (_recoveryRequiredForUpdate) ...[
+                        const SizedBox(height: 4),
+                        const Text(
+                          "STATE: RECOVERY REQUIRED",
+                          style: TextStyle(fontFamily: 'ShareTechMono', fontSize: 11, color: Colors.redAccent, fontWeight: FontWeight.bold),
+                        ),
+                      ] else if (_rolledBackFromVersion.isNotEmpty) ...[
+                        const SizedBox(height: 4),
+                        Text(
+                          "ROLLBACK NOTICE: REVERTED FROM $_rolledBackFromVersion",
+                          style: const TextStyle(fontFamily: 'ShareTechMono', fontSize: 11, color: Colors.amberAccent),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 12),
                 OutlinedButton.icon(
                   onPressed: _isUpdating ? null : _updateYtDlp,
-                  icon: _isUpdating 
+                  icon: _isUpdating
                       ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.orangeAccent))
                       : const Icon(Icons.security_update_warning, color: Colors.orangeAccent),
                   label: Text(_isUpdating ? "UPDATING CORE ENGINE..." : "CHECK FOR YT-DLP UPDATE", style: const TextStyle(fontFamily: 'ShareTechMono', color: Colors.orangeAccent, fontWeight: FontWeight.bold)),
                   style: OutlinedButton.styleFrom(side: const BorderSide(color: Colors.orangeAccent), backgroundColor: Colors.black, padding: const EdgeInsets.symmetric(vertical: 16)),
                 ),
-                const SizedBox(height: 12),
-                OutlinedButton.icon(
-                  onPressed: _isUpdating ? null : _updateFullStack,
-                  icon: _isUpdating
-                      ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.amberAccent))
-                      : const Icon(Icons.layers, color: Colors.amberAccent),
-                  label: const Text("FULL STACK REFRESH (YT-DLP + DEPS)", style: TextStyle(fontFamily: 'ShareTechMono', color: Colors.amberAccent, fontWeight: FontWeight.bold, fontSize: 12)),
-                  style: OutlinedButton.styleFrom(side: const BorderSide(color: Colors.amberAccent), backgroundColor: Colors.black, padding: const EdgeInsets.symmetric(vertical: 16)),
-                ),
                 const SizedBox(height: 8),
-                Text("> $_fullStackStatus", textAlign: TextAlign.center, style: const TextStyle(fontFamily: 'VT323', fontSize: 13, color: Colors.white54)),
+                Text("> $_updateStatus", textAlign: TextAlign.center, style: const TextStyle(fontFamily: 'VT323', fontSize: 14, color: Colors.white70)),
+                const SizedBox(height: 10),
+                const Text(
+                  "APK-MANAGED DEPENDENCIES: MUTAGEN AND LYRICSGENIUS ARE UPGRADED WITH A NEW APK BUILD.",
+                  style: TextStyle(fontFamily: 'ShareTechMono', fontSize: 10, color: Colors.white54),
+                ),
                 const SizedBox(height: 16),
                 Container(
                   decoration: BoxDecoration(color: Colors.black, border: Border.all(color: Colors.cyanAccent.withValues(alpha: 0.4))),
@@ -2130,8 +2194,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     ],
                   ),
                 ),
-                const SizedBox(height: 8),
-                Text("> $_updateStatus", textAlign: TextAlign.center, style: const TextStyle(fontFamily: 'VT323', fontSize: 14, color: Colors.white70)),
 
                 const SizedBox(height: 32),
                 
