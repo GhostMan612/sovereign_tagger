@@ -136,11 +136,13 @@ android {
     }
 
     buildTypes {
-        create("updaterAcceptance") {
-            initWith debug
-            debuggable true
-            applicationIdSuffix ".updateracceptance"
-            matchingFallbacks = ["debug"]
+        if (updaterAcceptanceTest) {
+            create("updaterAcceptance") {
+                initWith debug
+                debuggable true
+                applicationIdSuffix ".updateracceptance"
+                matchingFallbacks = ["debug"]
+            }
         }
         release {
             signingConfig = releaseSigningReady ? signingConfigs.release : null
@@ -164,12 +166,14 @@ android {
         }
     }
 
-    project.configurations.matching { it.name.startsWith("updaterAcceptance") }.configureEach {
-        resolutionStrategy.eachDependency { details ->
-            if (details.requested.group == "io.flutter" && details.requested.name.endsWith("_release")) {
-                def debugArtifact = details.requested.name.replaceFirst(/_release$/, "_debug")
-                details.useTarget("${details.requested.group}:${debugArtifact}:${details.requested.version}")
-                details.because("updaterAcceptance packages debuggable JIT assets and requires debug Flutter engine")
+    if (updaterAcceptanceTest) {
+        project.configurations.matching { it.name.startsWith("updaterAcceptance") }.configureEach {
+            resolutionStrategy.eachDependency { details ->
+                if (details.requested.group == "io.flutter" && details.requested.name.endsWith("_release")) {
+                    def debugArtifact = details.requested.name.replaceFirst(/_release$/, "_debug")
+                    details.useTarget("${details.requested.group}:${debugArtifact}:${details.requested.version}")
+                    details.because("updaterAcceptance packages debuggable JIT assets and requires debug Flutter engine")
+                }
             }
         }
     }
