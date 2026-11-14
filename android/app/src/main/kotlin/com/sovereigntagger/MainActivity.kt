@@ -241,8 +241,8 @@ class MainActivity: AudioServiceActivity() {
                     val outPath = call.argument<String>("outPath") ?: ""
                     runAsync(result, "THUMB_ERROR") { ytBridgeModule.callAttr("fetch_thumbnail", url, outPath).toString() }
                 }
-                "updateCore" -> runAsync(result, "UPDATE_ERROR") { ytUpdaterModule.callAttr("execute_scorched_earth").toString() }
-                "updateFullStack" -> runAsync(result, "UPDATE_ERROR") { ytUpdaterModule.callAttr("execute_full_scorched_earth").toString() }
+                "updateCore" -> runAsync(result, "UPDATE_ERROR") { CoreUpdaterBridge.execute(ytUpdaterModule, false) }
+                "updateFullStack" -> runAsync(result, "UPDATE_ERROR") { CoreUpdaterBridge.execute(ytUpdaterModule, true) }
                 "runDoctor" -> {
                     val errorLog = call.argument<String>("errorLog") ?: ""
                     runAsync(result, "DOCTOR_ERROR") { doctorPythonModule.callAttr("diagnose", errorLog).toString() }
