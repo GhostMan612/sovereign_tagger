@@ -4,7 +4,7 @@ import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 
-import '/src/base/utils.dart';
+import '../base/utils.dart';
 import '../base/constants.dart';
 import '../base/platform_streams.dart';
 import '../models/recorder_settings.dart';

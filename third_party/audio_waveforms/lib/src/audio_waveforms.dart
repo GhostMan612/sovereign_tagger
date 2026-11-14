@@ -2,7 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
-import '/audio_waveforms.dart';
+import '../audio_waveforms.dart';
 import 'base/label.dart';
 import 'base/wave_clipper.dart';
 import 'painters/recorder_wave_painter.dart';
