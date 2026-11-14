@@ -1,3 +1,8 @@
+// ============================================================
+// As Above, So Below. As Within, So Without.
+// The Future Dictates the Past and the Past is Always Present.
+// ============================================================
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sovereign_tagger/core/eq15_contract.dart';
 import 'package:sovereign_tagger/core/eq_mapper.dart';
@@ -67,5 +72,40 @@ void main() {
     expect(Eq15Contract.parseCapabilities({'engine': 'dynamics15', 'bands': []}).available, isFalse);
     expect(Eq15Contract.parseCapabilities({'engine': 'future', 'bands': [1, 2]}).available, isFalse);
     expect(Eq15Contract.parseCapabilities({'engine': 'legacy', 'bands': [double.nan]}).available, isFalse);
+  });
+
+  test('parses live readback for dynamics15, legacy and malformed payloads', () {
+    final fifteen = List<double>.generate(15, (i) => i == 4 ? 12.0 : (i == 6 ? -6.0 : 0.0));
+    final dsp = Eq15Contract.parseReadback({
+      'engine': 'dynamics15',
+      'enabled': true,
+      'gainsDb': fifteen,
+    });
+    expect(dsp.backend, 'dynamics15');
+    expect(dsp.enabled, isTrue);
+    expect(dsp.gainsDb, fifteen);
+
+    final leg = Eq15Contract.parseReadback({
+      'engine': 'legacy',
+      'enabled': false,
+      'gainsDb': [1.0, 2.0, 0.0, -1.0, 0.5],
+    });
+    expect(leg.backend, 'legacy');
+    expect(leg.enabled, isFalse);
+    expect(leg.gainsDb.length, 5);
+
+    for (final bad in [
+      null,
+      <Object?, Object?>{},
+      {'engine': 'dynamics15', 'enabled': true, 'gainsDb': [1.0, 2.0]},
+      {'engine': 'dynamics15', 'enabled': true, 'gainsDb': List<double>.filled(15, double.nan)},
+      {'engine': 'legacy', 'enabled': true, 'gainsDb': <double>[]},
+      {'engine': 'future', 'enabled': true, 'gainsDb': [0.0]},
+    ]) {
+      final parsed = Eq15Contract.parseReadback(bad);
+      expect(parsed.backend, 'unavailable');
+      expect(parsed.enabled, isFalse);
+      expect(parsed.gainsDb, isEmpty);
+    }
   });
 }

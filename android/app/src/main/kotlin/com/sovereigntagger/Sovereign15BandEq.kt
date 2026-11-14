@@ -1,3 +1,8 @@
+// ============================================================
+// As Above, So Below. As Within, So Without.
+// The Future Dictates the Past and the Past is Always Present.
+// ============================================================
+
 package com.sovereigntagger
 
 import android.media.audiofx.DynamicsProcessing
@@ -8,14 +13,12 @@ import kotlin.math.ln
 import kotlin.math.roundToInt
 import kotlin.math.sqrt
 
-/** Configurable 15-band audio-session DSP, distinct from fixed hardware Equalizer. */
 internal object SovereignEqBands {
     val centersHz = doubleArrayOf(
         25.0, 40.0, 63.0, 100.0, 160.0,
         250.0, 400.0, 630.0, 1000.0, 1600.0,
         2500.0, 4000.0, 6300.0, 10000.0, 16000.0,
     )
-    // DynamicsProcessing uses upper *cutoffs*, not center frequencies.
     val cutoffsHz: FloatArray = FloatArray(centersHz.size) { i ->
         if (i == centersHz.lastIndex) 20000.0f
         else sqrt(centersHz[i] * centersHz[i + 1]).toFloat()
@@ -36,7 +39,6 @@ internal object SovereignEqBands {
     }
 }
 
-/** Uses DynamicsProcessing API 28+ for 15 true stages; legacy fallback is explicit. */
 internal class Sovereign15BandEq {
     private var sessionId = 0
     private var dynamics: DynamicsProcessing? = null
@@ -151,6 +153,52 @@ internal class Sovereign15BandEq {
             "engine" to "unavailable",
             "bands" to emptyList<Double>(),
             "minDb" to -12.0, "maxDb" to 12.0,
+        )
+    }
+
+    fun readEq(): Map<String, Any> {
+        dynamics?.let { effect ->
+            return try {
+                val gains = SovereignEqBands.centersHz.indices.map { i ->
+                    effect.getPreEqBandByChannelIndex(0, i).gain.toDouble()
+                }
+                mapOf(
+                    "engine" to "dynamics15",
+                    "enabled" to effect.enabled,
+                    "gainsDb" to gains,
+                )
+            } catch (error: Throwable) {
+                Log.w("SovereignEq15", "EQ readback failed", error)
+                mapOf(
+                    "engine" to "dynamics15",
+                    "enabled" to false,
+                    "gainsDb" to emptyList<Double>(),
+                )
+            }
+        }
+        legacy?.let { eq ->
+            return try {
+                val gains = (0 until eq.numberOfBands.toInt()).map { i ->
+                    eq.getBandLevel(i.toShort()).toDouble() / 100.0
+                }
+                mapOf(
+                    "engine" to "legacy",
+                    "enabled" to eq.enabled,
+                    "gainsDb" to gains,
+                )
+            } catch (error: Throwable) {
+                Log.w("SovereignEq15", "Legacy EQ readback failed", error)
+                mapOf(
+                    "engine" to "legacy",
+                    "enabled" to false,
+                    "gainsDb" to emptyList<Double>(),
+                )
+            }
+        }
+        return mapOf(
+            "engine" to (describe()["engine"] ?: "unavailable"),
+            "enabled" to false,
+            "gainsDb" to emptyList<Double>(),
         )
     }
 

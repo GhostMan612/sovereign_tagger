@@ -97,7 +97,6 @@ class PlaybackFx {
       }
       if (eqBackend.value == 'unavailable' || eqBackend.value == 'pending') return;
       final gains = Eq15Contract.validateGains(eqGains.value);
-      // All fifteen gains reach the native DSP; only legacy may interpolate.
       final applied = await _fxChannel.invokeMethod<bool>('applyEq', {
         'enabled': eqEnabled.value,
         'gainsDb': gains,
@@ -105,6 +104,16 @@ class PlaybackFx {
       if (applied != true) debugPrint('SOVEREIGN FX: native EQ rejected update');
     } catch (e) {
       debugPrint('SOVEREIGN FX: applyEq FAILED ($e); playback remains available');
+    }
+  }
+
+  static Future<EqReadback> readEq() async {
+    try {
+      final raw = await _fxChannel.invokeMethod<Map<Object?, Object?>>('readEq');
+      return Eq15Contract.parseReadback(raw);
+    } catch (e) {
+      debugPrint('SOVEREIGN FX: readEq FAILED ($e)');
+      return const EqReadback('unavailable', false, []);
     }
   }
 

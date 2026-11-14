@@ -1,8 +1,10 @@
+// ============================================================
+// As Above, So Below. As Within, So Without.
+// The Future Dictates the Past and the Past is Always Present.
+// ============================================================
+
 import 'eq_mapper.dart';
 
-/// Single source of truth for the 15 playback sliders and native FX contract.
-/// The Android backend applies these gains directly on API 28+; a separately
-/// labeled compatibility engine maps them only when DynamicsProcessing fails.
 class Eq15Contract {
   static const minDb = -12.0;
   static const maxDb = 12.0;
@@ -44,6 +46,28 @@ class Eq15Contract {
     }
     return true;
   }
+
+  static EqReadback parseReadback(Map<Object?, Object?>? raw) {
+    if (raw == null) return const EqReadback('unavailable', false, []);
+    final backend = raw['engine'];
+    final enabled = raw['enabled'] == true;
+    final list = raw['gainsDb'];
+    if (backend is! String ||
+        list is! List ||
+        list.any((g) => g is! num || !g.isFinite)) {
+      return const EqReadback('unavailable', false, []);
+    }
+    final gains = List<double>.unmodifiable(
+      list.map((g) => (g as num).toDouble()),
+    );
+    if (backend == 'dynamics15' && gains.length == EqMapper.bandFrequencies.length) {
+      return EqReadback('dynamics15', enabled, gains);
+    }
+    if (backend == 'legacy' && gains.isNotEmpty) {
+      return EqReadback('legacy', enabled, gains);
+    }
+    return const EqReadback('unavailable', false, []);
+  }
 }
 
 class EqCapability {
@@ -52,4 +76,11 @@ class EqCapability {
   const EqCapability(this.backend, this.bandsHz);
   bool get independent => backend == 'dynamics15';
   bool get available => backend == 'dynamics15' || backend == 'legacy';
+}
+
+class EqReadback {
+  final String backend;
+  final bool enabled;
+  final List<double> gainsDb;
+  const EqReadback(this.backend, this.enabled, this.gainsDb);
 }

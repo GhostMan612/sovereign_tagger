@@ -632,8 +632,6 @@ class MainActivity: AudioServiceActivity() {
                         result.success(independentEq.describe())
                         return@setMethodCallHandler
                     }
-                    // ExoPlayer may change session IDs across queue/route transitions.
-                    // Always release the previous effect before binding the new one.
                     if (hwAudioSessionId != sessionId) {
                         try { hwLoudness?.release() } catch (_: Throwable) {}
                         hwLoudness = try { LoudnessEnhancer(sessionId) } catch (error: Throwable) {
@@ -655,8 +653,18 @@ class MainActivity: AudioServiceActivity() {
                 "applyEq" -> {
                     val enabled = call.argument<Boolean>("enabled") ?: false
                     val gainsDb = call.argument<List<Double>>("gainsDb") ?: emptyList()
-                    result.success(independentEq.apply(enabled, gainsDb))
+                    val applied = independentEq.apply(enabled, gainsDb)
+                    if (applied) {
+                        val readback = independentEq.readEq()
+                        Log.i(
+                            "SovereignEq15",
+                            "EQ readback enabled=" + enabled +
+                                " gains=" + (readback["gainsDb"] as? List<*>),
+                        )
+                    }
+                    result.success(applied)
                 }
+                "readEq" -> result.success(independentEq.readEq())
                 "applyLoudness" -> {
                     val enabled = call.argument<Boolean>("enabled") ?: false
                     val boostDb = call.argument<Double>("boostDb") ?: 0.0
