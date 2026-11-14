@@ -8,7 +8,6 @@ package com.sovereigntagger
 import android.app.Activity
 import android.app.RecoverableSecurityException
 import android.content.Intent
-import android.media.audiofx.Equalizer
 import android.media.audiofx.LoudnessEnhancer
 import android.net.Uri
 import kotlin.math.roundToInt
@@ -43,7 +42,7 @@ class MainActivity: AudioServiceActivity() {
     private val AUDIO_FX_CHANNEL = "com.sovereign.tagger/audio_fx"
     private val PCLOUD_AUTH_CHANNEL = "com.sovereign.tagger/pcloud_auth"
 
-    private var hwEqualizer: Equalizer? = null
+    private val independentEq = Sovereign15BandEq()
     private var hwLoudness: LoudnessEnhancer? = null
     private var hwAudioSessionId: Int = 0
 
@@ -132,10 +131,10 @@ class MainActivity: AudioServiceActivity() {
     }
 
     override fun onDestroy() {
-        try { hwEqualizer?.release() } catch (_: Throwable) {}
+        independentEq.release()
         try { hwLoudness?.release() } catch (_: Throwable) {}
-        hwEqualizer = null
         hwLoudness = null
+        hwAudioSessionId = 0
         sfxEngine?.release()
         sfxEngine = null
         embeddingBridge.release()
@@ -630,65 +629,33 @@ class MainActivity: AudioServiceActivity() {
                 "attachSession" -> {
                     val sessionId = call.argument<Int>("sessionId") ?: 0
                     if (sessionId <= 0) {
-                        result.success(null)
+                        result.success(independentEq.describe())
                         return@setMethodCallHandler
                     }
+                    // ExoPlayer may change session IDs across queue/route transitions.
+                    // Always release the previous effect before binding the new one.
+                    if (hwAudioSessionId != sessionId) {
+                        try { hwLoudness?.release() } catch (_: Throwable) {}
+                        hwLoudness = try { LoudnessEnhancer(sessionId) } catch (error: Throwable) {
+                            Log.w("MainActivity", "ReplayGain loudness enhancer unavailable", error)
+                            null
+                        }
+                        hwAudioSessionId = sessionId
+                    }
                     try {
-                        if (hwAudioSessionId != sessionId || hwEqualizer == null) {
-                            try { hwEqualizer?.release() } catch (_: Throwable) {}
-                            try { hwLoudness?.release() } catch (_: Throwable) {}
-                            hwAudioSessionId = sessionId
-                            hwEqualizer = Equalizer(0, sessionId)
-                            hwLoudness = LoudnessEnhancer(sessionId)
-                        }
-                        val eq = hwEqualizer
-                        if (eq == null) {
-                            result.success(null)
-                            return@setMethodCallHandler
-                        }
-                        val numBands = eq.numberOfBands.toInt()
-                        val bandsHz = ArrayList<Double>(numBands)
-                        for (b in 0 until numBands) {
-                            bandsHz.add(eq.getCenterFreq(b.toShort()).toDouble() / 1000.0)
-                        }
-                        val range = eq.bandLevelRange
-                        val minDb = range[0].toDouble() / 100.0
-                        val maxDb = range[1].toDouble() / 100.0
-                        result.success(
-                            hashMapOf(
-                                "bands" to bandsHz,
-                                "minDb" to minDb,
-                                "maxDb" to maxDb,
-                            )
-                        )
-                    } catch (t: Throwable) {
-                        Log.w("MainActivity", "AudioFX attachSession($sessionId) unavailable: $t")
-                        result.success(null)
+                        val response = independentEq.attach(sessionId)
+                        Log.i("MainActivity", "SOVEREIGN EQ BACKEND: " + response["engine"] +
+                                " bands=" + (response["bands"] as? List<*>)?.size)
+                        result.success(response)
+                    } catch (error: Throwable) {
+                        Log.w("MainActivity", "AudioFX attachSession failed", error)
+                        result.success(independentEq.describe())
                     }
                 }
                 "applyEq" -> {
                     val enabled = call.argument<Boolean>("enabled") ?: false
                     val gainsDb = call.argument<List<Double>>("gainsDb") ?: emptyList()
-                    try {
-                        val eq = hwEqualizer
-                        if (eq != null) {
-                            eq.enabled = enabled
-                            if (enabled && gainsDb.isNotEmpty()) {
-                                val range = eq.bandLevelRange
-                                val minMb = range[0].toInt()
-                                val maxMb = range[1].toInt()
-                                val count = minOf(eq.numberOfBands.toInt(), gainsDb.size)
-                                for (b in 0 until count) {
-                                    val mb = (gainsDb[b] * 100.0).roundToInt().coerceIn(minMb, maxMb).toShort()
-                                    eq.setBandLevel(b.toShort(), mb)
-                                }
-                            }
-                        }
-                        result.success(true)
-                    } catch (t: Throwable) {
-                        Log.w("MainActivity", "AudioFX applyEq failed: $t")
-                        result.success(false)
-                    }
+                    result.success(independentEq.apply(enabled, gainsDb))
                 }
                 "applyLoudness" -> {
                     val enabled = call.argument<Boolean>("enabled") ?: false
