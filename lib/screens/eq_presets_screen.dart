@@ -162,7 +162,7 @@ class _EqPresetsScreenState extends State<EqPresetsScreen> {
                       valueListenable: PlaybackFx.eqEnabled,
                       builder: (context, enabled, _) => SwitchListTile(
                         dense: true,
-                        title: Text(enabled ? "EQ ACTIVE ON PLAYBACK" : "EQ BYPASSED", style: TextStyle(fontFamily: 'ShareTechMono', fontWeight: FontWeight.bold, color: enabled ? Colors.purpleAccent : Colors.white54)),
+                        title: Text(enabled ? "EQ SWITCH ON" : "EQ BYPASSED", style: TextStyle(fontFamily: 'ShareTechMono', fontWeight: FontWeight.bold, color: enabled ? Colors.purpleAccent : Colors.white54)),
                         subtitle: ValueListenableBuilder<String>(
                           valueListenable: PlaybackFx.eqBackend,
                           builder: (context, backend, _) => Text(
