@@ -38,8 +38,8 @@ class PlaybackFx {
     try {
       final prefs = await SharedPreferences.getInstance();
       final gains = List<double>.generate(15, (i) => prefs.getDouble('eq15_band_$i') ?? 0.0);
-      eqGains.value = gains;
-      eqEnabled.value = prefs.getBool('eq_enabled') ?? gains.any((g) => g != 0);
+      eqGains.value = Eq15Contract.validateGains(gains);
+      eqEnabled.value = prefs.getBool('eq_enabled') ?? eqGains.value.any((g) => g != 0);
       replayGainMode.value = prefs.getString('rg_mode') ?? 'track';
       replayGainPreamp.value = prefs.getDouble('rg_preamp') ?? 0.0;
       fadeSeconds.value = prefs.getDouble('crossfade_duration') ?? 0.0;
@@ -114,7 +114,7 @@ class PlaybackFx {
     if (persist) {
       final prefs = await SharedPreferences.getInstance();
       for (var i = 0; i < 15; i++) {
-        await prefs.setDouble('eq15_band_$i', gains[i]);
+        await prefs.setDouble('eq15_band_$i', eqGains.value[i]);
       }
     }
   }
