@@ -22,8 +22,9 @@ class _EqPresetsScreenState extends State<EqPresetsScreen> {
   static const double _railHeight = 260.0;
 
   bool _dirty = false;
-  bool _liveInFlight = false;
+  Future<void>? _liveTask;
   bool _liveQueued = false;
+  bool _livePersistQueued = false;
   List<double> _saved = List.filled(15, 0.0);
 
   static const Map<String, List<double>> _presets = {
@@ -60,19 +61,25 @@ class _EqPresetsScreenState extends State<EqPresetsScreen> {
     });
   }
 
-  Future<void> _live() async {
-    if (_liveInFlight) {
-      _liveQueued = true;
-      return;
-    }
-    _liveInFlight = true;
+  Future<void> _live({bool persist = false}) {
+    if (persist) _livePersistQueued = true;
+    _liveQueued = true;
+    return _liveTask ??= _drainLive();
+  }
+
+  Future<void> _drainLive() async {
     try {
-      do {
+      while (_liveQueued) {
         _liveQueued = false;
-        await PlaybackFx.setEqGains(List<double>.from(_eqBands15));
-      } while (_liveQueued && mounted);
+        final persistNow = _livePersistQueued;
+        _livePersistQueued = false;
+        await PlaybackFx.setEqGains(
+          List<double>.from(_eqBands15),
+          persist: persistNow,
+        );
+      }
     } finally {
-      _liveInFlight = false;
+      _liveTask = null;
     }
   }
 
@@ -88,8 +95,9 @@ class _EqPresetsScreenState extends State<EqPresetsScreen> {
   }
 
   Future<void> _savePreset() async {
-    await PlaybackFx.setEqGains(_eqBands15, persist: true);
-    _saved = List<double>.from(_eqBands15);
+    final snapshot = List<double>.from(_eqBands15);
+    await _live(persist: true);
+    _saved = snapshot;
     if (!mounted) return;
     setState(() => _dirty = false);
     ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
@@ -114,7 +122,11 @@ class _EqPresetsScreenState extends State<EqPresetsScreen> {
       ),
     );
     if (discard == true && mounted) {
-      await PlaybackFx.setEqGains(_saved);
+      for (int i = 0; i < 15; i++) {
+        _eqBands15[i] = _saved[i];
+      }
+      _dirty = false;
+      await _live();
       if (mounted) Navigator.pop(context);
     }
   }

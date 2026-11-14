@@ -7,6 +7,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:sovereign_tagger/core/eq15_contract.dart';
 import 'package:sovereign_tagger/core/eq_mapper.dart';
 import 'package:sovereign_tagger/core/playback_fx.dart';
@@ -320,6 +321,123 @@ void main() {
 
       expect(recordedGains.length, 2);
       expect(recordedGains.last[0], 8.0);
+    } finally {
+      PlaybackFx.eqGains.value = List<double>.filled(15, 0.0);
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, null);
+    }
+  });
+
+  testWidgets('EqPresetsScreen serializes Save and Discard against in-flight slider drag updates', (tester) async {
+    const channel = MethodChannel('com.sovereign.tagger/audio_fx');
+    final recordedGains = <List<double>>[];
+    Completer<bool>? pendingApply;
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, (call) async {
+      if (call.method == 'attachSession') {
+        return {
+          'engine': 'dynamics15',
+          'bands': EqMapper.bandFrequencies,
+        };
+      }
+      if (call.method == 'applyEq') {
+        final args = call.arguments as Map<Object?, Object?>;
+        final gains = (args['gainsDb'] as List<Object?>).map((e) => (e as num).toDouble()).toList();
+        recordedGains.add(gains);
+        final pending = pendingApply;
+        if (pending != null) {
+          return await pending.future;
+        }
+        return true;
+      }
+      if (call.method == 'applyLoudness') return true;
+      return null;
+    });
+
+    try {
+      SharedPreferences.setMockInitialValues({});
+      PlaybackFx.eqGains.value = List<double>.filled(15, 0.0);
+      PlaybackFx.eqEnabled.value = true;
+      await PlaybackFx.attachSession(42);
+      recordedGains.clear();
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Builder(
+            builder: (ctx) => Scaffold(
+              body: Center(
+                child: ElevatedButton(
+                  onPressed: () => Navigator.push(
+                    ctx,
+                    MaterialPageRoute(builder: (_) => const EqPresetsScreen()),
+                  ),
+                  child: const Text('OPEN_EQ'),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.tap(find.text('OPEN_EQ'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 350));
+
+      Slider firstSlider() => tester.widgetList<Slider>(find.byType(Slider)).first;
+
+      pendingApply = Completer<bool>();
+      firstSlider().onChanged?.call(4.0);
+      await tester.pump();
+      expect(recordedGains.length, 1);
+      expect(recordedGains.first[0], 4.0);
+
+      firstSlider().onChanged?.call(9.0);
+      await tester.pump();
+      await tester.ensureVisible(find.text('SAVE PRESET'));
+      await tester.tap(find.text('SAVE PRESET'));
+      await tester.pump();
+      expect(recordedGains.length, 1);
+
+      final saveFlush = pendingApply;
+      pendingApply = null;
+      saveFlush.complete(true);
+      for (var i = 0; i < 20; i++) {
+        await tester.pump(const Duration(milliseconds: 10));
+      }
+
+      expect(recordedGains.length, 2);
+      expect(recordedGains.last[0], 9.0);
+      expect(PlaybackFx.eqGains.value[0], 9.0);
+      final prefs = await SharedPreferences.getInstance();
+      expect(prefs.getDouble('eq15_band_0'), 9.0);
+
+      pendingApply = Completer<bool>();
+      firstSlider().onChanged?.call(-6.0);
+      await tester.pump();
+      expect(recordedGains.length, 3);
+      expect(recordedGains.last[0], -6.0);
+
+      firstSlider().onChanged?.call(-11.0);
+      await tester.pump();
+      await tester.ensureVisible(find.byIcon(Icons.arrow_back));
+      await tester.tap(find.byIcon(Icons.arrow_back));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 250));
+      await tester.tap(find.text('DISCARD'));
+      await tester.pump();
+      expect(recordedGains.length, 3);
+
+      final discardFlush = pendingApply;
+      pendingApply = null;
+      discardFlush.complete(true);
+      for (var i = 0; i < 20; i++) {
+        await tester.pump(const Duration(milliseconds: 10));
+      }
+      await tester.pump(const Duration(milliseconds: 350));
+
+      expect(recordedGains.length, 4);
+      expect(recordedGains.last[0], 9.0);
+      expect(PlaybackFx.eqGains.value[0], 9.0);
+      expect(find.byType(EqPresetsScreen), findsNothing);
     } finally {
       PlaybackFx.eqGains.value = List<double>.filled(15, 0.0);
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
