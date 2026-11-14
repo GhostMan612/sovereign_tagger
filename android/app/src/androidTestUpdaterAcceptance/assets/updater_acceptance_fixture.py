@@ -4,175 +4,252 @@
 # ============================================================
 
 import hashlib
-import importlib
 import io
 import json
 import os
-from pathlib import Path
 import shutil
+import struct
 import tarfile
-import types
 
-OLD_VERSION = "2026.01.01"
-NEW_VERSION = "2026.11.14"
-_root = None
-_updater = None
-_last = {}
-_runtime_before = None
+from sovereign_yt import overlay_bootstrap, updater
 
 
-def _safe(path):
-    resolved = Path(path).resolve()
-    if resolved != _root and _root not in resolved.parents:
-        raise RuntimeError("Fixture path escaped the acceptance directory")
-    return resolved
+def _is_probable_prime(n):
+    if n < 2:
+        return False
+    for small in (2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37):
+        if n == small:
+            return True
+        if n % small == 0:
+            return False
+    d = n - 1
+    s = 0
+    while d % 2 == 0:
+        d //= 2
+        s += 1
+    for a in (2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47, 53):
+        x = pow(a, d, n)
+        if x == 1 or x == n - 1:
+            continue
+        for _ in range(s - 1):
+            x = (x * x) % n
+            if x == n - 1:
+                break
+        else:
+            return False
+    return True
 
 
-def _digest(path):
-    digest = hashlib.sha256()
-    root = _safe(path)
-    for child in sorted(root.rglob("*")):
-        if child.is_file():
-            digest.update(child.relative_to(root).as_posix().encode("utf-8"))
-            with child.open("rb") as handle:
-                for chunk in iter(lambda: handle.read(65536), b""):
-                    digest.update(chunk)
-    return digest.hexdigest()
+def _encode_mpi(val):
+    bits = val.bit_length()
+    raw = val.to_bytes((bits + 7) // 8, "big")
+    return struct.pack(">H", bits) + raw
 
 
-def _code_data(code):
-    return [code.co_code.hex(), list(code.co_names), list(code.co_varnames),
-            [_code_data(value) if isinstance(value, types.CodeType) else repr(value)
-             for value in code.co_consts]]
+def _make_fixture_rsa_key(seed_tag=9, label="acceptance-fixture-rsa"):
+    e = 65537
+    p = ((1 << 512) + 0x10001 * seed_tag) | 1
+    while not (_is_probable_prime(p) and (p - 1) % e != 0):
+        p += 2
+    q = ((1 << 512) + 0x20003 * seed_tag + 0x9999) | 1
+    while not (q != p and _is_probable_prime(q) and (q - 1) % e != 0):
+        q += 2
+    n = p * q
+    phi = (p - 1) * (q - 1)
+    d = pow(e, -1, phi)
+    pub_body = b"\x04" + struct.pack(">I", 1700000000 + seed_tag) + b"\x01" + _encode_mpi(n) + _encode_mpi(e)
+    fpr_bytes = hashlib.sha1(b"\x99" + struct.pack(">H", len(pub_body)) + pub_body).digest()
+    return {
+        "label": label,
+        "fingerprint": fpr_bytes.hex().upper(),
+        "key_id": fpr_bytes[-8:].hex().upper(),
+        "e": e,
+        "n": n,
+        "d": d,
+    }
 
 
-def _code_digest(code):
-    return hashlib.sha256(json.dumps(_code_data(code), sort_keys=True).encode("utf-8")).hexdigest()
+def _subpkt(sub_type, val):
+    return bytes([1 + len(val), sub_type]) + val
 
 
-def _runtime():
-    package = importlib.import_module("yt_dlp")
-    version = importlib.import_module("yt_dlp.version")
-    loader = package.__spec__.loader
-    return {"origin": package.__file__, "version": version.__version__,
-            "code_sha256": _code_digest(loader.get_code("yt_dlp"))}
+def _sign_openpgp_v4_rsa(data_bytes, full_key):
+    hashed_blob = b"".join(
+        [
+            _subpkt(2, struct.pack(">I", 1730000000)),
+            _subpkt(33, b"\x04" + bytes.fromhex(full_key["fingerprint"])),
+            _subpkt(16, bytes.fromhex(full_key["key_id"])),
+        ]
+    )
+    header = bytes([4, 0x00, 1, 10]) + struct.pack(">H", len(hashed_blob)) + hashed_blob
+    hash_fn, der_prefix = updater._PGP_DIGEST_INFOS[10]
+    hasher = hash_fn()
+    hasher.update(data_bytes)
+    hasher.update(header)
+    hasher.update(b"\x04\xff" + struct.pack(">I", len(header)))
+    digest = hasher.digest()
+    k_bytes = (full_key["n"].bit_length() + 7) // 8
+    t_bytes = der_prefix + digest
+    em = b"\x00\x01" + (b"\xff" * (k_bytes - len(t_bytes) - 3)) + b"\x00" + t_bytes
+    sig_int = pow(int.from_bytes(em, "big"), full_key["d"], full_key["n"])
+    body = header + struct.pack(">H", 0) + digest[:2] + _encode_mpi(sig_int)
+    pkt_len = len(body)
+    if pkt_len < 192:
+        len_hdr = bytes([pkt_len])
+    elif pkt_len < 8384:
+        adj = pkt_len - 192
+        len_hdr = bytes([192 + (adj >> 8), adj & 0xFF])
+    else:
+        len_hdr = b"\xff" + struct.pack(">I", pkt_len)
+    return b"\xc2" + len_hdr + body
 
 
-def _package(path, version):
-    target = _safe(path)
-    (target / "core").mkdir(parents=True, exist_ok=True)
-    (target / "__init__.py").write_text("", encoding="utf-8")
-    (target / "core" / "__init__.py").write_text("", encoding="utf-8")
-    (target / "version.py").write_text('__version__ = "' + version + '"\n', encoding="utf-8")
+_FIXTURE_PGP_KEY = _make_fixture_rsa_key()
+_FIXTURE_PINNED_KEYS = ({k: _FIXTURE_PGP_KEY[k] for k in ("label", "fingerprint", "key_id", "e", "n")},)
 
 
-def initialize(root, updater, reset):
-    global _root, _updater, _runtime_before, _last
-    _root = Path(root).resolve()
-    _updater = updater
-    if reset and _root.exists():
-        shutil.rmtree(_safe(_root))
-    _root.mkdir(parents=True, exist_ok=True)
-    (_root / "state").mkdir(exist_ok=True)
-    _runtime_before = _runtime()
-    actual = Path(updater._resolve_target_dir()).resolve()
-    if actual == _root or _root in actual.parents or actual in _root.parents:
-        raise RuntimeError("Fixture overlaps the installed acceptance runtime")
-    _last = {}
-    return snapshot()
+def _add_tar_bytes(tf, arcname, raw_bytes):
+    info = tarfile.TarInfo(name=arcname)
+    info.size = len(raw_bytes)
+    info.mode = 0o644
+    tf.addfile(info, io.BytesIO(raw_bytes))
 
 
-def _archive():
-    data = io.BytesIO()
-    with tarfile.open(fileobj=data, mode="w:gz") as archive:
-        for name, value in {
-            "__init__.py": "", "core/__init__.py": "",
-            "version.py": '__version__ = "' + NEW_VERSION + '"\n',
-        }.items():
-            payload = value.encode("utf-8")
-            entry = tarfile.TarInfo("SAMPLE_RELEASE/yt_dlp/" + name)
-            entry.size = len(payload)
-            archive.addfile(entry, io.BytesIO(payload))
-    return data.getvalue()
+def _build_synthetic_release_tar(version, broken_ydl=False):
+    buf = io.BytesIO()
+    prefix = "yt-dlp/"
+    with tarfile.open(fileobj=buf, mode="w:gz") as tf:
+        toml = '[project]\nname = "yt-dlp"\nrequires-python = ">=3.10"\n'.encode("utf-8")
+        _add_tar_bytes(tf, f"{prefix}pyproject.toml", toml)
+        if broken_ydl:
+            init_code = (
+                "from . import version\n"
+                "class YoutubeDL:\n"
+                "    def __init__(self, params=None):\n"
+                "        raise RuntimeError('Injected Moto G activation smoke fault')\n"
+            )
+        else:
+            init_code = (
+                "from . import version\n"
+                "class YoutubeDL:\n"
+                "    def __init__(self, params=None):\n"
+                "        self.params = params or {}\n"
+                "    def __enter__(self):\n"
+                "        return self\n"
+                "    def __exit__(self, *args):\n"
+                "        return False\n"
+            )
+        ver_code = f"__version__ = {version!r}\n_channel = 'stable'\n"
+        _add_tar_bytes(tf, f"{prefix}yt_dlp/__init__.py", init_code.encode("utf-8"))
+        _add_tar_bytes(tf, f"{prefix}yt_dlp/version.py", ver_code.encode("utf-8"))
+        _add_tar_bytes(
+            tf,
+            f"{prefix}yt_dlp/extractor/youtube/jsc/_builtin/vendor/yt.solver.core.js",
+            b"// synthetic acceptance solver asset\n",
+        )
+    return buf.getvalue()
 
 
-def _seed_failure():
-    target = _safe(_root / "yt_dlp")
-    backup = _safe(str(target) + ".sovereign_backup")
-    staging = _safe(str(target) + ".sovereign_new")
-    for path in (target, backup, staging):
-        if path.exists():
-            shutil.rmtree(_safe(path))
-    _package(backup, OLD_VERSION)
-    _package(staging, NEW_VERSION)
-    _updater._save_state(str(_root / "state"), {
-        "phase": "backup_done", "target": str(target),
-        "backup": str(backup), "staging": str(staging),
-    })
-    (_root / "checkpoint.json").write_text(json.dumps({
-        "failure_pid": os.getpid(), "backup_sha256": _digest(backup),
-    }), encoding="utf-8")
+def stage_synthetic_release(overlay_root, version, bundled_version_hint, broken_ydl=False):
+    tar_bytes = _build_synthetic_release_tar(version, broken_ydl=broken_ydl)
+    digest = hashlib.sha256(tar_bytes).hexdigest()
+    archive_url = f"https://github.com/yt-dlp/yt-dlp/releases/download/{version}/yt-dlp.tar.gz"
+    sums_url = f"https://github.com/yt-dlp/yt-dlp/releases/download/{version}/SHA2-256SUMS"
+    sig_url = f"https://github.com/yt-dlp/yt-dlp/releases/download/{version}/SHA2-256SUMS.sig"
+    release_doc = json.dumps(
+        {
+            "tag_name": version,
+            "draft": False,
+            "prerelease": False,
+            "assets": [
+                {"name": "yt-dlp.tar.gz", "browser_download_url": archive_url},
+                {"name": "SHA2-256SUMS", "browser_download_url": sums_url},
+                {"name": "SHA2-256SUMS.sig", "browser_download_url": sig_url},
+            ],
+        }
+    ).encode("utf-8")
+    sums_bytes = f"{digest}  yt-dlp.tar.gz\n".encode("utf-8")
+    sig_bytes = _sign_openpgp_v4_rsa(sums_bytes, _FIXTURE_PGP_KEY)
+
+    def fetcher(url, _max_bytes):
+        if url == updater.GITHUB_LATEST_RELEASE_URL:
+            return release_doc
+        if url == sig_url:
+            return sig_bytes
+        if url == sums_url:
+            return sums_bytes
+        if url == archive_url:
+            return tar_bytes
+        raise RuntimeError(f"Unexpected acceptance fetcher URL: {url}")
+
+    return updater.execute_scorched_earth(
+        overlay_root=overlay_root,
+        fetcher=fetcher,
+        bundled_version_hint=bundled_version_hint,
+        pinned_keys=_FIXTURE_PINNED_KEYS,
+    )
 
 
-def run(updater, mode):
-    global _last
-    if updater is not _updater:
-        raise RuntimeError("Unexpected updater module")
-    target = _safe(_root / "yt_dlp")
-    state_dir = _safe(_root / "state")
-    if mode == "success":
-        if target.exists():
-            shutil.rmtree(_safe(target))
-        _package(target, OLD_VERSION)
-    elif mode == "failure":
-        _seed_failure()
-    elif mode != "retry":
-        raise RuntimeError("Unknown isolated fixture mode")
-    original_fetch = updater._fetch_release
-    original_rename = updater.os.rename
-    payload = _archive()
-
-    def download(url, destination):
-        if url != "fixture://SAMPLE_RELEASE":
-            raise RuntimeError("Fixture attempted an uncontrolled download")
-        _safe(destination).write_bytes(payload)
-
-    def rename(source, destination):
-        if mode == "failure" and Path(source) == Path(str(target) + ".sovereign_backup") and Path(destination) == target:
-            raise OSError("SAMPLE FIXTURE RESTORE FAILURE")
-        return original_rename(source, destination)
-
+def stage_live_github_release(overlay_root):
+    saved_state = overlay_bootstrap._RUNTIME_STATE
     try:
-        updater._fetch_release = lambda: ("SAMPLE_RELEASE", "fixture://SAMPLE_RELEASE")
-        updater.os.rename = rename
-        raw = updater.execute_scorched_earth(str(target), str(state_dir), download)
-        _last = json.loads(raw)
-        return raw
+        overlay_bootstrap._RUNTIME_STATE = {
+            "initialized": True,
+            "overlay_root": os.path.realpath(os.path.abspath(overlay_root)),
+            "bundled_version": "2026.01.01",
+            "active_source": "bundled",
+            "active_version": "2026.01.01",
+        }
+        return updater.execute_scorched_earth(
+            overlay_root=overlay_root,
+            bundled_version_hint="2026.01.01",
+        )
     finally:
-        updater._fetch_release = original_fetch
-        updater.os.rename = original_rename
+        overlay_bootstrap._RUNTIME_STATE = saved_state
 
 
-def snapshot():
-    target = _safe(_root / "yt_dlp")
-    backup = _safe(str(target) + ".sovereign_backup")
-    staging = _safe(str(target) + ".sovereign_new")
-    state = _updater._load_state(str(_root / "state"))
-    checkpoint_path = _root / "checkpoint.json"
-    checkpoint = json.loads(checkpoint_path.read_text(encoding="utf-8")) if checkpoint_path.exists() else {}
-    version_path = target / "version.py"
-    version = version_path.read_text(encoding="utf-8") if version_path.exists() else ""
-    runtime_after = _runtime()
-    return json.dumps({
-        "root": str(_root), "target": str(target), "pid": os.getpid(),
-        "target_exists": target.is_dir(), "target_version_source": version,
-        "backup_exists": backup.is_dir(), "staging_exists": staging.is_dir(),
-        "journal_exists": state is not None, "journal_phase": (state or {}).get("phase"),
-        "backup_sha256": _digest(backup) if backup.is_dir() else None,
-        "expected_backup_sha256": checkpoint.get("backup_sha256"),
-        "failure_pid": checkpoint.get("failure_pid"), "last_response": _last,
-        "runtime_import_fingerprint_unchanged": runtime_after == _runtime_before,
-        "runtime": runtime_after, "updater_origin": _updater.__file__,
-        "updater_code_sha256": _code_digest(_updater._execute_scorched_earth.__code__),
-        "module_reload": "real updater _reload_modules executed on success",
-    }, sort_keys=True)
+def execute_full_stack_check(overlay_root, bundled_version_hint):
+    return updater.execute_full_scorched_earth(
+        overlay_root=overlay_root,
+        bundled_version_hint=bundled_version_hint,
+    )
+
+
+def inspect_live_ytdlp(overlay_root):
+    import yt_dlp
+    import yt_dlp.version
+
+    runtime_state = overlay_bootstrap.get_runtime_status(overlay_root)
+    mod_file = os.path.realpath(getattr(yt_dlp, "__file__", "") or "")
+    slots_root = os.path.realpath(os.path.join(overlay_root, "slots"))
+    return json.dumps(
+        {
+            "version": str(getattr(yt_dlp.version, "__version__", "") or ""),
+            "file": mod_file,
+            "inside_overlay_slots": overlay_bootstrap.is_path_within(slots_root, mod_file),
+            "runtime_state": runtime_state,
+        }
+    )
+
+
+def corrupt_all_overlay_slots_for_bundled_fallback(overlay_root):
+    paths = overlay_bootstrap.resolve_overlay_paths(overlay_root)
+    manifest, _ = overlay_bootstrap.load_manifest(paths["manifest"])
+    manifest["previous_slot"] = None
+    manifest["previous_version"] = None
+    manifest["previous_sha256"] = None
+    manifest["pending_slot"] = None
+    manifest["pending_version"] = None
+    manifest["pending_sha256"] = None
+    active_slot = manifest.get("active_slot")
+    if active_slot:
+        slot_init = os.path.join(paths["slots"], active_slot, "yt_dlp", "__init__.py")
+        if os.path.isfile(slot_init):
+            with open(slot_init, "w", encoding="utf-8") as handle:
+                handle.write("corrupt python syntax !!! (\n")
+    if os.path.isdir(paths["slots"]):
+        for entry in os.listdir(paths["slots"]):
+            if entry != active_slot:
+                shutil.rmtree(os.path.join(paths["slots"], entry), ignore_errors=True)
+    overlay_bootstrap.atomic_write_json(paths["manifest"], manifest)
+    return "corrupted"

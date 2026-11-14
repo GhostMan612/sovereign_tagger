@@ -68,6 +68,8 @@ def sovereignBuiltAt = new Date().format(
     "yyyy-MM-dd'T'HH:mm:ss'Z'", TimeZone.getTimeZone("UTC")
 )
 
+def ytdlpPinnedVersion = "2026.10.26"
+
 android {
     namespace = "com.sovereigntagger"
 
@@ -95,6 +97,7 @@ android {
         buildConfigField "boolean", "SOURCE_DIRTY", "${sovereignSourceDirty}"
         buildConfigField "String", "BUILD_ABIS", "\"${sovereignBuildAbis}\""
         buildConfigField "String", "BUILD_TIME_UTC", "\"${sovereignBuiltAt}\""
+        buildConfigField "String", "YTDLP_BUNDLED_VERSION", "\"${ytdlpPinnedVersion}\""
 
         ndk {
             // 64-bit only drops armeabi-v7a ~30% APK bloat; minSdk 26 = 99% of active devices 64-bit. Re-add "armeabi-v7a" only if Moto G 32-bit support required.
@@ -111,7 +114,7 @@ android {
             // Chaquopy LTS is 3.11; 3.14 is bleeding edge and will fail if chaquopy plugin <15.x. If Gradle sync fails with "Python 3.14 not found", change to "3.11".
             version "3.14"
             pip {
-                install "yt-dlp==2026.10.26"
+                install "yt-dlp==${ytdlpPinnedVersion}"
                 install "mutagen==1.48.1"
                 install "lyricsgenius==3.15.0"
             }

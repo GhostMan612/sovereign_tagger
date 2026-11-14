@@ -1,6 +1,14 @@
 # ROADMAP.md — Sovereign Tagger v2 \"Industrial Grade\"
 > Status legend: [ ] pending · [~] in progress · [x] done (gate passed) · [-] skipped/parked
 
+## Chaquopy-Aware Overlay `yt-dlp` Updater (`fix/p0-chaquopy-overlay-updater`, PR #89) [x] (2026-11-14)
+
+- [x] Replace Chaquopy-incompatible `AssetFinder` `yt-dlp` patching with immutable-APK + writable `<filesDir>/sovereign_py_overlay/` (`slots/`, `staging/`, `active.json`), `PythonRuntime.ensureInitialized()` startup bootstrap prior to consumer `yt_dlp` imports, and Gradle-derived `BuildConfig.YTDLP_BUNDLED_VERSION`.
+- [x] Harden GitHub release verification (`HTTPS` + trusted GitHub hosts across redirects, mandatory OpenPGP V4 RSA-4096 `SHA2-256SUMS.sig` against pinned key `AC0CBBE6848D6A873464AF4E57CF65933B5A7581`, mandatory `SHA2-256SUMS`, archive/member/ratio/traversal/symlink/hardlink/binary limits, `requires-python`, tag-to-version match, CalVer downgrade rejection), cross-process `overlay_file_lock` + `fsync_directory` serialization, `<= 3` quarantine retention + stale staging pruning, restart-only activation (`pending_activation`), premature-import guard, and automatic rollback to prior slot / bundled `.imy`.
+- [x] Apply Option B for `mutagen`/`lyricsgenius`: retire runtime `pip` UI button in `SettingsScreen`, return non-mutating `requires_apk_update` from `updateFullStack`, and surface bundled/active/source/pending/restart/rollback/recovery telemetry via `getUpdaterStatus`.
+- [x] Verify all host gates (`31` Python tests, `flutter analyze --no-pub --no-fatal-infos`, `212` Flutter tests, `:app:testDebugUnitTest`, ARM64 & x64 debug APKs, unsigned release signing guard, ephemeral-keystore signed R8 `arm64-v8a` release build on `4bd7474`) and isolated hardware acceptance (`com.sovereigntagger.updateracceptance`, `com.sovereigntagger` untouched): full 6-phase P0–P2 run on BLU `B160V` (`7040016025040287`, Android 14, incl. live GitHub `.sig` stage `phase5` + post-restart activation `phase6`) and earlier 4-phase Moto G (`ZT4222BMWN`) run on `276f6ce` (`docs/chaquopy-overlay-updater.md`).
+- [ ] Deferred separate PRs: Backup/export `Downloads/sovereign_config.bin` collision isolation; On-Board Python Doctor redesign; local build cache & CI workspace hygiene.
+
 ## PR #87 — Transactional updater rollback & isolated device acceptance [x] (merged at `894e4b3` + post-merge `main` audit passed, 2026-11-14)
 
 - [x] Preserve backup, staging, and journal when rollback restore/verification fails in `updater.py`, surface `recovery_required` through `execute_full_scorched_earth()` and `SettingsScreen` (`updateCore` + `updateFullStack`), gate `updaterAcceptance` behind `-PupdaterAcceptanceTest=true` (`80d8546`), and pass host gates (`37/37` Python tests w/ `24` updater tests, `15/15` updater stress runs, `flutter analyze`, `213/213` Flutter tests w/ `7` Settings tests, `flutter build apk --debug --target-platform android-arm64`, `:app:testDebugUnitTest`).
