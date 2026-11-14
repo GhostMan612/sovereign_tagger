@@ -24,6 +24,7 @@ import shutil
 import subprocess
 import sys
 import tarfile
+import threading
 import urllib.request
 
 _USER_AGENT = "SovereignTagger/1.0 (Android)"
@@ -33,6 +34,8 @@ _STACK_PACKAGES = ("mutagen", "lyricsgenius")
 _DOWNLOAD_TIMEOUT = 60
 _CHUNK = 1 << 16
 _VERSION_RE = re.compile(r'__version__\s*=\s*["\']([^"\']+)["\']')
+
+_TRANSACTION_LOCK = threading.RLock()
 
 
 class UpdateError(Exception):
@@ -107,13 +110,29 @@ def _resolve_target_dir(explicit=None):
     return override
 
 
+def _restore_orphaned_backup(target):
+    """Restore a backup left by a run that died before recording its state.
+
+    The transaction record is written before the destructive rename, so a
+    crash in that window is already recoverable. This is the defence-in-depth
+    net for a backup orphaned by an older build or an unrecorded rename.
+    """
+    backup = target + ".sovereign_backup"
+    if os.path.isdir(target) or not os.path.isdir(backup):
+        return False
+    if not os.path.isfile(os.path.join(backup, "__init__.py")):
+        return False
+    os.rename(backup, target)
+    return True
+
+
 def _recover(state, state_dir):
     """Roll back or finish a swap that a process death interrupted."""
     phase = state.get("phase")
     target = state.get("target")
     backup = state.get("backup")
     staging = state.get("staging")
-    if phase == "backup_done" and backup and os.path.exists(backup):
+    if phase in ("backup_pending", "backup_done") and backup and os.path.exists(backup):
         if target and os.path.exists(target):
             shutil.rmtree(target, ignore_errors=True)
         os.rename(backup, target)
@@ -127,14 +146,15 @@ def _recover(state, state_dir):
 
 def recover(state_dir=None):
     """Public recovery entry point for a transaction left by a prior run."""
-    state_dir = state_dir or _updater_dir()
-    state = _load_state(state_dir)
-    if not state:
-        return json.dumps({"status": "success", "recovered": False})
-    result = _recover(state, state_dir)
-    result["status"] = "success"
-    result["recovered"] = True
-    return json.dumps(result)
+    with _TRANSACTION_LOCK:
+        state_dir = state_dir or _updater_dir()
+        state = _load_state(state_dir)
+        if not state:
+            return json.dumps({"status": "success", "recovered": False})
+        result = _recover(state, state_dir)
+        result["status"] = "success"
+        result["recovered"] = True
+        return json.dumps(result)
 
 
 def _download(url, dest_path):
@@ -226,6 +246,15 @@ def _swap(target_dir, staging, state_dir):
     backup = target_dir + ".sovereign_backup"
     if os.path.exists(backup):
         shutil.rmtree(backup)
+    _save_state(
+        state_dir,
+        {
+            "phase": "backup_pending",
+            "target": target_dir,
+            "backup": backup,
+            "staging": staging,
+        },
+    )
     os.rename(target_dir, backup)
     _save_state(
         state_dir,
@@ -266,6 +295,11 @@ def _reload_modules():
 
 def execute_scorched_earth(target_dir=None, state_dir=None, downloader=None):
     """Replace the live yt-dlp package with the latest release, transactionally."""
+    with _TRANSACTION_LOCK:
+        return _execute_scorched_earth(target_dir, state_dir, downloader)
+
+
+def _execute_scorched_earth(target_dir=None, state_dir=None, downloader=None):
     state_dir = state_dir or _updater_dir()
     try:
         dangling = _load_state(state_dir)
@@ -273,6 +307,8 @@ def execute_scorched_earth(target_dir=None, state_dir=None, downloader=None):
             _recover(dangling, state_dir)
 
         target = _resolve_target_dir(target_dir)
+        if not os.path.isdir(target):
+            _restore_orphaned_backup(target)
         if not os.path.isdir(target):
             raise UpdateError("Live " + _PACKAGE + " package not found at " + target)
 
@@ -392,11 +428,12 @@ def update_python_stack():
 
 def execute_full_scorched_earth():
     """Update yt-dlp first, then the helper packages; never half-apply."""
-    core = json.loads(execute_scorched_earth())
-    if core.get("status") != "success":
-        return json.dumps(
-            {"status": core.get("status"), "core": core, "python_stack": None}
-        )
-    stack = json.loads(update_python_stack())
-    status = "success" if stack.get("status") == "success" else "partial"
-    return json.dumps({"status": status, "core": core, "python_stack": stack})
+    with _TRANSACTION_LOCK:
+        core = json.loads(_execute_scorched_earth())
+        if core.get("status") != "success":
+            return json.dumps(
+                {"status": core.get("status"), "core": core, "python_stack": None}
+            )
+        stack = json.loads(update_python_stack())
+        status = "success" if stack.get("status") == "success" else "partial"
+        return json.dumps({"status": status, "core": core, "python_stack": stack})

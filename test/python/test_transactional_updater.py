@@ -7,6 +7,8 @@ import os
 import shutil
 import tarfile
 import tempfile
+import threading
+import time
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -228,6 +230,99 @@ class TransactionalUpdaterTests(unittest.TestCase):
         self.assertEqual(result["status"], "success")
         self.assertIn(NEW_VERSION, self._version())
         self.assertFalse(os.path.exists(backup))
+        self.assertEqual(self._leftover_paths(), [])
+
+    def test_crash_between_backup_rename_and_state_write_recovers_on_restart(self):
+        backup = str(self.live) + ".sovereign_backup"
+        shutil.copytree(self.live, backup)
+        shutil.rmtree(self.live)
+        self.assertIsNone(updater._load_state(str(self.state_dir)))
+
+        def failing_downloader(url, dest_path):
+            raise OSError("network unreachable")
+
+        tarball = _tar_bytes(_release_files())
+        with patch("urllib.request.urlopen", side_effect=_urlopen_factory(tarball)):
+            result = json.loads(
+                updater.execute_scorched_earth(
+                    target_dir=str(self.live),
+                    state_dir=str(self.state_dir),
+                    downloader=failing_downloader,
+                )
+            )
+        self.assertEqual(result["status"], "error")
+        self.assertTrue(self.live.is_dir())
+        self.assertIn(OLD_VERSION, self._version())
+        self.assertFalse(os.path.exists(backup))
+        self.assertEqual(self._leftover_paths(), [])
+
+    def test_backup_pending_state_is_recovered(self):
+        backup = str(self.live) + ".sovereign_backup"
+        shutil.copytree(self.live, backup)
+        shutil.rmtree(self.live)
+        staging = str(self.live) + ".sovereign_new"
+        _write_package(staging, NEW_VERSION)
+        updater._save_state(
+            str(self.state_dir),
+            {
+                "phase": "backup_pending",
+                "target": str(self.live),
+                "backup": backup,
+                "staging": staging,
+            },
+        )
+        result = json.loads(updater.recover(str(self.state_dir)))
+        self.assertTrue(result["recovered"])
+        self.assertTrue(self.live.is_dir())
+        self.assertIn(OLD_VERSION, self._version())
+        self.assertFalse(os.path.exists(backup))
+        self.assertFalse(os.path.exists(staging))
+
+    def test_concurrent_updates_are_serialized(self):
+        entries = []
+        barrier = threading.Barrier(2)
+        swap_lock = threading.Lock()
+        original_swap = updater._swap
+
+        def tracked_swap(target_dir, staging, state_dir):
+            with swap_lock:
+                entries.append(("enter", time.time()))
+            try:
+                return original_swap(target_dir, staging, state_dir)
+            finally:
+                with swap_lock:
+                    entries.append(("exit", time.time()))
+
+        tarball = _tar_bytes(_release_files())
+        results = []
+
+        def worker():
+            barrier.wait()
+            results.append(
+                json.loads(
+                    updater.execute_scorched_earth(
+                        target_dir=str(self.live), state_dir=str(self.state_dir)
+                    )
+                )
+            )
+
+        updater._swap = tracked_swap
+        try:
+            with patch("urllib.request.urlopen", side_effect=_urlopen_factory(tarball)):
+                threads = [threading.Thread(target=worker) for _ in range(2)]
+                for thread in threads:
+                    thread.start()
+                for thread in threads:
+                    thread.join()
+        finally:
+            updater._swap = original_swap
+
+        self.assertEqual([r["status"] for r in results], ["success", "success"])
+        enters = [stamp for kind, stamp in entries if kind == "enter"]
+        exits = [stamp for kind, stamp in entries if kind == "exit"]
+        self.assertEqual(len(enters), 2)
+        self.assertGreaterEqual(enters[1], exits[0])
+        self.assertIn(NEW_VERSION, self._version())
         self.assertEqual(self._leftover_paths(), [])
 
 
