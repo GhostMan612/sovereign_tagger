@@ -103,6 +103,43 @@ No `Equalizer` effect was ever registered alongside `Dynamics Processing` (`Loud
 - **Unsaved downward drag + `DISCARD`:** Swiped band `0` downward over `1.0 s` and observed incremental live stereo readbacks (`10.0` down to `-11.0 dB`, `channelsMatch=true`) while `flutter.eq15_band_0` on disk remained `11.0`; tapped AppBar Back (`UNSAVED PRESET`) → `DISCARD`, confirming clean pop back to `TheaterScreen`, native `SovereignEq15` revert to `[11.0, 0.0 x 14]` (`channelsMatch=true`), and `flutter.eq15_band_0 = 11.0` preserved on disk.
 - **Teardown & cleanup:** Force-stopped `com.sovereigntagger` (confirming session `4433` teardown in `dumpsys media.audio_flinger` with zero active `Dynamics Processing` effects remaining), deleted temporary cache/staging WAV/XML files, and restored original `FlutterSharedPreferences.xml` (`3054` bytes, SHA-256 `2bbdf28b5e889da0aa198293ba68fced16d2b524119c8171ac399c21f7dbbe02`) byte-for-byte.
 
+### Atomic Save ordering amendment
+
+Each Save captures an immutable fifteen-band curve at the tap and places it in
+the same FIFO as live updates. Pending live updates may coalesce; a Save is a
+barrier that cannot be replaced. Native application and every preference write
+use that captured curve. Only confirmed persistence advances the committed
+baseline, and dirty state compares the current sliders with that baseline.
+Later edits remain live and unsaved. Multiple Saves commit in tap order.
+
+Navigation remains guarded while any Save is pending. Confirmed Discard freezes
+further edits, waits for pending Saves, then restores the last successfully
+committed curve. Completion after disposal does not update UI or show feedback.
+
+Preference writes check both false results and exceptions. A failure attempts
+to restore all fifteen previous preference values (including absent keys),
+keeps the preset dirty, and reports the failure so Save can be retried. A rollback
+failure is reported explicitly. This is application-level ordering and recovery,
+not a crash-atomic storage transaction across fifteen preference keys.
+Native-apply failure is separate: a successfully persisted preset is reported as
+saved with a live-EQ failure/unavailable message, not as fully applied.
+
+The deterministic regression matrix covers edits before and during Save, a
+Save queued behind a native drag, repeated Save snapshots, guarded Back and
+Discard with pending Saves, failed preference writes and retry, exact native and
+persisted curves, dirty state, and completion after disposal. Route tests wait
+for transition completion rather than assuming the spring settles within its
+nominal duration; native and persistence checkpoints use independent Completers.
+
+**Executed local validation (2026-11-14):** Genesis-header/comment/mojibake checks
+passed; `flutter analyze --no-pub` passed with no issues;
+`flutter test --no-pub` passed **206/206** with zero skips, including **12 added
+atomic Save regressions** across `eq15_contract_test.dart` and
+`eq_save_recovery_test.dart`; `android/gradlew.bat :app:testDebugUnitTest` executed
+and passed **5/5** JVM tests with zero skips. Diff and added-line encoding checks
+passed. CI build, ABI and source-to-APK provenance evidence for the pushed head
+is linked from PR #86. No new physical-device run is claimed for this amendment.
+
 ### Remaining gaps not verified in this sweep
 
 - **Build variant:** Tested local clean-provenance debug APKs (`app-debug.apk` at `765c64d` and `152a5e5`), not the release CI artifact.

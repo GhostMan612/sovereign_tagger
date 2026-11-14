@@ -89,20 +89,22 @@ class PlaybackFx {
     }
   }
 
-  static Future<bool> applyEq() async {
+  static Future<bool> applyEq({List<double>? gains}) async {
     try {
+      final snapshot = Eq15Contract.validateGains(gains ?? eqGains.value);
       if (_attachedSessionId <= 0) {
         final sid = _player?.androidAudioSessionId;
         if (sid != null && sid > 0) {
           await attachSession(sid);
-          return _attachedBackend == 'dynamics15' || _attachedBackend == 'legacy';
+          if (gains == null) {
+            return _attachedBackend == 'dynamics15' || _attachedBackend == 'legacy';
+          }
         }
       }
       if (_attachedBackend == 'unavailable' || _attachedBackend == 'pending') return false;
-      final gains = Eq15Contract.validateGains(eqGains.value);
       final applied = await _fxChannel.invokeMethod<bool>('applyEq', {
         'enabled': eqEnabled.value,
-        'gainsDb': gains,
+        'gainsDb': snapshot,
       });
       if (applied != true) {
         eqBackend.value = 'error';
@@ -128,15 +130,38 @@ class PlaybackFx {
     }
   }
 
-  static Future<void> setEqGains(List<double> gains, {bool persist = false}) async {
-    eqGains.value = Eq15Contract.validateGains(gains);
-    await applyEq();
+  static Future<bool> setEqGains(List<double> gains, {bool persist = false}) async {
+    final snapshot = Eq15Contract.validateGains(gains);
+    eqGains.value = snapshot;
+    final applied = await applyEq(gains: snapshot);
     if (persist) {
       final prefs = await SharedPreferences.getInstance();
-      for (var i = 0; i < 15; i++) {
-        await prefs.setDouble('eq15_band_$i', eqGains.value[i]);
+      final previous = List<double?>.generate(15, (i) => prefs.getDouble('eq15_band_$i'));
+      try {
+        for (var i = 0; i < 15; i++) {
+          if (!await prefs.setDouble('eq15_band_$i', snapshot[i])) {
+            throw StateError('Preference write rejected for EQ band $i');
+          }
+        }
+      } catch (error) {
+        var restored = true;
+        for (var i = 0; i < 15; i++) {
+          try {
+            final value = previous[i];
+            final ok = value == null
+                ? await prefs.remove('eq15_band_$i')
+                : await prefs.setDouble('eq15_band_$i', value);
+            if (!ok) restored = false;
+          } catch (_) {
+            restored = false;
+          }
+        }
+        throw StateError(restored
+            ? 'EQ preference write failed; previous preset restored. Retry Save. ($error)'
+            : 'EQ preference write failed; restoring previous preferences also failed. Retry Save. ($error)');
       }
     }
+    return applied;
   }
 
   static Future<void> setEqEnabled(bool enabled) async {

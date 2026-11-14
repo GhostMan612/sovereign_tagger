@@ -265,6 +265,63 @@ void main() {
     }
   });
 
+  test('PlaybackFx persists the captured gains when live state changes during applyEq', () async {
+    const channel = MethodChannel('com.sovereign.tagger/audio_fx');
+    final nativeStarted = Completer<void>();
+    final nativeRelease = Completer<bool>();
+    var holdApply = false;
+    Future<void>? pendingSave;
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, (call) async {
+      if (call.method == 'attachSession') {
+        return {
+          'engine': 'dynamics15',
+          'bands': EqMapper.bandFrequencies,
+        };
+      }
+      if (call.method == 'applyEq') {
+        if (holdApply) {
+          holdApply = false;
+          nativeStarted.complete();
+          return await nativeRelease.future;
+        }
+        return true;
+      }
+      if (call.method == 'applyLoudness') return true;
+      return null;
+    });
+
+    try {
+      SharedPreferences.setMockInitialValues({});
+      PlaybackFx.eqGains.value = List<double>.filled(15, 0.0);
+      PlaybackFx.eqEnabled.value = true;
+      await PlaybackFx.attachSession(42);
+
+      final requested = List<double>.generate(15, (i) => i - 7.0);
+      final snapshot = List<double>.from(requested);
+      holdApply = true;
+      pendingSave = PlaybackFx.setEqGains(requested, persist: true);
+      await nativeStarted.future;
+      requested[0] = 12.0;
+      PlaybackFx.eqGains.value = List<double>.filled(15, 11.0);
+      nativeRelease.complete(true);
+      await pendingSave;
+
+      final prefs = await SharedPreferences.getInstance();
+      expect(
+        List<double?>.generate(15, (i) => prefs.getDouble('eq15_band_$i')),
+        snapshot,
+      );
+      expect(PlaybackFx.eqGains.value, List<double>.filled(15, 11.0));
+    } finally {
+      if (!nativeRelease.isCompleted) nativeRelease.complete(true);
+      if (pendingSave != null) await pendingSave;
+      PlaybackFx.eqGains.value = List<double>.filled(15, 0.0);
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, null);
+    }
+  });
+
   testWidgets('EqPresetsScreen dispatches coalesced live applyEq updates during Slider onChanged', (tester) async {
     const channel = MethodChannel('com.sovereign.tagger/audio_fx');
     final recordedGains = <List<double>>[];
@@ -444,4 +501,192 @@ void main() {
           .setMockMethodCallHandler(channel, null);
     }
   });
+
+  for (final (editBeforeSaveStarts, saveAgain) in [
+    (true, false),
+    (false, false),
+    (true, true),
+  ]) {
+    testWidgets(
+      saveAgain
+          ? 'EqPresetsScreen serializes repeated Save snapshots and preserves later edits'
+          : 'EqPresetsScreen keeps post-Save edits unsaved ${editBeforeSaveStarts ? 'before persistence starts' : 'while persistence is in flight'}',
+      (tester) async {
+        const channel = MethodChannel('com.sovereign.tagger/audio_fx');
+        final recordedGains = <List<double>>[];
+        final blockedCalls = <Completer<bool>>[];
+        Completer<bool>? pendingApply;
+        var activeApplies = 0;
+        var maxActiveApplies = 0;
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(channel, (call) async {
+          if (call.method == 'attachSession') {
+            return {
+              'engine': 'dynamics15',
+              'bands': EqMapper.bandFrequencies,
+            };
+          }
+          if (call.method == 'applyEq') {
+            final args = call.arguments as Map<Object?, Object?>;
+            recordedGains.add(
+              (args['gainsDb'] as List<Object?>)
+                  .map((value) => (value as num).toDouble())
+                  .toList(),
+            );
+            activeApplies++;
+            if (activeApplies > maxActiveApplies) {
+              maxActiveApplies = activeApplies;
+            }
+            final blocked = pendingApply;
+            pendingApply = null;
+            try {
+              if (blocked != null) return await blocked.future;
+              return true;
+            } finally {
+              activeApplies--;
+            }
+          }
+          if (call.method == 'applyLoudness') return true;
+          return null;
+        });
+
+        Completer<bool> blockNextApply() {
+          final blocked = Completer<bool>();
+          blockedCalls.add(blocked);
+          pendingApply = blocked;
+          return blocked;
+        }
+
+        Future<void> flushUpdates() async {
+          for (var i = 0; i < 20; i++) {
+            await tester.pump(const Duration(milliseconds: 10));
+          }
+        }
+
+        void changeCurve(List<double> gains) {
+          final sliders = tester.widgetList<Slider>(find.byType(Slider)).toList();
+          for (var i = 0; i < 15; i++) {
+            sliders[i].onChanged!(gains[i]);
+          }
+        }
+
+        try {
+          SharedPreferences.setMockInitialValues({});
+          PlaybackFx.eqGains.value = List<double>.filled(15, 0.0);
+          PlaybackFx.eqEnabled.value = true;
+          await PlaybackFx.attachSession(42);
+          recordedGains.clear();
+
+          await tester.pumpWidget(
+            MaterialApp(
+              home: Builder(
+                builder: (ctx) => Scaffold(
+                  body: Center(
+                    child: ElevatedButton(
+                      onPressed: () => Navigator.push(
+                        ctx,
+                        MaterialPageRoute(builder: (_) => const EqPresetsScreen()),
+                      ),
+                      child: const Text('OPEN_EQ'),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          );
+          await tester.tap(find.text('OPEN_EQ'));
+          await tester.pump();
+          await tester.pump(const Duration(milliseconds: 350));
+
+          final snapshot = List<double>.generate(15, (i) => (i % 7) - 3.0);
+          snapshot[0] = 9.0;
+          final laterEdits = List<double>.generate(15, (i) => 7.0 - i);
+          laterEdits[0] = 11.0;
+          var expectedSaved = snapshot;
+          var expectedLive = laterEdits;
+          var blocked = blockNextApply();
+          tester.widgetList<Slider>(find.byType(Slider)).first.onChanged!(4.0);
+          await tester.pump();
+          changeCurve(snapshot);
+          await tester.pump();
+          expect(recordedGains, hasLength(1));
+          expect(activeApplies, 1);
+
+          if (!editBeforeSaveStarts) {
+            blocked.complete(true);
+            await flushUpdates();
+            expect(PlaybackFx.eqGains.value, snapshot);
+            expect(activeApplies, 0);
+            blocked = blockNextApply();
+          }
+
+          await tester.ensureVisible(find.text('SAVE PRESET'));
+          await tester.tap(find.text('SAVE PRESET'));
+          await tester.pump();
+          expect(activeApplies, 1);
+          if (!editBeforeSaveStarts) expect(recordedGains.last, snapshot);
+          final callsBeforeEdit = recordedGains.length;
+          changeCurve(laterEdits);
+          await tester.pump();
+          expect(recordedGains, hasLength(callsBeforeEdit));
+
+          if (saveAgain) {
+            await tester.tap(find.text('SAVE PRESET'));
+            await tester.pump();
+            expectedSaved = List<double>.from(laterEdits);
+            expectedLive = List<double>.generate(15, (i) => (i % 5) - 2.0);
+            expectedLive[0] = 12.0;
+            changeCurve(expectedLive);
+            await tester.pump();
+            expect(recordedGains, hasLength(callsBeforeEdit));
+          }
+
+          blocked.complete(true);
+          await flushUpdates();
+
+          final prefs = await SharedPreferences.getInstance();
+          List<double?> persistedCurve() => List<double?>.generate(
+                15,
+                (i) => prefs.getDouble('eq15_band_$i'),
+              );
+          expect(persistedCurve(), expectedSaved);
+          expect(PlaybackFx.eqGains.value, expectedLive);
+          expect(recordedGains.last, expectedLive);
+          expect(activeApplies, 0);
+          expect(maxActiveApplies, 1);
+          expect(
+            tester.widget<OutlinedButton>(
+              find.widgetWithText(OutlinedButton, 'SAVE PRESET'),
+            ).onPressed,
+            isNotNull,
+          );
+
+          await tester.ensureVisible(find.byIcon(Icons.arrow_back));
+          await tester.tap(find.byIcon(Icons.arrow_back));
+          await tester.pump();
+          await tester.pump(const Duration(milliseconds: 250));
+          expect(find.text('UNSAVED PRESET'), findsOneWidget);
+          await tester.tap(find.text('DISCARD'));
+          await flushUpdates();
+          await tester.pump(const Duration(milliseconds: 350));
+
+          expect(recordedGains.last, expectedSaved);
+          expect(PlaybackFx.eqGains.value, expectedSaved);
+          expect(persistedCurve(), expectedSaved);
+          expect(find.byType(EqPresetsScreen), findsNothing);
+          expect(maxActiveApplies, 1);
+        } finally {
+          pendingApply = null;
+          for (final blocked in blockedCalls) {
+            if (!blocked.isCompleted) blocked.complete(true);
+          }
+          await flushUpdates();
+          await tester.pumpWidget(const SizedBox.shrink());
+          PlaybackFx.eqGains.value = List<double>.filled(15, 0.0);
+          TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+              .setMockMethodCallHandler(channel, null);
+        }
+      },
+    );
+  }
 }

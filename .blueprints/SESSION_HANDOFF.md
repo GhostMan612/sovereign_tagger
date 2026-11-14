@@ -22,6 +22,17 @@ Session-end law: update rows 2–4 every session (+ row 5 when a new gotcha is l
 
 ## Where we are
 
+### Latest delta — PR #86 atomic Save recovery (2026-11-14)
+
+- PR #86 remains open, ready for review and unmerged. The atomic Save amendment was recovered from local edits on `feat/p1-independent-15-band-dsp` at baseline `825978e027263b138613bc4dadd97452b1fafaec`. Exact pushed commit and CI evidence are recorded in the PR description. Remote `main` was verified at `b8d5c29a07bf1f75563250f3356def5369537bbd`.
+- Baseline Dart run `43577428020` and Android native run `43577428018` passed at `825978e`. The amendment's local end-of-phase gates also passed: Genesis/comment/mojibake checks, strict Flutter analysis, **206/206 Flutter tests** (zero skips), and **5/5 executed Android JVM tests** (zero skips). The 12 added Save regressions include both post-Save interleavings, repeated Saves, pending Discard, failed preference writes/retry, final-write acknowledgement, native failure and disposal. No new device smoke was performed.
+- The recorded live-slider Save/Discard re-smoke used source commit `152a5e5280cfd9ea046e38151adb6ee258a3f64a`; `825978e` only updates `docs/independent-15-band-eq.md`. Physical tests used local clean debug APKs, not downloaded CI artifacts. External acoustic/loopback measurement, wired/Bluetooth route switching, release-build acceptance, and physical API 26–27 fallback remain unverified.
+- Recovered the uncommitted immutable-snapshot FIFO and four regression cases without resetting or discarding local work. Save commands cannot coalesce; native application and all fifteen preference writes use the tap-time snapshot. Only confirmed persistence advances `_saved`; later edits remain dirty. Checked writes roll back prior preferences on failure and report failed rollback; native-apply failure is reported separately from successful persistence.
+- Added pending-Save navigation protection, frozen editing during Discard, correct committed-baseline restoration, and mounted checks for asynchronous completion. Expanded deterministic tests cover overlapping Saves, pending Discard, preference failure/retry, final-write confirmation, and disposal.
+- Source/diff review found only intended EQ source, tests and documentation changes; original edits were preserved. The next milestone is the merge decision after the new-head CI evidence linked in PR #86 is green. Do not merge in this session. PR #87 transactional updater acceptance remains separate.
+
+### Earlier session context
+
 **Date:** 2026-11-13
 **Phase:** All 15 draft PRs (#71–#85) reconciled, merged to main, and closed. `flutter analyze` 0 issues; `flutter test` 183/183 passed; Python 22/22 passed. P1 device-acceptance pass on the Moto G (`ZT4222BMWN`) complete: voice fallback 7/7, transactional updater test-verified, Keystore/MediaStore/Workbench gates green.
 
