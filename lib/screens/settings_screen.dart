@@ -445,6 +445,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
       final data = jsonDecode(result.toString());
       if (data['status'] == 'success') {
         setState(() => _updateStatus = data['message'].toString());
+      } else if (data['recovery_required'] == true) {
+        setState(() => _updateStatus = "RECOVERY REQUIRED: ${data['message']}. Backup retained; retry after resolving the storage fault.");
       } else {
         setState(() => _updateStatus = "ERR: Update Failed: ${data['message'].toString()}");
       }
@@ -468,7 +470,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
       final data = jsonDecode(result.toString());
       if (!mounted) return;
       if (data['status'] == 'success') {
-        setState(() => _fullStackStatus = data['message'].toString());
+        final core = data['core'];
+        final message = data['message'] ?? (core is Map ? core['message'] : null);
+        setState(() => _fullStackStatus = "Full stack refresh complete. ${message ?? ''}");
+      } else if (data['recovery_required'] == true) {
+        setState(() => _fullStackStatus = "RECOVERY REQUIRED: ${data['message']}. Backup retained; retry after resolving the storage fault.");
       } else if (data['status'] == 'partial') {
         final stack = data['python_stack'];
         final detail = (stack is Map && stack['message'] != null)
@@ -1718,6 +1724,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     color: Colors.black.withValues(alpha: 0.82),
                     border: Border.all(color: themeColor.withValues(alpha: 0.5)),
                   ),
+                  child: Material(
+                    type: MaterialType.transparency,
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
@@ -1828,6 +1836,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         ),
                       ),
                     ],
+                  ),
                   ),
                 ),
 
@@ -1984,7 +1993,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 
                 const Text("> CORE ENGINE MAINTENANCE", style: TextStyle(fontFamily: 'ShareTechMono', fontSize: 16, fontWeight: FontWeight.bold, color: Colors.orangeAccent)),
                 const SizedBox(height: 8),
-                const Text("YT-DLP IS REPLACED TRANSACTIONALLY: THE NEW PACKAGE IS STAGED, STRUCTURALLY VERIFIED AND BYTE-COMPILED, THEN SWAPPED IN WITH A ROLLBACK BACKUP. IF ANYTHING FAILS, THE LIVE PACKAGE IS RESTORED.", style: TextStyle(fontFamily: 'ShareTechMono', color: Colors.white54, fontSize: 11)),
+                const Text("YT-DLP IS STAGED AND VERIFIED BEFORE REPLACEMENT. FAILED UPDATES ATTEMPT RECOVERY; IF RECOVERY FAILS, THE BACKUP AND TRANSACTION RECORD ARE RETAINED FOR RETRY.", style: TextStyle(fontFamily: 'ShareTechMono', color: Colors.white54, fontSize: 11)),
                 const SizedBox(height: 16),
                 OutlinedButton.icon(
                   onPressed: _isUpdating ? null : _updateYtDlp,
