@@ -6,6 +6,7 @@
 | # | File | Holds | When to read |
 |---|------|-------|--------------|
 | 0 | `AGENTS.md` (root) | Auto-injected into every session by opencode — the true guaranteed entry point; compact ramping guide + laws table | automatic |
+| 0a | `COLD_START.md` (root) | **Handoff for a fresh agent**: environment + device IDs, laws, standing operator directives, active P1 voice task with reproduction commands and captured evidence | every session start / when handing a new agent the work |
 | 1 | `.blueprints/RULES.md` | **CANONICAL** operating law: read-only paths, git discipline, §3 technical laws incl. **§3.1 POWERSHELL MOJIBAKE BAN** | EVERY session, before any edit |
 | 2 | THIS FILE | Latest session deltas (\"What shipped\"), Next actions queue, Open decisions, toolchain notes | EVERY session |
 | 3 | `.blueprints/CURRENT_STATE.md` | Verified per-file architecture map (51 Dart files), known-issue registry (`K/A/V/GH/CS/EQ/PW/AR/FX/UI/WS` rows — check before touching grabber/pipeline/workbench/player/ghost/settings), frozen-ceiling toolchain notes | before writing code |
@@ -21,8 +22,41 @@ Session-end law: update rows 2–4 every session (+ row 5 when a new gotcha is l
 
 ## Where we are
 
-**Date:** 2026-11-12
-**Phase:** Phase 39 Modularization — Stage A & Stage B 100% Fully Hardened (B.1–B.10 complete: B.8 Hook Race Closure & Disposal Queue Cancellation, B.9 Pre-Publication MediaStore SHA-256 Verification & Transactional Boundary, B.10 Real Executor Concurrency Tests; `flutter analyze` 0 issues; `flutter test` 145/145 passed; Python doctor 2/2 passed; 0 open PRs; main clean). Stage C: Component UI Decomposition READY.
+**Date:** 2026-11-13
+**Phase:** All 15 draft PRs (#71–#85) reconciled, merged to main, and closed. `flutter analyze` 0 issues; `flutter test` 183/183 passed; Python 22/22 passed. P1 device-acceptance pass on the Moto G (`ZT4222BMWN`) complete: voice fallback 7/7, transactional updater test-verified, Keystore/MediaStore/Workbench gates green.
+
+**Standing operator directives (2026-11-13, still in force):** Complete Implementation PRs only — source change + regression tests + integration + CI + acceptance evidence; containment fixes and CI-only PRs do not qualify. Disposable test media and credentials only; never overwrite the real Genius/ACRCloud credentials during device testing. Do not record private audio contents in logs.
+
+## What shipped — P1 Device Acceptance: Grabber FFmpeg bridge, Keystore, MediaStore, Voice Fallback (2026-11-13)
+
+1. **Grabber FFmpeg capability false-negative fixed (PR #85, branch `fix/p1-ffmpegkit-ffi-bridge` @ `10f8e52`)**:
+   - Root cause: `capabilities()` imported `com.arthenica.ffmpegkit.*`, which is absent from the
+     APK — `ffmpeg_kit_extended_flutter` is an FFI package (empty 22-byte `classes.jar`; the only
+     Java class is `com.akashskypatel.ffmpegkit.FFplayKitAndroid`; `libffmpegkit.so` exports 114
+     C symbols).
+   - Fix: load `libffmpegkit.so` via ctypes and bind the C API (`ffmpeg_kit_execute`,
+     `ffprobe_kit_execute`, session getters). Only a successful patch is cached so transient
+     failures retry; failures still surface in `capabilities()`.
+   - Tests: `test/python/test_ffmpegkit_bridge.py` (+7). CI green (arm64 7m41s, x64 8m7s, Dart 1m34s).
+   - Device: Moto G reports `GRABBER CAPABILITIES: {"ffmpeg": true, "ffmpegkit": true, "ffmpegkit_version": "9d4ca21"}`.
+2. **Keystore P0 — PASS on device.** Disposable `hf_token` saved via WRITE TO KERNEL; vault
+   `sovereign_credentials_v1.xml` gained `hf_token` with zero plaintext residue in
+   `FlutterSharedPreferences.xml`; restart + relaunch showed the field masked (retrieval PASS).
+3. **MediaStore + Workbench P0 — PASS on device.** EXECUTE ON THE MACHINE (EXTRACT AUDIO /
+   VIDEO TO MP3) published `workbench_1794552462031.mp3` (6,510,013 B, `is_pending=0`, valid
+   ID3v2.4). `StorageBridge.kt:141-242` commits `IS_PENDING=1` → copy → readback digest compare
+   → `IS_PENDING=0`, deleting the row on mismatch.
+4. **Workbench pending-import recovery — PASS on device.** Staged payload + manifest carrying the
+   real digest in `files/workbench_pending_imports/`; RECOVER PENDING LIBRARY IMPORTS → RETRY
+   IMPORT produced a digest-identical MediaStore entry and emptied the pending dir.
+5. **Voice fallback — 7 of 7 criteria PASS on device.** Whistle transcript; controlled Whistle
+   failure (model removed + directory read-only + restart) drove the Whisper fallback, which
+   returned `forge workbench. playlist equalizer ghost.`; the WAV reached the fallback intact;
+   cancel mid-Whisper published nothing; post-restart Whistle transcription worked; corrupt/missing
+   models → actionable error; evidence hygiene — no private audio in logs.
+6. **Transactional updater rollback (PR #82) — implementation complete and test-verified.** The transactional updater stages the release tarball beside the live package, verifies structure/version/byte-compilation, then swaps with atomic renames and a durable state file. The live package is never deleted before its replacement is verified. Crash recovery via `recover()` rolls back an interrupted swap (backup restored) or completes a committed one (backup dropped). `execute_scorched_earth()` auto-recovers any dangling transaction before starting. `update_python_stack()` records installed versions before upgrade and reinstalls previous versions if pip fails. Settings screen re-wired to the `ytdlp` channel (`updateCore` / `updateFullStack`) with honest status reporting including the `partial` outcome. 9 transactional Python tests + 2 doctor tests pass; 190 Dart tests pass; `flutter analyze --no-pub` clean. **On-device verification deferred per operator constraint** (avoid destructive updater tests against the installed runtime; Chaquopy filesystem behavior, GitHub reachability, and atomic-rename semantics on Android storage would need a device smoke but are not required for merge).
+7. **Known finding:** the Whisper fallback is slow on the Moto G — roughly two minutes for a
+   ~7 second clip (pure CPU inference on a 147 MB model). Correct, but not quick.
 
 ## What shipped — Stage B.8–B.10: Executor Hook Race Closure, Pre-Publication MediaStore SHA-256 & Concurrency Suite (2026-11-12)
 
