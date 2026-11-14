@@ -51,7 +51,7 @@ class Eq15Contract {
     if (raw == null) return const EqReadback('unavailable', false, []);
     final backend = raw['engine'];
     final enabled = raw['enabled'] == true;
-    final channelsMatch = raw['channelsMatch'] != false;
+    final channelsMatch = raw['channelsMatch'] == true;
     final list = raw['gainsDb'];
     if (backend is! String ||
         !channelsMatch ||
@@ -62,40 +62,65 @@ class Eq15Contract {
     final gains = List<double>.unmodifiable(
       list.map((g) => (g as num).toDouble()),
     );
+    final chCount = raw['channelCount'];
     final ch0Raw = raw['channel0GainsDb'];
     final ch1Raw = raw['channel1GainsDb'];
-    List<double> ch0 = gains;
-    List<double> ch1 = gains;
-    if (ch0Raw is List && ch1Raw is List) {
-      if (ch0Raw.length != gains.length ||
-          ch1Raw.length != gains.length ||
-          ch0Raw.any((g) => g is! num || !g.isFinite) ||
-          ch1Raw.any((g) => g is! num || !g.isFinite)) {
-        return const EqReadback('unavailable', false, [], channelsMatch: false);
+    List<double>? parseChannel(Object? candidate) {
+      if (candidate is! List ||
+          candidate.length != gains.length ||
+          candidate.any((g) => g is! num || !g.isFinite)) {
+        return null;
       }
-      ch0 = List<double>.unmodifiable(ch0Raw.map((g) => (g as num).toDouble()));
-      ch1 = List<double>.unmodifiable(ch1Raw.map((g) => (g as num).toDouble()));
-      for (var i = 0; i < ch0.length; i++) {
+      return List<double>.unmodifiable(
+        candidate.map((g) => (g as num).toDouble()),
+      );
+    }
+    bool channelsAgree(List<double> ch0, List<double> ch1) {
+      for (var i = 0; i < gains.length; i++) {
         if ((ch0[i] - ch1[i]).abs() > 0.001 || (gains[i] - ch0[i]).abs() > 0.001) {
-          return const EqReadback('unavailable', false, [], channelsMatch: false);
+          return false;
         }
       }
+      return true;
     }
-    if (backend == 'dynamics15' && gains.length == EqMapper.bandFrequencies.length) {
+    if (backend == 'dynamics15' &&
+        chCount is int &&
+        chCount == 2 &&
+        gains.length == EqMapper.bandFrequencies.length) {
+      final ch0 = parseChannel(ch0Raw);
+      final ch1 = parseChannel(ch1Raw);
+      if (ch0 == null || ch1 == null || !channelsAgree(ch0, ch1)) {
+        return const EqReadback('unavailable', false, [], channelsMatch: false);
+      }
       return EqReadback(
         'dynamics15',
         enabled,
         gains,
+        channelCount: 2,
         channelsMatch: true,
         channel0GainsDb: ch0,
         channel1GainsDb: ch1,
       );
     }
-    if (backend == 'legacy' && gains.isNotEmpty) {
+    if (backend == 'legacy' &&
+        gains.isNotEmpty &&
+        (chCount == null || (chCount is int && chCount == 1))) {
+      List<double> ch0 = gains;
+      List<double> ch1 = gains;
+      if (ch0Raw != null || ch1Raw != null) {
+        final parsed0 = parseChannel(ch0Raw);
+        final parsed1 = parseChannel(ch1Raw);
+        if (parsed0 == null || parsed1 == null || !channelsAgree(parsed0, parsed1)) {
+          return const EqReadback('unavailable', false, [], channelsMatch: false);
+        }
+        ch0 = parsed0;
+        ch1 = parsed1;
+      }
       return EqReadback(
         'legacy',
         enabled,
         gains,
+        channelCount: 1,
         channelsMatch: true,
         channel0GainsDb: ch0,
         channel1GainsDb: ch1,
@@ -117,6 +142,7 @@ class EqReadback {
   final String backend;
   final bool enabled;
   final List<double> gainsDb;
+  final int channelCount;
   final bool channelsMatch;
   final List<double> channel0GainsDb;
   final List<double> channel1GainsDb;
@@ -124,6 +150,7 @@ class EqReadback {
     this.backend,
     this.enabled,
     this.gainsDb, {
+    this.channelCount = 0,
     this.channelsMatch = false,
     this.channel0GainsDb = const [],
     this.channel1GainsDb = const [],

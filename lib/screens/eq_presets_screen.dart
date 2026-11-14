@@ -22,6 +22,8 @@ class _EqPresetsScreenState extends State<EqPresetsScreen> {
   static const double _railHeight = 260.0;
 
   bool _dirty = false;
+  bool _liveInFlight = false;
+  bool _liveQueued = false;
   List<double> _saved = List.filled(15, 0.0);
 
   static const Map<String, List<double>> _presets = {
@@ -58,8 +60,20 @@ class _EqPresetsScreenState extends State<EqPresetsScreen> {
     });
   }
 
-  void _live() {
-    PlaybackFx.setEqGains(_eqBands15);
+  Future<void> _live() async {
+    if (_liveInFlight) {
+      _liveQueued = true;
+      return;
+    }
+    _liveInFlight = true;
+    try {
+      do {
+        _liveQueued = false;
+        await PlaybackFx.setEqGains(List<double>.from(_eqBands15));
+      } while (_liveQueued && mounted);
+    } finally {
+      _liveInFlight = false;
+    }
   }
 
   void _applyPreset(List<double> values) {
@@ -160,25 +174,28 @@ class _EqPresetsScreenState extends State<EqPresetsScreen> {
                     ),
                     ValueListenableBuilder<bool>(
                       valueListenable: PlaybackFx.eqEnabled,
-                      builder: (context, enabled, _) => SwitchListTile(
-                        dense: true,
-                        title: Text(enabled ? "EQ SWITCH ON" : "EQ BYPASSED", style: TextStyle(fontFamily: 'ShareTechMono', fontWeight: FontWeight.bold, color: enabled ? Colors.purpleAccent : Colors.white54)),
-                        subtitle: ValueListenableBuilder<String>(
-                          valueListenable: PlaybackFx.eqBackend,
-                          builder: (context, backend, _) => Text(
-                            switch (backend) {
-                              'dynamics15' => 'INDEPENDENT 15-BAND DSP ATTACHED — EACH BAND IS APPLIED DIRECTLY.',
-                              'legacy' => 'COMPATIBILITY MODE — 15 SLIDERS MAPPED TO THE PHONE\'S FIXED-BAND EQ.',
-                              'error' => 'EQ UPDATE FAILED — EFFECT BYPASSED; PLAYBACK CONTINUES DRY.',
-                              'unavailable' => 'EQ ENGINE UNAVAILABLE — AUDIO PLAYS WITHOUT EQ.',
-                              _ => 'EQ ENGINE ATTACHES WHEN PLAYBACK STARTS.',
-                            },
-                            style: const TextStyle(fontFamily: 'ShareTechMono', fontSize: 10, color: Colors.white54),
+                      builder: (context, enabled, _) => Material(
+                        type: MaterialType.transparency,
+                        child: SwitchListTile(
+                          dense: true,
+                          title: Text(enabled ? "EQ SWITCH ON" : "EQ BYPASSED", style: TextStyle(fontFamily: 'ShareTechMono', fontWeight: FontWeight.bold, color: enabled ? Colors.purpleAccent : Colors.white54)),
+                          subtitle: ValueListenableBuilder<String>(
+                            valueListenable: PlaybackFx.eqBackend,
+                            builder: (context, backend, _) => Text(
+                              switch (backend) {
+                                'dynamics15' => 'INDEPENDENT 15-BAND DSP ATTACHED — EACH BAND IS APPLIED DIRECTLY.',
+                                'legacy' => 'COMPATIBILITY MODE — 15 SLIDERS MAPPED TO THE PHONE\'S FIXED-BAND EQ.',
+                                'error' => 'EQ UPDATE FAILED — EFFECT BYPASSED; PLAYBACK CONTINUES DRY.',
+                                'unavailable' => 'EQ ENGINE UNAVAILABLE — AUDIO PLAYS WITHOUT EQ.',
+                                _ => 'EQ ENGINE ATTACHES WHEN PLAYBACK STARTS.',
+                              },
+                              style: const TextStyle(fontFamily: 'ShareTechMono', fontSize: 10, color: Colors.white54),
+                            ),
                           ),
+                          activeThumbColor: Colors.purpleAccent,
+                          value: enabled,
+                          onChanged: (v) => PlaybackFx.setEqEnabled(v),
                         ),
-                        activeThumbColor: Colors.purpleAccent,
-                        value: enabled,
-                        onChanged: (v) => PlaybackFx.setEqEnabled(v),
                       ),
                     ),
                     SizedBox(
@@ -270,7 +287,11 @@ class _EqPresetsScreenState extends State<EqPresetsScreen> {
                 ),
                 child: Slider(
                   value: _eqBands15[i], min: -12, max: 12, divisions: 24,
-                  onChanged: (val) => setState(() { _eqBands15[i] = val; _dirty = true; }),
+                  onChanged: (val) {
+                    final changed = _eqBands15[i] != val;
+                    setState(() { _eqBands15[i] = val; _dirty = true; });
+                    if (changed) _live();
+                  },
                   onChangeEnd: (_) => _live(),
                 ),
               ),
