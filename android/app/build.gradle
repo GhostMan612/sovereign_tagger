@@ -275,4 +275,5 @@ dependencies {
     implementation fileTree(dir: "${project.projectDir}/libs", include: ['*.jar'])
     implementation 'net.jthink:jaudiotagger:3.0.1'
     implementation 'com.google.ai.edge.litert:litert:1.4.0'
+    testImplementation 'junit:junit:4.13.2'
 }
