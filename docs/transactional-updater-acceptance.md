@@ -20,19 +20,21 @@ The transactional updater now enforces:
 
 ## Host verification gates (clean local runs)
 
-All host gates were run locally after edits (and prior to the final documentation commit):
+All host gates passed locally on clean checkout `80d85462b4fb848657936a733850d5128d950e0d`:
 
-- **Static hygiene check**: Genesis headers, zero comments after line 4 on new `.dart`/`.kt`/`.py` files, and zero mojibake across all 12 modified/added code and test files passed.
-- **Python unit tests (`python -m unittest discover -s test/python -p "test_*.py" -v`)**: **37/37 passed** (`test/python/test_transactional_updater.py`: **24/24**), plus **15/15 consecutive stress runs** of `test_transactional_updater.py`.
+- **Static hygiene check**: Genesis headers, zero comments after line 4 on new `.dart`/`.kt`/`.py` files, and zero mojibake across all modified/added code and test files passed (verified at `1c9bae7` + clean `build.gradle` check at `80d8546`).
+- **Python unit tests (`python -m unittest discover -s test/python -p "test_*.py" -v`)**: **37/37 passed** (`test/python/test_transactional_updater.py`: **24/24**), plus **15/15 consecutive stress runs** of `test_transactional_updater.py` passed.
 - **Flutter analysis (`flutter analyze --no-pub`)**: **No issues found!**.
 - **Flutter test suite (`flutter test --no-pub`)**: **213/213 passed** (0 skipped, 0 failed), including **7** UI state/disposal/retry widget tests in `test/updater_settings_test.dart`.
+- **Android debug build (`flutter build apk --debug --no-pub --target-platform android-arm64`)**: Built `app-debug.apk` (SHA-256 `9ced77fa31cd74e0312aafa11a092f0bae9802ef5fefb5f039236f8710858c51`, `source_sha: 80d85462b4fb848657936a733850d5128d950e0d`, `source_dirty: false`).
 - **Android JVM unit build/tests (`gradlew.bat :app:testDebugUnitTest --console=plain`)**: **BUILD SUCCESSFUL** with `src/production/kotlin/com/sovereigntagger/CoreUpdaterBridge.kt`.
+- **Gradle CI compatibility note (`80d8546`)**: `create("updaterAcceptance")` and `updaterAcceptance*` dependency substitution in `android/app/build.gradle` are gated behind `if (updaterAcceptanceTest)` (`-PupdaterAcceptanceTest=true`) so Flutter 3.50.0 plugin subprojects (`:android_file_picker`) do not inherit `applicationIdSuffix ".updateracceptance"` during normal/CI builds. `:app:packageUpdaterAcceptance` and `:app:packageUpdaterAcceptanceAndroidTest` also compiled cleanly at `80d8546`.
 
 ## Recorded isolated device acceptance (Moto G — Android 16 / API 36)
 
 ### Build provenance & isolation checks
 
-- **Clean code commit (`fix/p0-updater-crash-window-serialization`)**: `1c9bae7a9c55fd22837c693f61d389ac14257edf` (`source_dirty: false`)
+- **Clean code commit (`fix/p0-updater-crash-window-serialization`)**: `1c9bae7a9c55fd22837c693f61d389ac14257edf` (`source_dirty: false`; `80d8546` only gated `updaterAcceptance` in `android/app/build.gradle` behind `-PupdaterAcceptanceTest=true` and did not alter app/test runtime code)
 - **Acceptance package**: `com.sovereigntagger.updateracceptance` (installed from `android/gradlew.bat :app:installUpdaterAcceptance :app:installUpdaterAcceptanceAndroidTest -PupdaterAcceptanceTest=true -Ptarget=test/device/updater_acceptance_main.dart`)
 - **Installed base APK SHA-256 on device**: `a95e424d5d96970104fc07ff5e2ee0654a4cf204f9fb0088cff150e94d95b507`
 - **Target handset**: Moto G (`ZT4222BMWN`, `model: moto_g___2025`, `product: kansas_g_sys`)
@@ -55,4 +57,4 @@ All host gates were run locally after edits (and prior to the final documentatio
 
 - **Fixture-isolated target and transport**: On-device acceptance runs inside `com.sovereigntagger.updateracceptance` against a private `filesDir/updater_acceptance/...` synthetic package using a test fixture that patches `updater._fetch_release` (`fixture://SAMPLE_RELEASE` returning an in-memory `.tar.gz`) and `updater.os.rename` (`failure` mode only). Live GitHub API/tarball downloads and live mutation of Chaquopy's installed `requirements/yt_dlp` directory on the phone were not executed.
 - **Full-stack `pip` upgrade/rollback on device**: `updaterAcceptance` rejects `fullStack=true`; core `recovery_required` propagation in `execute_full_scorched_earth()` and Settings UI handling for `updateFullStack` are verified by Python (`test_full_stack_surfaces_core_recovery_failure_without_upgrading_helpers`) and Flutter widget tests (`test/updater_settings_test.dart`), whereas live PyPI/pip upgrades on Android remain unverified on hardware.
-- **Build variant**: Device acceptance used the `updaterAcceptance` debuggable test build type (`matchingFallbacks = ["debug"]`), not a signed `release` APK.
+- **Build variant & commit delta**: Device acceptance ran at clean commit `1c9bae7` using the `updaterAcceptance` debuggable test build type (`matchingFallbacks = ["debug"]`), not a signed `release` APK. On-device UIAutomator tests were not re-executed after `80d8546` (which only gated `updaterAcceptance` in `android/app/build.gradle`; `ZT4222BMWN` disconnected from USB prior to post-build install), though `:app:packageUpdaterAcceptance` and `:app:packageUpdaterAcceptanceAndroidTest` packaged cleanly at `80d8546`.

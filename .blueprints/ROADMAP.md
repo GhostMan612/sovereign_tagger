@@ -3,7 +3,7 @@
 
 ## PR #87 — Transactional updater rollback & isolated device acceptance [x] (ready for CI/review, 2026-11-14)
 
-- [x] Preserve backup, staging, and journal when rollback restore/verification fails in `updater.py`, surface `recovery_required` through `execute_full_scorched_earth()` and `SettingsScreen` (`updateCore` + `updateFullStack`), and pass host gates (`37/37` Python tests w/ `24` updater tests, `15/15` updater stress runs, `flutter analyze`, `213/213` Flutter tests w/ `7` Settings tests, `:app:testDebugUnitTest`).
+- [x] Preserve backup, staging, and journal when rollback restore/verification fails in `updater.py`, surface `recovery_required` through `execute_full_scorched_earth()` and `SettingsScreen` (`updateCore` + `updateFullStack`), gate `updaterAcceptance` behind `-PupdaterAcceptanceTest=true` (`80d8546`), and pass host gates (`37/37` Python tests w/ `24` updater tests, `15/15` updater stress runs, `flutter analyze`, `213/213` Flutter tests w/ `7` Settings tests, `flutter build apk --debug --target-platform android-arm64`, `:app:testDebugUnitTest`).
 - [x] Execute clean-provenance (`1c9bae7a9c55fd22837c693f61d389ac14257edf`, `source_dirty: false`) isolated Moto G (`ZT4222BMWN`) UIAutomator acceptance (`failure` -> `am force-stop` -> `restart`, `all`, unconfigured fail-closed bridge, `com.sovereigntagger` unchanged) and record evidence & fixture/pip/release limitations in `docs/transactional-updater-acceptance.md`. (Push & GitHub Actions CI checks linked on PR #87; PR remains open/unmerged pending operator decision.)
 
 ## PR #86 — Independent 15-band DSP review readiness [x] (merged at `f48b865`, 2026-11-14)
