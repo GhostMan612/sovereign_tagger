@@ -153,9 +153,12 @@ class _TabGrabberState extends State<TabGrabber> {
     try {
       final raw = await _ytChannel.invokeMethod('getCapabilities');
       final data = jsonDecode(raw.toString()) as Map<String, dynamic>;
+      debugPrint("GRABBER CAPABILITIES: ${raw.toString()}");
       if (!mounted) return;
       setState(() => _ffmpegAvailable = data['ffmpeg'] == true);
-    } catch (_) {}
+    } catch (e) {
+      debugPrint("GRABBER CAPABILITIES FAILED: $e");
+    }
   }
 
   Future<String> _cookieFilePath() async {
