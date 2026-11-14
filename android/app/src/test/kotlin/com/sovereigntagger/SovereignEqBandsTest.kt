@@ -6,6 +6,7 @@
 package com.sovereigntagger
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.Test
@@ -50,5 +51,37 @@ class SovereignEqBandsTest {
         }
         assertEquals(gains.first(), SovereignEqBands.gainAt(gains, 1.0), 0.00001)
         assertEquals(gains.last(), SovereignEqBands.gainAt(gains, 25000.0), 0.00001)
+    }
+
+    @Test fun stereoReadbackRequiresBothChannelsEnabledAndMatching() {
+        val gains = List(15) { if (it == 4) 12.0 else 0.0 }
+        val enabled = List(15) { true }
+        val cutoffs = SovereignEqBands.cutoffsHz.toList()
+        assertTrue(
+            SovereignEqBands.verifyStereoReadback(
+                gains, gains, enabled, enabled, cutoffs, cutoffs,
+            ),
+        )
+
+        val divergedCh1 = gains.toMutableList().apply { set(4, 6.0) }
+        assertFalse(
+            SovereignEqBands.verifyStereoReadback(
+                gains, divergedCh1, enabled, enabled, cutoffs, cutoffs,
+            ),
+        )
+
+        val disabledBandCh1 = enabled.toMutableList().apply { set(8, false) }
+        assertFalse(
+            SovereignEqBands.verifyStereoReadback(
+                gains, gains, enabled, disabledBandCh1, cutoffs, cutoffs,
+            ),
+        )
+
+        val badCutoffCh1 = cutoffs.toMutableList().apply { set(0, cutoffs[0] + 100.0f) }
+        assertFalse(
+            SovereignEqBands.verifyStereoReadback(
+                gains, gains, enabled, enabled, cutoffs, badCutoffCh1,
+            ),
+        )
     }
 }

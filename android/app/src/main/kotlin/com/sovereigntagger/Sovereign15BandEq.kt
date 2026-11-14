@@ -37,6 +37,33 @@ internal object SovereignEqBands {
         val t = (ln(hz) - ln(centersHz[i])) / (ln(centersHz[i + 1]) - ln(centersHz[i]))
         return gains[i] + (gains[i + 1] - gains[i]) * t
     }
+
+    fun verifyStereoReadback(
+        ch0Gains: List<Double>,
+        ch1Gains: List<Double>,
+        ch0Enabled: List<Boolean>,
+        ch1Enabled: List<Boolean>,
+        ch0Cutoffs: List<Float>,
+        ch1Cutoffs: List<Float>,
+    ): Boolean {
+        val n = centersHz.size
+        if (ch0Gains.size != n || ch1Gains.size != n ||
+            ch0Enabled.size != n || ch1Enabled.size != n ||
+            ch0Cutoffs.size != n || ch1Cutoffs.size != n
+        ) {
+            return false
+        }
+        for (i in 0 until n) {
+            if (!ch0Enabled[i] || !ch1Enabled[i]) return false
+            val g0 = ch0Gains[i]
+            val g1 = ch1Gains[i]
+            if (!g0.isFinite() || !g1.isFinite()) return false
+            if (kotlin.math.abs(g0 - g1) > 0.001) return false
+            if (kotlin.math.abs(ch0Cutoffs[i] - cutoffsHz[i]) > 0.5f) return false
+            if (kotlin.math.abs(ch1Cutoffs[i] - cutoffsHz[i]) > 0.5f) return false
+        }
+        return true
+    }
 }
 
 internal class Sovereign15BandEq {
@@ -159,20 +186,37 @@ internal class Sovereign15BandEq {
     fun readEq(): Map<String, Any> {
         dynamics?.let { effect ->
             return try {
-                val gains = SovereignEqBands.centersHz.indices.map { i ->
-                    effect.getPreEqBandByChannelIndex(0, i).gain.toDouble()
-                }
+                val indices = SovereignEqBands.centersHz.indices
+                val bands0 = indices.map { i -> effect.getPreEqBandByChannelIndex(0, i) }
+                val bands1 = indices.map { i -> effect.getPreEqBandByChannelIndex(1, i) }
+                val ch0Gains = bands0.map { it.gain.toDouble() }
+                val ch1Gains = bands1.map { it.gain.toDouble() }
+                val ch0Enabled = bands0.map { it.isEnabled }
+                val ch1Enabled = bands1.map { it.isEnabled }
+                val ch0Cutoffs = bands0.map { it.cutoffFrequency }
+                val ch1Cutoffs = bands1.map { it.cutoffFrequency }
+                val stereoOk = SovereignEqBands.verifyStereoReadback(
+                    ch0Gains, ch1Gains, ch0Enabled, ch1Enabled, ch0Cutoffs, ch1Cutoffs,
+                )
                 mapOf(
                     "engine" to "dynamics15",
                     "enabled" to effect.enabled,
-                    "gainsDb" to gains,
+                    "channelCount" to 2,
+                    "channelsMatch" to stereoOk,
+                    "gainsDb" to if (stereoOk) ch0Gains else emptyList<Double>(),
+                    "channel0GainsDb" to ch0Gains,
+                    "channel1GainsDb" to ch1Gains,
                 )
             } catch (error: Throwable) {
                 Log.w("SovereignEq15", "EQ readback failed", error)
                 mapOf(
                     "engine" to "dynamics15",
                     "enabled" to false,
+                    "channelCount" to 2,
+                    "channelsMatch" to false,
                     "gainsDb" to emptyList<Double>(),
+                    "channel0GainsDb" to emptyList<Double>(),
+                    "channel1GainsDb" to emptyList<Double>(),
                 )
             }
         }
@@ -184,21 +228,33 @@ internal class Sovereign15BandEq {
                 mapOf(
                     "engine" to "legacy",
                     "enabled" to eq.enabled,
+                    "channelCount" to 1,
+                    "channelsMatch" to gains.isNotEmpty(),
                     "gainsDb" to gains,
+                    "channel0GainsDb" to gains,
+                    "channel1GainsDb" to gains,
                 )
             } catch (error: Throwable) {
                 Log.w("SovereignEq15", "Legacy EQ readback failed", error)
                 mapOf(
                     "engine" to "legacy",
                     "enabled" to false,
+                    "channelCount" to 1,
+                    "channelsMatch" to false,
                     "gainsDb" to emptyList<Double>(),
+                    "channel0GainsDb" to emptyList<Double>(),
+                    "channel1GainsDb" to emptyList<Double>(),
                 )
             }
         }
         return mapOf(
             "engine" to (describe()["engine"] ?: "unavailable"),
             "enabled" to false,
+            "channelCount" to 0,
+            "channelsMatch" to false,
             "gainsDb" to emptyList<Double>(),
+            "channel0GainsDb" to emptyList<Double>(),
+            "channel1GainsDb" to emptyList<Double>(),
         )
     }
 

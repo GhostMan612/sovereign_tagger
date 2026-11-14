@@ -3,11 +3,14 @@
 // The Future Dictates the Past and the Past is Always Present.
 // ============================================================
 
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sovereign_tagger/core/eq15_contract.dart';
 import 'package:sovereign_tagger/core/eq_mapper.dart';
+import 'package:sovereign_tagger/core/playback_fx.dart';
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
   test('15 playback sliders have a stable frequency contract', () {
     expect(EqMapper.bandFrequencies, [
       25, 40, 63, 100, 160, 250, 400, 630,
@@ -79,33 +82,104 @@ void main() {
     final dsp = Eq15Contract.parseReadback({
       'engine': 'dynamics15',
       'enabled': true,
+      'channelsMatch': true,
       'gainsDb': fifteen,
+      'channel0GainsDb': fifteen,
+      'channel1GainsDb': fifteen,
     });
     expect(dsp.backend, 'dynamics15');
     expect(dsp.enabled, isTrue);
+    expect(dsp.channelsMatch, isTrue);
     expect(dsp.gainsDb, fifteen);
+    expect(dsp.channel0GainsDb, fifteen);
+    expect(dsp.channel1GainsDb, fifteen);
 
     final leg = Eq15Contract.parseReadback({
       'engine': 'legacy',
       'enabled': false,
+      'channelsMatch': true,
       'gainsDb': [1.0, 2.0, 0.0, -1.0, 0.5],
     });
     expect(leg.backend, 'legacy');
     expect(leg.enabled, isFalse);
+    expect(leg.channelsMatch, isTrue);
     expect(leg.gainsDb.length, 5);
+
+    final diverged = List<double>.from(fifteen);
+    diverged[4] = 0.0;
 
     for (final bad in [
       null,
       <Object?, Object?>{},
       {'engine': 'dynamics15', 'enabled': true, 'gainsDb': [1.0, 2.0]},
       {'engine': 'dynamics15', 'enabled': true, 'gainsDb': List<double>.filled(15, double.nan)},
+      {
+        'engine': 'dynamics15',
+        'enabled': true,
+        'channelsMatch': false,
+        'gainsDb': fifteen,
+        'channel0GainsDb': fifteen,
+        'channel1GainsDb': diverged,
+      },
+      {
+        'engine': 'dynamics15',
+        'enabled': true,
+        'channelsMatch': true,
+        'gainsDb': fifteen,
+        'channel0GainsDb': fifteen,
+        'channel1GainsDb': diverged,
+      },
       {'engine': 'legacy', 'enabled': true, 'gainsDb': <double>[]},
       {'engine': 'future', 'enabled': true, 'gainsDb': [0.0]},
     ]) {
       final parsed = Eq15Contract.parseReadback(bad);
       expect(parsed.backend, 'unavailable');
       expect(parsed.enabled, isFalse);
+      expect(parsed.channelsMatch, isFalse);
       expect(parsed.gainsDb, isEmpty);
+    }
+  });
+
+  test('PlaybackFx transitions eqBackend to error on failed applyEq and recovers', () async {
+    const channel = MethodChannel('com.sovereign.tagger/audio_fx');
+    var mode = 'ok';
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, (call) async {
+      if (call.method == 'attachSession') {
+        return {
+          'engine': 'dynamics15',
+          'bands': EqMapper.bandFrequencies,
+        };
+      }
+      if (call.method == 'applyEq') {
+        if (mode == 'false') return false;
+        if (mode == 'throw') {
+          throw PlatformException(code: 'DSP_ERR', message: 'effect failed');
+        }
+        return true;
+      }
+      if (call.method == 'applyLoudness') return true;
+      return null;
+    });
+
+    try {
+      await PlaybackFx.attachSession(42);
+      expect(PlaybackFx.eqBackend.value, 'dynamics15');
+
+      mode = 'false';
+      expect(await PlaybackFx.applyEq(), isFalse);
+      expect(PlaybackFx.eqBackend.value, 'error');
+
+      mode = 'throw';
+      expect(await PlaybackFx.applyEq(), isFalse);
+      expect(PlaybackFx.eqBackend.value, 'error');
+
+      mode = 'ok';
+      expect(await PlaybackFx.applyEq(), isTrue);
+      expect(PlaybackFx.eqBackend.value, 'dynamics15');
+    } finally {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, null);
     }
   });
 }

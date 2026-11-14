@@ -654,15 +654,21 @@ class MainActivity: AudioServiceActivity() {
                     val enabled = call.argument<Boolean>("enabled") ?: false
                     val gainsDb = call.argument<List<Double>>("gainsDb") ?: emptyList()
                     val applied = independentEq.apply(enabled, gainsDb)
-                    if (applied) {
-                        val readback = independentEq.readEq()
-                        Log.i(
-                            "SovereignEq15",
-                            "EQ readback enabled=" + enabled +
-                                " gains=" + (readback["gainsDb"] as? List<*>),
-                        )
+                    if (!applied) {
+                        result.success(false)
+                        return@setMethodCallHandler
                     }
-                    result.success(applied)
+                    val readback = independentEq.readEq()
+                    val channelsMatch = readback["channelsMatch"] == true
+                    Log.i(
+                        "SovereignEq15",
+                        "EQ readback engine=" + readback["engine"] +
+                            " enabled=" + readback["enabled"] +
+                            " channelsMatch=" + channelsMatch +
+                            " ch0=" + (readback["channel0GainsDb"] as? List<*>) +
+                            " ch1=" + (readback["channel1GainsDb"] as? List<*>),
+                    )
+                    result.success(channelsMatch)
                 }
                 "readEq" -> result.success(independentEq.readEq())
                 "applyLoudness" -> {

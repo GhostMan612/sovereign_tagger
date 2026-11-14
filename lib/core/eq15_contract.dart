@@ -51,22 +51,57 @@ class Eq15Contract {
     if (raw == null) return const EqReadback('unavailable', false, []);
     final backend = raw['engine'];
     final enabled = raw['enabled'] == true;
+    final channelsMatch = raw['channelsMatch'] != false;
     final list = raw['gainsDb'];
     if (backend is! String ||
+        !channelsMatch ||
         list is! List ||
         list.any((g) => g is! num || !g.isFinite)) {
-      return const EqReadback('unavailable', false, []);
+      return const EqReadback('unavailable', false, [], channelsMatch: false);
     }
     final gains = List<double>.unmodifiable(
       list.map((g) => (g as num).toDouble()),
     );
+    final ch0Raw = raw['channel0GainsDb'];
+    final ch1Raw = raw['channel1GainsDb'];
+    List<double> ch0 = gains;
+    List<double> ch1 = gains;
+    if (ch0Raw is List && ch1Raw is List) {
+      if (ch0Raw.length != gains.length ||
+          ch1Raw.length != gains.length ||
+          ch0Raw.any((g) => g is! num || !g.isFinite) ||
+          ch1Raw.any((g) => g is! num || !g.isFinite)) {
+        return const EqReadback('unavailable', false, [], channelsMatch: false);
+      }
+      ch0 = List<double>.unmodifiable(ch0Raw.map((g) => (g as num).toDouble()));
+      ch1 = List<double>.unmodifiable(ch1Raw.map((g) => (g as num).toDouble()));
+      for (var i = 0; i < ch0.length; i++) {
+        if ((ch0[i] - ch1[i]).abs() > 0.001 || (gains[i] - ch0[i]).abs() > 0.001) {
+          return const EqReadback('unavailable', false, [], channelsMatch: false);
+        }
+      }
+    }
     if (backend == 'dynamics15' && gains.length == EqMapper.bandFrequencies.length) {
-      return EqReadback('dynamics15', enabled, gains);
+      return EqReadback(
+        'dynamics15',
+        enabled,
+        gains,
+        channelsMatch: true,
+        channel0GainsDb: ch0,
+        channel1GainsDb: ch1,
+      );
     }
     if (backend == 'legacy' && gains.isNotEmpty) {
-      return EqReadback('legacy', enabled, gains);
+      return EqReadback(
+        'legacy',
+        enabled,
+        gains,
+        channelsMatch: true,
+        channel0GainsDb: ch0,
+        channel1GainsDb: ch1,
+      );
     }
-    return const EqReadback('unavailable', false, []);
+    return const EqReadback('unavailable', false, [], channelsMatch: false);
   }
 }
 
@@ -82,5 +117,15 @@ class EqReadback {
   final String backend;
   final bool enabled;
   final List<double> gainsDb;
-  const EqReadback(this.backend, this.enabled, this.gainsDb);
+  final bool channelsMatch;
+  final List<double> channel0GainsDb;
+  final List<double> channel1GainsDb;
+  const EqReadback(
+    this.backend,
+    this.enabled,
+    this.gainsDb, {
+    this.channelsMatch = false,
+    this.channel0GainsDb = const [],
+    this.channel1GainsDb = const [],
+  });
 }

@@ -169,6 +169,7 @@ class _EqPresetsScreenState extends State<EqPresetsScreen> {
                             switch (backend) {
                               'dynamics15' => 'INDEPENDENT 15-BAND DSP ATTACHED — EACH BAND IS APPLIED DIRECTLY.',
                               'legacy' => 'COMPATIBILITY MODE — 15 SLIDERS MAPPED TO THE PHONE\'S FIXED-BAND EQ.',
+                              'error' => 'EQ UPDATE FAILED — EFFECT BYPASSED; PLAYBACK CONTINUES DRY.',
                               'unavailable' => 'EQ ENGINE UNAVAILABLE — AUDIO PLAYS WITHOUT EQ.',
                               _ => 'EQ ENGINE ATTACHES WHEN PLAYBACK STARTS.',
                             },

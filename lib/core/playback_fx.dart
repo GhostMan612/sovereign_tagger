@@ -22,6 +22,7 @@ class PlaybackFx {
 
   static const MethodChannel _fxChannel = MethodChannel('com.sovereign.tagger/audio_fx');
   static int _attachedSessionId = 0;
+  static String _attachedBackend = 'pending';
   static AudioPlayer? _player;
   static double _rgVolume = 1.0;
   static double _rgBoostDb = 0.0;
@@ -58,52 +59,62 @@ class PlaybackFx {
     });
     player.androidAudioSessionIdStream.listen((sid) {
       if (sid != null && sid > 0 && sid != _attachedSessionId) {
-        unawaited(_attachNativeSession(sid));
+        unawaited(attachSession(sid));
       }
     });
     final initialSid = player.androidAudioSessionId;
     if (initialSid != null && initialSid > 0) {
-      unawaited(_attachNativeSession(initialSid));
+      unawaited(attachSession(initialSid));
     }
   }
 
-  static Future<void> _attachNativeSession(int sessionId) async {
+  static Future<void> attachSession(int sessionId) async {
     try {
       final raw = await _fxChannel.invokeMethod<Map<Object?, Object?>>(
         'attachSession', {'sessionId': sessionId},
       );
       final capability = Eq15Contract.parseCapabilities(raw);
       _attachedSessionId = sessionId;
+      _attachedBackend = capability.backend;
       eqBackend.value = capability.backend;
       deviceBands.value = capability.bandsHz;
       debugPrint('SOVEREIGN FX: session=$sessionId backend=${capability.backend} bands=${capability.bandsHz.length}');
       if (capability.available) await applyEq();
       await _applyBoost();
     } catch (e) {
+      _attachedBackend = 'unavailable';
       eqBackend.value = 'unavailable';
       deviceBands.value = const [];
       debugPrint('SOVEREIGN FX: attachSession unavailable ($e); playback continues dry');
     }
   }
 
-  static Future<void> applyEq() async {
+  static Future<bool> applyEq() async {
     try {
       if (_attachedSessionId <= 0) {
         final sid = _player?.androidAudioSessionId;
         if (sid != null && sid > 0) {
-          await _attachNativeSession(sid);
-          return;
+          await attachSession(sid);
+          return _attachedBackend == 'dynamics15' || _attachedBackend == 'legacy';
         }
       }
-      if (eqBackend.value == 'unavailable' || eqBackend.value == 'pending') return;
+      if (_attachedBackend == 'unavailable' || _attachedBackend == 'pending') return false;
       final gains = Eq15Contract.validateGains(eqGains.value);
       final applied = await _fxChannel.invokeMethod<bool>('applyEq', {
         'enabled': eqEnabled.value,
         'gainsDb': gains,
       });
-      if (applied != true) debugPrint('SOVEREIGN FX: native EQ rejected update');
+      if (applied != true) {
+        eqBackend.value = 'error';
+        debugPrint('SOVEREIGN FX: native EQ rejected update');
+        return false;
+      }
+      eqBackend.value = _attachedBackend;
+      return true;
     } catch (e) {
+      eqBackend.value = 'error';
       debugPrint('SOVEREIGN FX: applyEq FAILED ($e); playback remains available');
+      return false;
     }
   }
 
