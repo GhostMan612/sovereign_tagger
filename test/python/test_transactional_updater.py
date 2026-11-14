@@ -325,6 +325,115 @@ class TransactionalUpdaterTests(unittest.TestCase):
         self.assertIn(NEW_VERSION, self._version())
         self.assertEqual(self._leftover_paths(), [])
 
+    def test_failure_persisting_pre_rename_state_aborts_safely(self):
+        calls = {"n": 0}
+        original_save = updater._save_state
+
+        def flaky_save(state_dir, state):
+            calls["n"] += 1
+            if calls["n"] == 2:
+                raise OSError("disk full")
+            return original_save(state_dir, state)
+
+        tarball = _tar_bytes(_release_files())
+        with patch("urllib.request.urlopen", side_effect=_urlopen_factory(tarball)):
+            with patch.object(updater, "_save_state", side_effect=flaky_save):
+                result = json.loads(
+                    updater.execute_scorched_earth(
+                        target_dir=str(self.live), state_dir=str(self.state_dir)
+                    )
+                )
+        self.assertEqual(result["status"], "error")
+        self.assertTrue(self.live.is_dir())
+        self.assertIn(OLD_VERSION, self._version())
+        self.assertEqual(self._leftover_paths(), [])
+        self.assertIsNone(updater._load_state(str(self.state_dir)))
+
+    def test_crash_after_activation_before_commit_rolls_back(self):
+        backup = str(self.live) + ".sovereign_backup"
+        shutil.copytree(self.live, backup)
+        shutil.rmtree(self.live)
+        staging = str(self.live) + ".sovereign_new"
+        _write_package(staging, NEW_VERSION)
+        os.rename(staging, str(self.live))
+        updater._save_state(
+            str(self.state_dir),
+            {
+                "phase": "backup_done",
+                "target": str(self.live),
+                "backup": backup,
+                "staging": staging,
+            },
+        )
+        result = json.loads(updater.recover(str(self.state_dir)))
+        self.assertTrue(result["recovered"])
+        self.assertIn(OLD_VERSION, self._version())
+        self.assertFalse(os.path.exists(backup))
+        self.assertFalse(os.path.exists(staging))
+
+    def test_committed_state_cleanup_removes_backup_and_staging(self):
+        backup = str(self.live) + ".sovereign_backup"
+        shutil.copytree(self.live, backup)
+        staging = str(self.live) + ".sovereign_new"
+        _write_package(staging, NEW_VERSION)
+        updater._save_state(
+            str(self.state_dir),
+            {
+                "phase": "committed",
+                "target": str(self.live),
+                "backup": backup,
+                "staging": staging,
+            },
+        )
+        result = json.loads(updater.recover(str(self.state_dir)))
+        self.assertTrue(result["recovered"])
+        self.assertFalse(os.path.exists(backup))
+        self.assertFalse(os.path.exists(staging))
+        self.assertTrue(self.live.is_dir())
+        self.assertEqual(self._leftover_paths(), [])
+
+    def test_repeated_recovery_is_idempotent(self):
+        backup = str(self.live) + ".sovereign_backup"
+        shutil.copytree(self.live, backup)
+        shutil.rmtree(self.live)
+        staging = str(self.live) + ".sovereign_new"
+        _write_package(staging, NEW_VERSION)
+        updater._save_state(
+            str(self.state_dir),
+            {
+                "phase": "backup_pending",
+                "target": str(self.live),
+                "backup": backup,
+                "staging": staging,
+            },
+        )
+        first = json.loads(updater.recover(str(self.state_dir)))
+        second = json.loads(updater.recover(str(self.state_dir)))
+        self.assertTrue(first["recovered"])
+        self.assertFalse(second["recovered"])
+        self.assertTrue(self.live.is_dir())
+        self.assertIn(OLD_VERSION, self._version())
+        self.assertFalse(os.path.exists(backup))
+        self.assertFalse(os.path.exists(staging))
+
+    def test_unrelated_sibling_files_are_preserved(self):
+        unrelated = self.live.parent / "unrelated.txt"
+        unrelated.write_text("keep me", encoding="utf-8")
+        result = self._run()
+        self.assertEqual(result["status"], "success")
+        self.assertTrue(unrelated.exists())
+        self.assertEqual(unrelated.read_text(encoding="utf-8"), "keep me")
+        self.assertEqual(self._leftover_paths(), [])
+
+    def test_repeated_execution_is_idempotent(self):
+        first = self._run()
+        second = self._run()
+        self.assertEqual(first["status"], "success")
+        self.assertEqual(second["status"], "success")
+        self.assertIn(NEW_VERSION, self._version())
+        self.assertEqual(self._leftover_paths(), [])
+        self.assertIsNone(updater._load_state(str(self.state_dir)))
+
 
 if __name__ == "__main__":
     unittest.main()
